@@ -60,6 +60,20 @@ public sealed class Browser : IFileManager, IDisposable
     private Action<char>? _questionCallback;
     private string? _message;
     private bool _messageIsError;
+
+    /// <summary>When the message stops being shown, as a tick count.</summary>
+    private long _messageExpiresAt;
+
+    /// <summary>
+    /// How long a message stays on the status bar.
+    /// </summary>
+    /// <remarks>
+    /// Ranger's default duration for <c>fm.notify</c> (<c>core/actions.py:165</c>). Canger had no
+    /// expiry at all, so a message sat there until the next keystroke — which, if the keystroke
+    /// that produced it was the last one for a while, meant forever, with the file under the
+    /// cursor hidden behind it the whole time.
+    /// </remarks>
+    private const int MessageMilliseconds = 4000;
     private bool _running = true;
     private bool _hadWork;
 
@@ -475,6 +489,7 @@ public sealed class Browser : IFileManager, IDisposable
     {
         _message = message;
         _messageIsError = isError;
+        _messageExpiresAt = Environment.TickCount64 + MessageMilliseconds;
 
         // Kept so `:display_log` can show what scrolled past. Bounded, because a session left
         // open all week should not accumulate messages without limit; the oldest are the least
@@ -1058,6 +1073,16 @@ public sealed class Browser : IFileManager, IDisposable
                 : Volatile.Read(ref _needsRedraw) ? 0
                 : Tasks.HasWork ? (int)Tasks.IdleDelay.TotalMilliseconds
                 : Settings.IdleDelay;
+
+            // A message showing has to be taken down on time, and the loop is otherwise asleep
+            // for the whole idle delay. Without this it would linger for up to `idle_delay`
+            // longer than it should — two seconds by default, which is half again as long as it
+            // was meant to be there.
+            if (_message is not null)
+            {
+                long remaining = _messageExpiresAt - Environment.TickCount64;
+                timeout = (int)Math.Clamp(remaining, 0, timeout);
+            }
 
             // Something answered from a background thread, so this pass draws rather than
             // waiting out the idle delay with a stale row on screen.
@@ -1716,6 +1741,14 @@ public sealed class Browser : IFileManager, IDisposable
 
     private void Draw()
     {
+        // Before anything is configured, and not inside the status bar's own branch: the loop
+        // shortens its wait while a message is showing, so a message that never expired — with
+        // the console open, say — would leave it spinning on a zero timeout.
+        if (_message is not null && Environment.TickCount64 >= _messageExpiresAt)
+        {
+            _message = null;
+        }
+
         // Settings can change under a running session, so the view is configured each frame
         // rather than once. It is a handful of property reads.
         ApplySettingsToDirectory();
