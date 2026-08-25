@@ -170,8 +170,17 @@ this repository if you are porting or verifying something:
 git clone https://github.com/ranger/ranger.git ranger-master
 ```
 
-Two tests read a real ranger `rc.conf` from `../ranger-settings/rc.conf` as a compatibility
-fixture and skip themselves when it is absent, so they will skip for you unless you put one there.
+A fresh clone tests green with **five skips**, all expected, for three reasons:
+
+* two tests parse a real user's `rc.conf` from `../ranger-settings/rc.conf` as a compatibility
+  fixture — put one there and they run;
+* one checks the settings catalogue against `../ranger-master/ranger/container/settings.py` — the
+  clone above enables it;
+* two exercise reflink copies and skip on a filesystem that has no `FICLONE`. They run on btrfs,
+  XFS and bcachefs; if your temporary directory is `tmpfs`, they will not.
+
+A skip predicated on a path is a test that deletes itself when the path moves, which has already
+happened once here — if you move a fixture, check the skip count.
 
 ### Conventions
 
