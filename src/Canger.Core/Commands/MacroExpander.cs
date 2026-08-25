@@ -270,6 +270,34 @@ public sealed class MacroExpander(IFileManager fileManager)
         ArgumentNullException.ThrowIfNull(value);
         return "'" + value.Replace("'", @"'\''", StringComparison.Ordinal) + "'";
     }
+
+    /// <summary>
+    /// Puts a value into a command line that will itself be macro-expanded before it runs.
+    /// </summary>
+    /// <param name="value">The value to embed, usually a filename.</param>
+    /// <returns>The value, quoted for the shell and proof against a second expansion.</returns>
+    /// <remarks>
+    /// <para>
+    /// <see cref="ShellQuote"/> is right for a command handed straight to a process runner. It is
+    /// <em>not</em> enough for a line built up and then passed to
+    /// <c>IFileManager.Execute</c>, because that expands macros over the whole line — including
+    /// the part that was just quoted. A per cent in the value is read as the start of a macro,
+    /// and the substitution it triggers brings its own quotes, which close the quoting around the
+    /// value and leave the rest of it bare.
+    /// </para>
+    /// <para>
+    /// A file called <c>My%20Docs</c> is enough to make such a line fail; a file called
+    /// <c>x%sy.txt</c> beside one called <c>;id;.txt</c> is enough to make it run something. So
+    /// the per cent is doubled to mean itself, and this is the function to reach for whenever the
+    /// result is going to <c>Execute</c> rather than to a runner.
+    /// </para>
+    /// </remarks>
+    public static string QuoteForCommandLine(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        return ShellQuote(value).Replace("%", "%%", StringComparison.Ordinal);
+    }
 }
 
 /// <summary>Raised when a macro has no value, so the line must not run.</summary>
