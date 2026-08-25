@@ -24,9 +24,21 @@
 /// <summary>Quotes one argument for the shell these commands run through.</summary>
 internal static class ShellWord
 {
-    /// <summary>Wraps a word in single quotes, escaping any it contains.</summary>
+    /// <summary>Wraps a word so it survives both the shell and a second macro expansion.</summary>
+    /// <remarks>
+    /// Every use here builds a line and hands it to <c>FileManager.Execute</c>, which expands
+    /// macros over the whole line — including the part just quoted. Quoting alone is therefore
+    /// not enough: a per cent in the name is read as the start of a macro, and the substitution
+    /// brings its own quotes, which close the quoting around the name and leave the rest bare. A
+    /// file called <c>My%20Docs</c> was enough to break these commands; one called
+    /// <c>x%sy.txt</c> beside one called <c>;id;.txt</c> was enough to make them run something.
+    ///
+    /// Canger provides the correct pair, so this is now its name rather than its own attempt:
+    /// <c>ShellQuote</c> for a command going straight to a runner, this one for a line going to
+    /// <c>Execute</c>.
+    /// </remarks>
     internal static string Quote(string value) =>
-        "'" + value.Replace("'", @"'\''", System.StringComparison.Ordinal) + "'";
+        Canger.Core.Commands.MacroExpander.QuoteForCommandLine(value);
 }
 
 /// <summary>Resize images.</summary>
