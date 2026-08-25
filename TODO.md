@@ -1906,6 +1906,41 @@ search, `yy`/`pp`, `:mkdir`, `cw`, `dD`, `:flat`, `zf`, the task view, `?`, tabs
 tab, `:cd` completion, bookmarks, and paging. One apparent failure was the test's own fault — it
 asserted a 24-row page in a twelve-entry directory, where clamping at the end is right.
 
+### Control characters were written straight to the terminal
+
+Reported as "the popup menu is not cleanly formatted": the hint window had fragments of other
+rows scattered through it at odd columns.
+
+The cause is not the hint window. Their bindings are written with a trailing tab and a comment —
+`map ecc shell -d clipboard-clear<TAB><TAB><TAB># Clear clipboard` — and ranger keeps that in the
+command, since `source` skips only lines that *start* with `#` (`core/actions.py:378-381`). So
+Canger stores it too, correctly. What Canger then did was write the tab out verbatim.
+
+The buffer's contract is one cell per column, and a tab breaks it: the terminal moves to the next
+tab stop without clearing what it passes over, so the row keeps whatever the listing had drawn
+there and everything after lands in the wrong column. Exactly the corruption reported.
+
+**The same hole was a good deal worse than untidy.** Nothing between a filename and the terminal
+was checking, so a file named with an escape sequence had that sequence written out — enough to
+recolour the screen, clear it, or move the cursor, chosen by whoever named the file rather than
+by whoever is reading it. Verified before the fix: a file called `colour<ESC>[31mred.txt` put a
+raw `ESC [ 3 1 m` into the output stream. Ranger has the same gap and says so
+(`gui/widgets/titlebar.py:92`, *"TODO: Properly escape non-printable chars"*), so this is a
+deliberate divergence.
+
+Fixed at `ScreenBuffer.Set`, the one place every widget's text passes through. A tab becomes a
+space — which is what it was standing in for, and makes those trailing comments read as the
+descriptions they are — and everything else `Rune.IsControl` accepts becomes `?`, visible rather
+than silent, because a name with something odd in it should look odd.
+
+| | before | after |
+|---|---|---|
+| `ec` hint row | `shell -d clipboard-clear` then listing text bleeding through | `shell -d clipboard-clear   # Clear clipboard` |
+| `tabbed<TAB>name.txt` | row corrupted from the tab onward | `tabbed name.txt` |
+| `colour<ESC>[31mred.txt` | raw escape reaches the terminal | `colour?[31mred.txt`, nothing reaches it |
+
+`tests/Canger.Tui.Tests/ScreenBufferControlCharacterTests.cs`, 12 tests.
+
 ### A visual selection did not say it was still open
 
 Reported as a bug: two files selected, a third created between them, and the new one joined the
