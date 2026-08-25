@@ -64,6 +64,11 @@ public sealed class Tags(string path)
 
         foreach (string filePath in paths)
         {
+            if (!CanBeStored(filePath))
+            {
+                continue;
+            }
+
             _tags[filePath] = tag;
         }
 
@@ -115,6 +120,11 @@ public sealed class Tags(string path)
                     _tags.Remove(filePath);
                     continue;
                 }
+            }
+
+            if (!CanBeStored(filePath))
+            {
+                continue;
             }
 
             _tags[filePath] = tag;
@@ -298,5 +308,21 @@ public sealed class Tags(string path)
             return path;
         }
     }
+
+    /// <summary>Whether a path can be written to the tag file at all.</summary>
+    /// <param name="path">The path to test.</param>
+    /// <returns><see langword="false"/> when storing it would corrupt the file.</returns>
+    /// <remarks>
+    /// The format is one entry per line — ranger's, so a tag file can be shared between the two —
+    /// and a path containing a newline therefore cannot be represented. Written out it becomes
+    /// two lines, and comes back as two tags on two paths that do not exist; the next save makes
+    /// that permanent, and the real tag is gone.
+    ///
+    /// Refusing keeps the format readable by ranger. Escaping would fix the round trip properly
+    /// and break that, which is a poor trade for a case this rare.
+    /// </remarks>
+    private static bool CanBeStored(string path) =>
+        !path.Contains('\n', StringComparison.Ordinal) &&
+        !path.Contains('\r', StringComparison.Ordinal);
 
 }

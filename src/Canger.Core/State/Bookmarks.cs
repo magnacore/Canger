@@ -82,6 +82,16 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
             return;
         }
 
+        // The format is one bookmark per line, so a path containing a newline cannot be written
+        // faithfully: it comes back truncated at the break, and the bookmark then points at a
+        // directory that is not the one that was bookmarked. Refused rather than escaped, which
+        // would make the file unreadable to ranger for a case this rare.
+        if (directory.Contains('\n', StringComparison.Ordinal) ||
+            directory.Contains('\r', StringComparison.Ordinal))
+        {
+            return;
+        }
+
         _entries[Normalize(key)] = directory;
 
         if (AutoSave)
