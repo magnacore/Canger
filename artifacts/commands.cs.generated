@@ -1,0 +1,369 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Generated from a ranger commands.py by tools/port-ranger-commands.py. Do not edit by hand:
+// hand-written commands belong in a file of their own beside this one, or they will be lost the
+// next time this runs.
+//
+// Each of these was a Python class whose whole body was one shell command. Canger compiles this
+// file at startup, so editing it and restarting is all that is needed — the same loop as ranger's
+// commands.py, in the language the rest of Canger is written in.
+//
+// 29 commands generated. Left for hand-porting, because they do more than run a shell
+// command: fzf_select, fzf_locate, fd_search, fd_next, fd_prev, mkdirmv, toggle_flat, copy_selected_to_highlight, directories_number_highlight, mark_tag, unmark_tag, open_in_tabs, gpg_signature_verify, gpg_decrypt_file, file_number, paste_ext, audio_convert_foss, pdf_split, text_split, file_select_similar, file_copy_similar, mount.
+
+/// <summary>Quotes one argument for the shell these commands run through.</summary>
+internal static class ShellWord
+{
+    /// <summary>Wraps a word in single quotes, escaping any it contains.</summary>
+    internal static string Quote(string value) =>
+        "'" + value.Replace("'", @"'\''", System.StringComparison.Ordinal) + "'";
+}
+
+/// <summary>Copy selected files to the current directory.</summary>
+[Command("ranger_pycopy", Summary = "Copy selected files to the current directory.")]
+public sealed class RangerPycopyCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-copy-ranger %c %d");
+    }
+}
+
+/// <summary>Move selected files to the current directory.</summary>
+[Command("ranger_pymove", Summary = "Move selected files to the current directory.")]
+public sealed class RangerPymoveCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-move-ranger %c %d");
+    }
+}
+
+/// <summary>Resize images.</summary>
+[Command("image_convert", Summary = "Resize images. Usage: image_convert [<dimension>]")]
+public sealed class ImageConvertCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        string dimension = Rest(1).Trim() is { Length: > 0 } given
+            ? given
+            : "1080";
+
+        FileManager.Execute($"shell image-convert-tui {dimension} %s");
+    }
+}
+
+/// <summary>Creates detached signatures for a file using gpg If only one file is highlighted, it will be treated as a single selection.</summary>
+[Command("gpg_detached_sign", Summary = "Creates detached signatures for a file using gpg If only one file is highlighted, it will be treated as a single selection.")]
+public sealed class GpgDetachedSignCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        foreach (FsNode entry in FileManager.Selection)
+        {
+            FileManager.Execute($"shell -f gpg --detach-sign -u 80513A7E8F48186D {ShellWord.Quote(entry.Basename)} ");
+        }
+
+        FileManager.ChangeMode("normal");
+    }
+}
+
+/// <summary>Encrypts a file using gpg If only one file is highlighted, it will be treated as a single selection.</summary>
+[Command("gpg_encrypt_file", Summary = "Encrypts a file using gpg If only one file is highlighted, it will be treated as a single selection.")]
+public sealed class GpgEncryptFileCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        foreach (FsNode entry in FileManager.Selection)
+        {
+            FileManager.Execute($"shell -f gpg -e -u F19C46E0E40C9568 -r F19C46E0E40C9568 {ShellWord.Quote(entry.Basename)} ");
+        }
+
+        FileManager.ChangeMode("normal");
+    }
+}
+
+/// <summary>tag files.</summary>
+[Command("files_tag", Summary = "tag files. Usage: files_tag [<tag>]")]
+public sealed class FilesTagCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        string tag = Rest(1).Trim() is { Length: > 0 } given
+            ? given
+            : "noTag";
+
+        FileManager.Execute($"shell file-tag {tag} %s");
+    }
+}
+
+/// <summary>remove file tags.</summary>
+[Command("files_tag_remove", Summary = "remove file tags. Usage: files_tag_remove [<tag>]")]
+public sealed class FilesTagRemoveCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        string tag = Rest(1).Trim() is { Length: > 0 } given
+            ? given
+            : "noTag";
+
+        FileManager.Execute($"shell file-tag-remove {tag} %s");
+    }
+}
+
+/// <summary>Converts file/folder names to text files.</summary>
+[Command("file_convert_text", Summary = "Converts file/folder names to text files.")]
+public sealed class FileConvertTextCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-convert-text %s");
+    }
+}
+
+/// <summary>convert documents using pandoc.</summary>
+[Command("document_convert", Summary = "convert documents using pandoc. Usage: document_convert [<extension>]")]
+public sealed class DocumentConvertCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        string extension = Rest(1).Trim() is { Length: > 0 } given
+            ? given
+            : "pdf";
+
+        FileManager.Execute($"shell document-convert {extension} %s");
+    }
+}
+
+/// <summary>Converts images to text If only one file is highlighted, it will be treated as a single selection.</summary>
+[Command("ocr", Summary = "Converts images to text If only one file is highlighted, it will be treated as a single selection.")]
+public sealed class OcrCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell image-convert-text %s");
+    }
+}
+
+/// <summary>Extract audio from a video without conversion.</summary>
+[Command("video_convert_audio", Summary = "Extract audio from a video without conversion.")]
+public sealed class VideoConvertAudioCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell video-convert-audio-tui %s");
+    }
+}
+
+/// <summary>Combine similar media files.</summary>
+[Command("media_combine", Summary = "Combine similar media files.")]
+public sealed class MediaCombineCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell media-combine-tui %s");
+    }
+}
+
+/// <summary>Set valid filenames.</summary>
+[Command("file_rename_valid", Summary = "Set valid filenames.")]
+public sealed class FileRenameValidCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-rename-valid %s");
+    }
+}
+
+/// <summary>Combine pdf files.</summary>
+[Command("pdf_combine", Summary = "Combine pdf files.")]
+public sealed class PdfCombineCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell pdf-combine %s");
+    }
+}
+
+/// <summary>Combine images into pdf files.</summary>
+[Command("image_combine_pdf", Summary = "Combine images into pdf files.")]
+public sealed class ImageCombinePdfCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell image-combine-pdf %s");
+    }
+}
+
+/// <summary>Converts text to speech using Google If only one file is highlighted, it will be treated as a single selection.</summary>
+[Command("text_to_speech", Summary = "Converts text to speech using Google If only one file is highlighted, it will be treated as a single selection.")]
+public sealed class TextToSpeechCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell text-to-speech %s");
+    }
+}
+
+/// <summary>Convert PDF to text.</summary>
+[Command("pdf_convert_text", Summary = "Convert PDF to text.")]
+public sealed class PdfConvertTextCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell pdf-convert-text %s");
+    }
+}
+
+/// <summary>Interactively extract tracks from mkv/a without conversion.</summary>
+[Command("mkv_extract_track", Summary = "Interactively extract tracks from mkv/a without conversion.")]
+public sealed class MkvExtractTrackCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell mkv-extract-track-tui %s");
+    }
+}
+
+/// <summary>Embed a subtitle in a video file.</summary>
+[Command("embed_subtitle", Summary = "Embed a subtitle in a video file.")]
+public sealed class EmbedSubtitleCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell embed-subtitle %s");
+    }
+}
+
+/// <summary>epub_convert_multiple Converts epub to text or pdf If only one file is highlighted, it will be treated as a single selection.</summary>
+[Command("epub_convert_multiple_tui", Summary = "epub_convert_multiple Converts epub to text or pdf If only one file is highlighted, it will be treated as a single selection.")]
+public sealed class EpubConvertMultipleTuiCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell epub-convert-multiple-tui %s");
+    }
+}
+
+/// <summary>tag files with percentage.</summary>
+[Command("files_tag_percentage", Summary = "tag files with percentage.")]
+public sealed class FilesTagPercentageCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-tag-percentage %s");
+    }
+}
+
+/// <summary>remove files tags with percentage.</summary>
+[Command("files_tag_remove_percentage", Summary = "remove files tags with percentage.")]
+public sealed class FilesTagRemovePercentageCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-tag-remove-percentage %s");
+    }
+}
+
+/// <summary>remove numbers from the start of filenames.</summary>
+[Command("file_number_remove", Summary = "remove numbers from the start of filenames.")]
+public sealed class FileNumberRemoveCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-number-remove %s");
+    }
+}
+
+/// <summary>Add background music to audio file.</summary>
+[Command("audio_add_music", Summary = "Add background music to audio file.")]
+public sealed class AudioAddMusicCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell audio-add-music-tui %s");
+    }
+}
+
+/// <summary>Change volume of audio : audio_process.</summary>
+[Command("audio_process", Summary = "Change volume of audio : audio_process.")]
+public sealed class AudioProcessCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell audio-process-tui %s");
+    }
+}
+
+/// <summary>Calculate length of videos in subdirectores of selected folders : with a specific tag : Demonstrates how commands can be executed on selected folders.</summary>
+[Command("media_length_tag", Summary = "Calculate length of videos in subdirectores of selected folders : with a specific tag : Demonstrates how commands can be executed on selected folders.")]
+public sealed class MediaLengthTagCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        foreach (FsNode entry in FileManager.Selection)
+        {
+            FileManager.Execute($"shell -w media-length-tag-tui {ShellWord.Quote(entry.Basename)} ");
+        }
+
+        FileManager.ChangeMode("normal");
+    }
+}
+
+/// <summary>Set filenames to title case.</summary>
+[Command("file_rename_title", Summary = "Set filenames to title case.")]
+public sealed class FileRenameTitleCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-rename-title %s");
+    }
+}
+
+/// <summary>Change filename extension.</summary>
+[Command("file_rename_extension", Summary = "Change filename extension.")]
+public sealed class FileRenameExtensionCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell file-rename-extension-tui %s");
+    }
+}
+
+/// <summary>Watermark images.</summary>
+[Command("image_watermark", Summary = "Watermark images.")]
+public sealed class ImageWatermarkCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        FileManager.Execute("shell image-watermark-tui %s");
+    }
+}

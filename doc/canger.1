@@ -1,0 +1,2027 @@
+.TH CANGER 1 "" "canger 0.1.0" "Canger Manual"
+.SH NAME
+canger \- a file manager for the terminal
+.SH SYNOPSIS
+.B canger
+.RI [ options ]
+.RI [ path ...]
+.SH DESCRIPTION
+.B Canger
+is a file manager with vi-style key bindings, a port of
+.B ranger
+to .NET. It shows a directory as a set of columns: the path leading to where you
+are, the listing itself, and a preview of whatever the cursor is on. Moving right
+enters a directory or opens a file; moving left goes back up.
+.PP
+Almost everything is a command, and almost every key is bound to one. Typing
+.B :
+opens a prompt where the same commands can be typed by name, which is how to
+reach the ones no key is bound to.
+.SH CONCEPTS
+.SS Selection
+Commands act on the
+.IR selection ,
+which is every marked file, or the file under the cursor when nothing is marked.
+.B Space
+marks a file and moves on, so a run of files is marked by holding one key.
+.SS Tabs
+Several directories can be open at once.
+.B gn
+opens a tab,
+.B gt
+moves between them, and
+.B ~
+switches to a view showing every tab side by side rather than one path.
+.SS Copying
+.BR yy " copies and " dd " cuts; " pp
+pastes. Both take a direction, so
+.B 3dj
+cuts the next three files without marking anything.
+.PP
+On a copy-on-write filesystem such as btrfs or XFS, a copy within one filesystem
+is cloned rather than duplicated: it completes instantly and consumes no extra
+space until one of the copies is written to. The task view reports which files
+were cloned and which were copied, along with a rate and an estimate of the time
+remaining for the latter.
+.SS Version control
+With
+.B vcs_aware
+set, files carry a marker showing their status, the branch appears in the title
+bar and the latest commit on the status line.
+.BR :stage " and " :unstage
+move the selection in and out of the index.
+.SH OPTIONS
+.TP
+.B -h, --help
+show this message and exit
+.TP
+.B --version
+show the version and exit
+.TP
+.B -c, --clean
+ignore all configuration, plugins and saved state
+.TP
+.B -r, --confdir=DIR
+use a different configuration directory
+.TP
+.B --datadir=DIR
+use a different data directory
+.TP
+.B --cachedir=DIR
+use a different cache directory
+.TP
+.B --copy-config=WHICH copy shipped configuration into the config directory;
+.TP
+.B --cmd=COMMAND
+run COMMAND after reading the configuration (repeatable)
+.TP
+.B --selectfile=FILE
+start with FILE under the cursor
+.TP
+.B --show-only-dirs
+show only directories
+.TP
+.B --choosefile=OUT
+write the opened file's path to OUT and quit
+.TP
+.B --choosefiles=OUT
+write every selected file's path to OUT and quit
+.TP
+.B --choosedir=OUT
+write the last visited directory to OUT on quitting
+.TP
+.B --config
+report what the configuration produced
+.TP
+.B --list
+print a listing without taking over the terminal
+.TP
+.B --key-probe
+report what each key decodes to
+.TP
+.B --man
+write the manual page to standard output
+.TP
+.B --list-tagged-files[=TAG]
+.SH KEY BINDINGS
+.SS Browser
+.TP
+.B !
+console shell%space
+.TP
+.B "<any>
+tag_toggle tag=%any
+.TP
+.B #
+console shell -p%space
+.TP
+.B \&'<any>
+enter_bookmark %any
+.TP
+.B \&'<bg>
+draw_bookmarks
+.TP
+.B )
+jump_non
+.TP
+.B +X
+shell -f chmod +X %s
+.TP
+.B +aX
+shell -f chmod a+X %s
+.TP
+.B +ar
+shell -f chmod a+r %s
+.TP
+.B +as
+shell -f chmod a+s %s
+.TP
+.B +at
+shell -f chmod a+t %s
+.TP
+.B +aw
+shell -f chmod a+w %s
+.TP
+.B +ax
+shell -f chmod a+x %s
+.TP
+.B +gX
+shell -f chmod g+X %s
+.TP
+.B +gr
+shell -f chmod g+r %s
+.TP
+.B +gs
+shell -f chmod g+s %s
+.TP
+.B +gt
+shell -f chmod g+t %s
+.TP
+.B +gw
+shell -f chmod g+w %s
+.TP
+.B +gx
+shell -f chmod g+x %s
+.TP
+.B +oX
+shell -f chmod o+X %s
+.TP
+.B +or
+shell -f chmod o+r %s
+.TP
+.B +os
+shell -f chmod o+s %s
+.TP
+.B +ot
+shell -f chmod o+t %s
+.TP
+.B +ow
+shell -f chmod o+w %s
+.TP
+.B +ox
+shell -f chmod o+x %s
+.TP
+.B +r
+shell -f chmod +r %s
+.TP
+.B +s
+shell -f chmod +s %s
+.TP
+.B +t
+shell -f chmod +t %s
+.TP
+.B +uX
+shell -f chmod u+X %s
+.TP
+.B +ur
+shell -f chmod u+r %s
+.TP
+.B +us
+shell -f chmod u+s %s
+.TP
+.B +ut
+shell -f chmod u+t %s
+.TP
+.B +uw
+shell -f chmod u+w %s
+.TP
+.B +ux
+shell -f chmod u+x %s
+.TP
+.B +w
+shell -f chmod +w %s
+.TP
+.B +x
+shell -f chmod +x %s
+.TP
+.B -X
+shell -f chmod -X %s
+.TP
+.B -aX
+shell -f chmod a-X %s
+.TP
+.B -ar
+shell -f chmod a-r %s
+.TP
+.B -as
+shell -f chmod a-s %s
+.TP
+.B -at
+shell -f chmod a-t %s
+.TP
+.B -aw
+shell -f chmod a-w %s
+.TP
+.B -ax
+shell -f chmod a-x %s
+.TP
+.B -gX
+shell -f chmod g-X %s
+.TP
+.B -gr
+shell -f chmod g-r %s
+.TP
+.B -gs
+shell -f chmod g-s %s
+.TP
+.B -gt
+shell -f chmod g-t %s
+.TP
+.B -gw
+shell -f chmod g-w %s
+.TP
+.B -gx
+shell -f chmod g-x %s
+.TP
+.B -oX
+shell -f chmod o-X %s
+.TP
+.B -or
+shell -f chmod o-r %s
+.TP
+.B -os
+shell -f chmod o-s %s
+.TP
+.B -ot
+shell -f chmod o-t %s
+.TP
+.B -ow
+shell -f chmod o-w %s
+.TP
+.B -ox
+shell -f chmod o-x %s
+.TP
+.B -r
+shell -f chmod -r %s
+.TP
+.B -s
+shell -f chmod -s %s
+.TP
+.B -t
+shell -f chmod -t %s
+.TP
+.B -uX
+shell -f chmod u-X %s
+.TP
+.B -ur
+shell -f chmod u-r %s
+.TP
+.B -us
+shell -f chmod u-s %s
+.TP
+.B -ut
+shell -f chmod u-t %s
+.TP
+.B -uw
+shell -f chmod u-w %s
+.TP
+.B -ux
+shell -f chmod u-x %s
+.TP
+.B -w
+shell -f chmod -w %s
+.TP
+.B -x
+shell -f chmod -x %s
+.TP
+.B \&.!
+filter_stack add not
+.TP
+.B \&."
+filter_stack add duplicate
+.TP
+.B \&.#
+console filter_stack add hash%space
+.TP
+.B \&.&
+filter_stack add and
+.TP
+.B \&.'
+filter_stack add unique
+.TP
+.B \&.*
+filter_stack decompose
+.TP
+.B \&..
+filter_stack show
+.TP
+.B \&.c
+filter_stack clear
+.TP
+.B \&.d
+filter_stack add type d
+.TP
+.B \&.f
+filter_stack add type f
+.TP
+.B \&.l
+filter_stack add type l
+.TP
+.B \&.m
+console filter_stack add mime%space
+.TP
+.B \&.n
+console filter_stack add name%space
+.TP
+.B \&.p
+filter_stack pop
+.TP
+.B \&.r
+filter_stack rotate
+.TP
+.B \&.|
+filter_stack add or
+.TP
+.B /
+console search%space
+.TP
+.B :
+console
+.TP
+.B ;
+console
+.TP
+.B <alt>1
+tab_open 1
+.TP
+.B <alt>2
+tab_open 2
+.TP
+.B <alt>3
+tab_open 3
+.TP
+.B <alt>4
+tab_open 4
+.TP
+.B <alt>5
+tab_open 5
+.TP
+.B <alt>6
+tab_open 6
+.TP
+.B <alt>7
+tab_open 7
+.TP
+.B <alt>8
+tab_open 8
+.TP
+.B <alt>9
+tab_open 9
+.TP
+.B <alt><left>
+tab_move -1
+.TP
+.B <alt><right>
+tab_move 1
+.TP
+.B <alt>j
+scroll_preview 1
+.TP
+.B <alt>k
+scroll_preview -1
+.TP
+.B <alt>l
+tab_shift -1
+.TP
+.B <alt>r
+tab_shift 1
+.TP
+.B <backspace2>
+set show_hidden!
+.TP
+.B <backspace>
+set show_hidden!
+.TP
+.B <c-b>
+move up=1     pages=True
+.TP
+.B <c-c>
+abort
+.TP
+.B <c-d>
+move down=0.5  pages=True
+.TP
+.B <c-f>
+move down=1   pages=True
+.TP
+.B <c-h>
+set show_hidden!
+.TP
+.B <c-i>
+tab_move 1
+.TP
+.B <c-j>
+move right=1
+.TP
+.B <c-l>
+redraw_window
+.TP
+.B <c-n>
+tab_new
+.TP
+.B <c-p>
+console_history 1
+.TP
+.B <c-r>
+reset
+.TP
+.B <c-u>
+move up=0.5    pages=True
+.TP
+.B <c-w>
+tab_close
+.TP
+.B <down>
+move down=1
+.TP
+.B <end>
+move to=-1
+.TP
+.B <escape>
+change_mode normal
+.TP
+.B <f10>
+exit
+.TP
+.B <f1>
+help
+.TP
+.B <f2>
+rename_append
+.TP
+.B <f3>
+display_file
+.TP
+.B <f4>
+edit
+.TP
+.B <f5>
+copy
+.TP
+.B <f6>
+cut
+.TP
+.B <f7>
+console mkdir%space
+.TP
+.B <f8>
+console delete
+.TP
+.B <home>
+move to=0
+.TP
+.B <insert>
+console touch%space
+.TP
+.B <left>
+move left=1
+.TP
+.B <pagedown>
+move down=1   pages=True
+.TP
+.B <pageup>
+move up=1     pages=True
+.TP
+.B <right>
+move right=1
+.TP
+.B <s-tab>
+tab_move -1
+.TP
+.B <space>
+mark_files toggle=True
+.TP
+.B <up>
+move up=1
+.TP
+.B =
+chmod
+.TP
+.B ?
+help
+.TP
+.B @
+console -p6 shell  %%s
+.TP
+.B A
+rename_append where=end
+.TP
+.B E
+edit
+.TP
+.B F
+set freeze_files!
+.TP
+.B G
+move to=-1
+.TP
+.B H
+history_go -1
+.TP
+.B I
+rename_append where=start
+.TP
+.B J
+move down=0.5  pages=True
+.TP
+.B K
+move up=0.5    pages=True
+.TP
+.B L
+history_go 1
+.TP
+.B MH
+linemode sizehumanreadablemtime
+.TP
+.B Mf
+linemode filename
+.TP
+.B Mh
+linemode humanreadablemtime
+.TP
+.B Mi
+linemode fileinfo
+.TP
+.B Mm
+linemode mtime
+.TP
+.B Mp
+linemode permissions
+.TP
+.B Ms
+linemode sizemtime
+.TP
+.B Mt
+linemode metatitle
+.TP
+.B N
+search_next forward=False
+.TP
+.B Q
+quitall
+.TP
+.B R
+reload_cwd
+.TP
+.B S
+shell $SHELL
+.TP
+.B V
+toggle_visual_mode
+.TP
+.B W
+display_log
+.TP
+.B ZQ
+quit
+.TP
+.B ZZ
+quit
+.TP
+.B [
+move_parent -1
+.TP
+.B ]
+move_parent 1
+.TP
+.B `<any>
+enter_bookmark %any
+.TP
+.B `<bg>
+draw_bookmarks
+.TP
+.B a
+rename_append
+.TP
+.B ca
+search_next order=atime
+.TP
+.B cc
+search_next order=ctime
+.TP
+.B cd
+console cd%space
+.TP
+.B ci
+search_next order=mimetype
+.TP
+.B cm
+search_next order=mtime
+.TP
+.B cs
+search_next order=size
+.TP
+.B ct
+search_next order=tag
+.TP
+.B cw
+console rename%space
+.TP
+.B dD
+console delete
+.TP
+.B dG
+cut to=-1
+.TP
+.B dT
+console trash
+.TP
+.B dU
+shell -p du -d 1 -h "$(2>/dev/null >&2 du --apparent-size /dev/null && printf '%s\en' --apparent-size || printf '%s\en' --)" | sort -rh
+.TP
+.B da
+cut mode=add
+.TP
+.B dc
+get_cumulative_size
+.TP
+.B dd
+cut
+.TP
+.B dgg
+cut to=0
+.TP
+.B dj
+cut down=1
+.TP
+.B dk
+cut up=1
+.TP
+.B dr
+cut mode=remove
+.TP
+.B dt
+cut mode=toggle
+.TP
+.B du
+shell -p du -d 1 -h "$(2>/dev/null >&2 du --apparent-size /dev/null && printf '%s\en' --apparent-size || printf '%s\en' --)"
+.TP
+.B f
+console find%space
+.TP
+.B g/
+cd /
+.TP
+.B g?
+cd /usr/share/doc/canger
+.TP
+.B gL
+cd -r %f
+.TP
+.B gM
+cd /mnt
+.TP
+.B gR
+cd $CANGER_INSTALL_DIR
+.TP
+.B gT
+tab_move -1
+.TP
+.B gc
+tab_close
+.TP
+.B gd
+cd /dev
+.TP
+.B ge
+cd /etc
+.TP
+.B gg
+move to=0
+.TP
+.B gh
+cd ~
+.TP
+.B gi
+cd /run/media/$USER
+.TP
+.B gl
+cd -r .
+.TP
+.B gm
+cd /media
+.TP
+.B gn
+tab_new
+.TP
+.B go
+cd /opt
+.TP
+.B gp
+cd /tmp
+.TP
+.B gr
+cd /
+.TP
+.B gs
+cd /srv
+.TP
+.B gt
+tab_move 1
+.TP
+.B gu
+cd /usr
+.TP
+.B gv
+cd /var
+.TP
+.B h
+move left=1
+.TP
+.B i
+display_file
+.TP
+.B j
+move down=1
+.TP
+.B k
+move up=1
+.TP
+.B l
+move right=1
+.TP
+.B m<any>
+set_bookmark %any
+.TP
+.B m<bg>
+draw_bookmarks
+.TP
+.B n
+search_next
+.TP
+.B oA
+chain set sort=atime;     set sort_reverse=True
+.TP
+.B oB
+chain set sort=basename;  set sort_reverse=True
+.TP
+.B oC
+chain set sort=ctime;     set sort_reverse=True
+.TP
+.B oE
+chain set sort=extension; set sort_reverse=True
+.TP
+.B oM
+chain set sort=mtime;     set sort_reverse=True
+.TP
+.B oN
+chain set sort=natural;   set sort_reverse=True
+.TP
+.B oS
+chain set sort=size;      set sort_reverse=True
+.TP
+.B oT
+chain set sort=type;      set sort_reverse=True
+.TP
+.B oa
+chain set sort=atime;     set sort_reverse=False
+.TP
+.B ob
+chain set sort=basename;  set sort_reverse=False
+.TP
+.B oc
+chain set sort=ctime;     set sort_reverse=False
+.TP
+.B oe
+chain set sort=extension; set sort_reverse=False
+.TP
+.B om
+chain set sort=mtime;     set sort_reverse=False
+.TP
+.B on
+chain set sort=natural;   set sort_reverse=False
+.TP
+.B or
+set sort_reverse!
+.TP
+.B os
+chain set sort=size;      set sort_reverse=False
+.TP
+.B ot
+chain set sort=type;      set sort_reverse=False
+.TP
+.B oz
+set sort=random
+.TP
+.B p'<any>
+paste dest=%any_path
+.TP
+.B p'<bg>
+draw_bookmarks
+.TP
+.B pL
+paste_symlink relative=True
+.TP
+.B pO
+paste overwrite=True append=True
+.TP
+.B pP
+paste append=True
+.TP
+.B p`<any>
+paste dest=%any_path
+.TP
+.B p`<bg>
+draw_bookmarks
+.TP
+.B pd
+console paste dest=
+.TP
+.B phl
+paste_hardlink
+.TP
+.B pht
+paste_hardlinked_subtree
+.TP
+.B pl
+paste_symlink relative=False
+.TP
+.B po
+paste overwrite=True
+.TP
+.B pp
+paste
+.TP
+.B q
+quit
+.TP
+.B r
+chain draw_possible_programs; console open_with%space
+.TP
+.B s
+console shell%space
+.TP
+.B t
+tag_toggle
+.TP
+.B uV
+toggle_visual_mode reverse=True
+.TP
+.B ud
+uncut
+.TP
+.B um<any>
+unset_bookmark %any
+.TP
+.B um<bg>
+draw_bookmarks
+.TP
+.B uq
+tab_restore
+.TP
+.B ut
+tag_remove
+.TP
+.B uv
+mark_files all=True val=False
+.TP
+.B uy
+uncut
+.TP
+.B v
+mark_files all=True toggle=True
+.TP
+.B w
+taskview_open
+.TP
+.B y.
+yank name_without_extension
+.TP
+.B yG
+copy to=-1
+.TP
+.B ya
+copy mode=add
+.TP
+.B yd
+yank dir
+.TP
+.B ygg
+copy to=0
+.TP
+.B yj
+copy down=1
+.TP
+.B yk
+copy up=1
+.TP
+.B yn
+yank name
+.TP
+.B yp
+yank path
+.TP
+.B yr
+copy mode=remove
+.TP
+.B yt
+copy mode=toggle
+.TP
+.B yy
+copy
+.TP
+.B zI
+set flushinput!
+.TP
+.B zP
+set preview_directories!
+.TP
+.B zc
+set collapse_preview!
+.TP
+.B zd
+set sort_directories_first!
+.TP
+.B zf
+console filter%space
+.TP
+.B zh
+set show_hidden!
+.TP
+.B zi
+set preview_images!
+.TP
+.B zm
+set mouse_enabled!
+.TP
+.B zp
+set preview_files!
+.TP
+.B zs
+set sort_case_insensitive!
+.TP
+.B zu
+set autoupdate_cumulative_size!
+.TP
+.B zv
+set use_preview_script!
+.TP
+.B zz
+console filter%space
+.TP
+.B {
+traverse_backwards
+.TP
+.B }
+traverse
+.TP
+.B ~
+set viewmode!
+.SS Console
+.TP
+.B <allow_quantifiers>
+false
+.TP
+.B <alt><left>
+console_word_left
+.TP
+.B <alt><right>
+console_word_right
+.TP
+.B <alt>b
+console_word_left
+.TP
+.B <alt>d
+console_delete_word_forward
+.TP
+.B <alt>f
+console_word_right
+.TP
+.B <alt>t
+console_transpose_words
+.TP
+.B <backspace2>
+console_delete_back
+.TP
+.B <backspace>
+console_delete_back
+.TP
+.B <c-a>
+console_home
+.TP
+.B <c-b>
+console_left
+.TP
+.B <c-c>
+console_close
+.TP
+.B <c-d>
+console_delete
+.TP
+.B <c-e>
+console_end
+.TP
+.B <c-f>
+console_right
+.TP
+.B <c-g>
+console_close
+.TP
+.B <c-h>
+console_delete_back
+.TP
+.B <c-i>
+console_complete
+.TP
+.B <c-j>
+console_accept
+.TP
+.B <c-k>
+console_delete_to_end
+.TP
+.B <c-l>
+redraw_window
+.TP
+.B <c-n>
+console_history_forward
+.TP
+.B <c-p>
+console_history_back
+.TP
+.B <c-t>
+console_transpose_chars
+.TP
+.B <c-u>
+console_delete_to_start
+.TP
+.B <c-w>
+console_delete_word
+.TP
+.B <c-y>
+console_paste
+.TP
+.B <delete>
+console_delete
+.TP
+.B <down>
+console_history_forward
+.TP
+.B <end>
+console_end
+.TP
+.B <escape>
+console_close
+.TP
+.B <home>
+console_home
+.TP
+.B <left>
+console_left
+.TP
+.B <right>
+console_right
+.TP
+.B <s-tab>
+console_complete_back
+.TP
+.B <up>
+console_history_back
+.SS Pager
+.TP
+.B <c-b>
+pager_move  up=1.0    pages=True
+.TP
+.B <c-d>
+pager_move  down=0.5  pages=True
+.TP
+.B <c-f>
+pager_move  down=1.0  pages=True
+.TP
+.B <c-j>
+pager_move  down=1
+.TP
+.B <c-l>
+redraw_window
+.TP
+.B <c-n>
+pager_move  down=1
+.TP
+.B <c-p>
+pager_move  up=1
+.TP
+.B <c-u>
+pager_move  up=0.5    pages=True
+.TP
+.B <down>
+pager_move  down=1
+.TP
+.B <end>
+pager_move  to=-1
+.TP
+.B <escape>
+pager_close
+.TP
+.B <f3>
+pager_close
+.TP
+.B <home>
+pager_move  to=0
+.TP
+.B <left>
+pager_move  left=4
+.TP
+.B <pagedown>
+pager_move  down=1.0  pages=True
+.TP
+.B <pageup>
+pager_move  up=1.0    pages=True
+.TP
+.B <right>
+pager_move  right=4
+.TP
+.B <space>
+pager_move  down=1.0  pages=True
+.TP
+.B <up>
+pager_move  up=1
+.TP
+.B E
+edit_file
+.TP
+.B G
+pager_move  to=-1
+.TP
+.B Q
+pager_close
+.TP
+.B b
+pager_move  up=1.0    pages=True
+.TP
+.B d
+pager_move  down=0.5  pages=True
+.TP
+.B f
+pager_move  down=1.0  pages=True
+.TP
+.B g
+pager_move  to=0
+.TP
+.B h
+pager_move  left=4
+.TP
+.B i
+pager_close
+.TP
+.B j
+pager_move  down=1
+.TP
+.B k
+pager_move  up=1
+.TP
+.B l
+pager_move  right=4
+.TP
+.B n
+pager_move  down=1.0  pages=True
+.TP
+.B p
+pager_move  up=1.0    pages=True
+.TP
+.B q
+pager_close
+.TP
+.B u
+pager_move  up=0.5    pages=True
+.SS Task view
+.TP
+.B <c-b>
+taskview_move up=1.0    pages=True
+.TP
+.B <c-c>
+taskview_close
+.TP
+.B <c-d>
+taskview_move down=0.5  pages=True
+.TP
+.B <c-f>
+taskview_move down=1.0  pages=True
+.TP
+.B <c-j>
+taskview_move down=1
+.TP
+.B <c-l>
+redraw_window
+.TP
+.B <c-n>
+taskview_move down=1
+.TP
+.B <c-p>
+taskview_move up=1
+.TP
+.B <c-u>
+taskview_move up=0.5    pages=True
+.TP
+.B <delete>
+task_remove
+.TP
+.B <down>
+taskview_move down=1
+.TP
+.B <end>
+taskview_move to=-1
+.TP
+.B <escape>
+taskview_close
+.TP
+.B <home>
+taskview_move to=0
+.TP
+.B <pagedown>
+task_move_down
+.TP
+.B <pageup>
+task_move_up
+.TP
+.B <space>
+taskview_move down=1.0  pages=True
+.TP
+.B <up>
+taskview_move up=1
+.TP
+.B G
+taskview_move to=-1
+.TP
+.B J
+task_move_down
+.TP
+.B K
+task_move_up
+.TP
+.B Q
+taskview_close
+.TP
+.B b
+taskview_move up=1.0    pages=True
+.TP
+.B dd
+task_remove
+.TP
+.B f
+taskview_move down=1.0  pages=True
+.TP
+.B g
+taskview_move to=0
+.TP
+.B j
+taskview_move down=1
+.TP
+.B k
+taskview_move up=1
+.TP
+.B n
+taskview_move down=1.0  pages=True
+.TP
+.B p
+task_pause
+.TP
+.B q
+taskview_close
+.TP
+.B u
+taskview_move up=0.5    pages=True
+.TP
+.B w
+taskview_close
+.SH SETTINGS
+Set with
+.BR :set " in a configuration file or at the prompt."
+.TP
+.B automatically_count_files
+Count the entries in directories for display.
+.br
+Type: boolean. Default: true.
+.TP
+.B autosave_bookmarks
+Write bookmarks to disk as soon as they change.
+.br
+Type: boolean. Default: true.
+.TP
+.B autoupdate_cumulative_size
+Keep recalculating directory sizes as they change.
+.br
+Type: boolean. Default: false.
+.TP
+.B bidi_support
+Reorder right-to-left text for display.
+.br
+Type: boolean. Default: false.
+.TP
+.B binary_size_prefix
+Use binary prefixes (KiB, MiB) instead of decimal ones.
+.br
+Type: boolean. Default: false.
+.TP
+.B cd_bookmarks
+Offer bookmarks as completions for :cd.
+.br
+Type: boolean. Default: true.
+.TP
+.B cd_tab_case
+Case sensitivity of :cd tab completion.
+.br
+Type: string. One of: sensitive, insensitive, smart. Default: sensitive.
+.TP
+.B cd_tab_fuzzy
+Match :cd completions loosely rather than by prefix.
+.br
+Type: boolean. Default: false.
+.TP
+.B clear_filters_on_dir_change
+Drop the active filter when entering another directory.
+.br
+Type: boolean. Default: false.
+.TP
+.B collapse_preview
+Reclaim the preview column's width when there is nothing to preview.
+.br
+Type: boolean. Default: true.
+.TP
+.B colorscheme
+Name of the colorscheme to use.
+.br
+Type: string. Default: default.
+.TP
+.B column_ratios
+Relative widths of the miller columns.
+.br
+Type: integerlist. Default: 1,3,4.
+.TP
+.B confirm_on_delete
+When to ask for confirmation before deleting.
+.br
+Type: string. One of: multiple, always, never. Default: multiple.
+.TP
+.B confirm_on_trash
+When to ask for confirmation before moving to the trash.
+.br
+Type: string. One of: like_delete, multiple, always, never. Default: like_delete.
+.TP
+.B dirname_in_tabs
+Show the directory name in each tab label.
+.br
+Type: boolean. Default: false.
+.TP
+.B display_free_space_in_status_bar
+Show free space on the current filesystem in the status bar.
+.br
+Type: boolean. Default: true.
+.TP
+.B display_size_in_main_column
+Show file sizes in the main column.
+.br
+Type: boolean. Default: true.
+.TP
+.B display_size_in_status_bar
+Show the size of the selected file in the status bar.
+.br
+Type: boolean. Default: true.
+.TP
+.B display_tags_in_all_columns
+Show tag markers in every column, not only the main one.
+.br
+Type: boolean. Default: true.
+.TP
+.B draw_borders
+Which borders to draw around and between columns.
+.br
+Type: string. One of: none, both, outline, separators. Default: none.
+.TP
+.B draw_borders_multipane
+Border style in multipane view. Falls back to draw_borders when unset.
+.br
+Type: string. One of: none, both, outline, separators, active-pane. Default: unset.
+.TP
+.B draw_progress_bar_in_status_bar
+Overlay task progress on the status bar.
+.br
+Type: boolean. Default: true.
+.TP
+.B filter_dead_tabs_on_startup
+Drop restored tabs whose path no longer exists.
+.br
+Type: boolean. Default: false.
+.TP
+.B flushinput
+Discard input typed while a slow operation was running.
+.br
+Type: boolean. Default: true.
+.TP
+.B freeze_files
+Stop re-reading file metadata, for use on very slow filesystems.
+.br
+Type: boolean. Default: false.
+.TP
+.B global_inode_type_filter
+Restrict every directory to these inode types: any of d, f and l.
+.br
+Type: string. Default: .
+.TP
+.B hidden_filter
+Regular expression matching names to hide.
+.br
+Type: string. Default: ^\e..
+.TP
+.B hint_collapse_threshold
+Collapse the keybinding hint list once it exceeds this many entries.
+.br
+Type: integer. Default: 10.
+.TP
+.B hostname_in_titlebar
+Show user@host in the title bar.
+.br
+Type: boolean. Default: true.
+.TP
+.B idle_delay
+Milliseconds of inactivity before Canger stops polling.
+.br
+Type: integer. Default: 2000.
+.TP
+.B iterm2_font_height
+Character cell height in pixels, for the iTerm2 protocol.
+.br
+Type: integer. Default: 11.
+.TP
+.B iterm2_font_width
+Character cell width in pixels, for the iTerm2 protocol.
+.br
+Type: integer. Default: 8.
+.TP
+.B line_numbers
+Line numbering mode in the main column.
+.br
+Type: string. One of: false, absolute, relative. Default: false.
+.TP
+.B max_console_history_size
+Console history entries kept.
+.br
+Type: integer. Default: 50.
+.TP
+.B max_history_size
+Directory history entries kept per tab.
+.br
+Type: integer. Default: 20.
+.TP
+.B metadata_deep_search
+Search parent directories for metadata files.
+.br
+Type: boolean. Default: false.
+.TP
+.B mouse_enabled
+Respond to mouse input.
+.br
+Type: boolean. Default: true.
+.TP
+.B nested_canger_warning
+Warn when starting Canger inside a shell that Canger itself started.
+.br
+Type: string. One of: true, false, error. Default: true.
+.TP
+.B one_indexed
+Number lines from 1 instead of 0.
+.br
+Type: boolean. Default: false.
+.TP
+.B open_all_images
+Hand every image in the directory to the image viewer, not just the selected one.
+.br
+Type: boolean. Default: true.
+.TP
+.B padding_right
+Leave a padding column on the right when there is no preview.
+.br
+Type: boolean. Default: true.
+.TP
+.B preview_directories
+Preview the contents of the selected directory.
+.br
+Type: boolean. Default: true.
+.TP
+.B preview_files
+Preview the selected file.
+.br
+Type: boolean. Default: true.
+.TP
+.B preview_images
+Draw image previews using the terminal's graphics protocol.
+.br
+Type: boolean. Default: false.
+.TP
+.B preview_images_method
+Which terminal image protocol to use.
+.br
+Type: string. One of: w3m, iterm2, terminology, sixel, urxvt, urxvt-full, kitty, ueberzug. Default: w3m.
+.TP
+.B preview_max_size
+Skip previews for files larger than this many bytes. 0 means no limit.
+.br
+Type: integer. Default: 0.
+.TP
+.B preview_script
+Path to the preview script. Defaults to scope.sh in the config directory.
+.br
+Type: string. Default: unset.
+.TP
+.B relative_current_zero
+With relative line numbers, show 0 rather than the absolute number on the cursor line.
+.br
+Type: boolean. Default: false.
+.TP
+.B renumber_tabs_on_tab_close
+Renumber tabs so they stay consecutive.
+.br
+Type: boolean. Default: false.
+.TP
+.B save_backtick_bookmark
+Persist the previous-directory bookmark.
+.br
+Type: boolean. Default: true.
+.TP
+.B save_console_history
+Persist console history between runs.
+.br
+Type: boolean. Default: true.
+.TP
+.B save_tabs_on_exit
+Restore open tabs on the next run.
+.br
+Type: boolean. Default: false.
+.TP
+.B scroll_offset
+Keep this many lines visible above and below the cursor.
+.br
+Type: integer. Default: 8.
+.TP
+.B shorten_title
+How many directory components to keep in the terminal title. 0 disables shortening.
+.br
+Type: integer. Default: 3.
+.TP
+.B show_cursor
+Leave the terminal's hardware cursor visible.
+.br
+Type: boolean. Default: false.
+.TP
+.B show_hidden
+Show files the hidden filter would otherwise remove.
+.br
+Type: boolean. Default: false.
+.TP
+.B show_hidden_bookmarks
+Include bookmarks pointing inside hidden directories.
+.br
+Type: boolean. Default: true.
+.TP
+.B show_selection_in_titlebar
+Show the selected file's name in the title bar.
+.br
+Type: boolean. Default: true.
+.TP
+.B sixel_dithering
+Dithering mode for SIXEL previews.
+.br
+Type: string. One of: None, Riemersma, FloydSteinberg. Default: FloydSteinberg.
+.TP
+.B size_in_bytes
+Show exact byte counts instead of human-readable sizes.
+.br
+Type: boolean. Default: false.
+.TP
+.B sort
+Which key to sort directory entries by.
+.br
+Type: string. One of: natural, basename, size, mtime, ctime, atime, random, type, extension. Default: natural.
+.TP
+.B sort_case_insensitive
+Ignore case when sorting by name.
+.br
+Type: boolean. Default: true.
+.TP
+.B sort_directories_first
+List directories before files.
+.br
+Type: boolean. Default: true.
+.TP
+.B sort_reverse
+Reverse the sort order.
+.br
+Type: boolean. Default: false.
+.TP
+.B sort_unicode
+Sort by Unicode collation rather than raw code points.
+.br
+Type: boolean. Default: false.
+.TP
+.B status_bar_on_top
+Put the status bar above the columns instead of below.
+.br
+Type: boolean. Default: false.
+.TP
+.B tilde_in_titlebar
+Abbreviate the home directory as ~ in the title bar.
+.br
+Type: boolean. Default: false.
+.TP
+.B unicode_ellipsis
+Use a single-character ellipsis when truncating names.
+.br
+Type: boolean. Default: false.
+.TP
+.B update_title
+Set the terminal window title.
+.br
+Type: boolean. Default: false.
+.TP
+.B update_tmux_title
+Set the tmux or screen window name.
+.br
+Type: boolean. Default: true.
+.TP
+.B use_preview_script
+Generate previews with the external preview script.
+.br
+Type: boolean. Default: true.
+.TP
+.B vcs_aware
+Show version-control status alongside files.
+.br
+Type: boolean. Default: false.
+.TP
+.B vcs_backend_bzr
+Bazaar integration.
+.br
+Type: string. One of: disabled, local, enabled. Default: disabled.
+.TP
+.B vcs_backend_git
+Git integration.
+.br
+Type: string. One of: enabled, disabled, local. Default: enabled.
+.TP
+.B vcs_backend_hg
+Mercurial integration.
+.br
+Type: string. One of: disabled, local, enabled. Default: disabled.
+.TP
+.B vcs_backend_svn
+Subversion integration.
+.br
+Type: string. One of: disabled, local, enabled. Default: disabled.
+.TP
+.B vcs_msg_length
+Characters of the latest commit message to show.
+.br
+Type: integer. Default: 50.
+.TP
+.B viewmode
+Column layout: miller shows the hierarchy, multipane shows all tabs side by side.
+.br
+Type: string. One of: miller, multipane. Default: miller.
+.TP
+.B w3m_delay
+Seconds to wait after drawing with w3mimgdisplay.
+.br
+Type: float. Default: 0.02.
+.TP
+.B w3m_offset
+Pixel offset correction for w3mimgdisplay.
+.br
+Type: integer. Default: 0.
+.TP
+.B wrap_plaintext_previews
+Wrap long lines in text previews.
+.br
+Type: boolean. Default: false.
+.TP
+.B wrap_scroll
+Wrap around when scrolling past either end of a listing.
+.br
+Type: boolean. Default: false.
+.TP
+.B xterm_alt_key
+Interpret xterm's alternative Alt-key encoding.
+.br
+Type: boolean. Default: false.
+.SH COMMANDS
+Names may be abbreviated to any unambiguous prefix.
+.TP
+.B :cd
+Change directory; ~ and $VARIABLE are expanded.
+.TP
+.B :chain
+Run several commands in sequence.
+.TP
+.B :console
+Open the command line, optionally pre-filled.
+.TP
+.B :console_history
+Open the prompt at an earlier command: console_history [<offset>]
+.TP
+.B :copy
+Mark the selection to be copied: copy [mode=set|add|remove|toggle] [<direction>]
+.TP
+.B :cut
+Mark the selection to be moved: cut [mode=set|add|remove|toggle] [<direction>]
+.TP
+.B :default_linemode
+Choose the linemode for matching entries: default_linemode [path=<regex> | tag=<tags>] <linemode>
+.TP
+.B :delete
+Delete the selection permanently.
+.TP
+.B :display_file
+Show the selected file in the pager.
+.TP
+.B :draw_bookmarks
+Show the bookmarks.
+.TP
+.B :draw_possible_programs
+List the programs that could open the selection.
+.TP
+.B :e
+alias for 'edit'
+.TP
+.B :echo
+Show a message in the status bar.
+.TP
+.B :edit
+Open the selection in an editor.
+.TP
+.B :enter_bookmark
+Jump to the directory a bookmark key points at.
+.TP
+.B :eval
+Run a C# snippet: eval [-q] <code>
+.TP
+.B :filter
+alias for 'scout -prts'
+.TP
+.B :filter_inode_type
+Show only directories (d), files (f) or links (l).
+.TP
+.B :filter_stack
+Add, remove or combine filters: add, pop, clear, show, ...
+.TP
+.B :find
+alias for 'scout -aets'
+.TP
+.B :flat
+Fold subdirectories into the listing: flat N, or flat -1 for all.
+.TP
+.B :hide
+alias for 'scout -prtsv'
+.TP
+.B :history_go
+Go back or forward in this tab's history.
+.TP
+.B :linemode
+Change what this listing shows beside each name.
+.TP
+.B :mark
+alias for 'scout -mr'
+.TP
+.B :mark_files
+Mark or unmark entries.
+.TP
+.B :mark_tag
+Mark the entries carrying a tag.
+.TP
+.B :meta
+Annotate the selection: meta <key> [<value>]
+.TP
+.B :mkdir
+Create a directory.
+.TP
+.B :move
+Move the cursor, or enter and leave directories.
+.TP
+.B :move_parent
+Move up one or more directories.
+.TP
+.B :narrow
+Show only the selected entries.
+.TP
+.B :open
+Open the selection with the configured program.
+.TP
+.B :open_with
+Open the selection with a particular program, by name or number.
+.TP
+.B :pager_close
+Close the pager.
+.TP
+.B :paste
+Paste the copied or cut files into the current directory.
+.TP
+.B :paste_ext
+Paste, renaming clashes as name_.ext rather than name.ext_.
+.TP
+.B :pause_tasks
+Hold or release all background work.
+.TP
+.B :prompt_metadata
+Ask for several metadata fields in turn: prompt_metadata <key>...
+.TP
+.B :q
+alias for 'quit'
+.TP
+.B :q!
+alias for 'quit!'
+.TP
+.B :qa
+alias for 'quitall'
+.TP
+.B :qa!
+alias for 'quitall!'
+.TP
+.B :qall
+alias for 'quitall'
+.TP
+.B :qall!
+alias for 'quitall!'
+.TP
+.B :quit
+Close the current tab, or quit when it is the last one.
+.TP
+.B :quit!
+Quit without asking about running tasks.
+.TP
+.B :quitall
+Quit, closing every tab.
+.TP
+.B :quitall!
+Quit every tab without asking about running tasks.
+.TP
+.B :redraw_window
+Repaint the screen.
+.TP
+.B :reload_cwd
+Re-read the current directory.
+.TP
+.B :rename
+Rename the file under the cursor.
+.TP
+.B :rename_append
+Open the rename prompt: rename_append [where=extension|end|start]
+.TP
+.B :reset_previews
+Discard cached previews and generate them again.
+.TP
+.B :scout
+Search, filter, mark or jump to matching entries.
+.TP
+.B :search
+alias for 'scout -rs'
+.TP
+.B :search_inc
+alias for 'scout -rts'
+.TP
+.B :set
+Change a setting: set name value, set name=value, or set name!
+.TP
+.B :set_bookmark
+Point a bookmark key at the current directory.
+.TP
+.B :setl
+alias for 'setlocal'
+.TP
+.B :setlocal
+Change a setting for a particular directory.
+.TP
+.B :shell
+Run a shell command.
+.TP
+.B :stage
+Stage the selection for commit.
+.TP
+.B :tab_close
+Close the current tab: tab_close [<n>]
+.TP
+.B :tab_move
+Switch tabs by an offset: tab_move <offset>
+.TP
+.B :tab_new
+Open a new tab: tab_new [<path>]
+.TP
+.B :tab_open
+Switch to a tab by number: tab_open <n> [<path>]
+.TP
+.B :tab_restore
+Reopen the last closed tab.
+.TP
+.B :tab_shift
+Move the current tab: tab_shift <offset>
+.TP
+.B :tag_add
+Tag the selection.
+.TP
+.B :tag_remove
+Remove tags from the selection.
+.TP
+.B :tag_toggle
+Add or remove a tag on the selection.
+.TP
+.B :taskview_close
+Close the task view.
+.TP
+.B :taskview_open
+Show the queued background work.
+.TP
+.B :terminal
+Open a terminal in the current directory.
+.TP
+.B :touch
+Create an empty file, or update its timestamp.
+.TP
+.B :trash
+Move the selection to the trash.
+.TP
+.B :travel
+alias for 'scout -aefklst'
+.TP
+.B :uncut
+Forget what was marked for copying or moving.
+.TP
+.B :unmark
+alias for 'scout -Mr'
+.TP
+.B :unmark_tag
+Unmark the entries carrying a tag.
+.TP
+.B :unnarrow
+alias for 'narrow False'
+.TP
+.B :unset_bookmark
+Clear a bookmark key.
+.TP
+.B :unstage
+Unstage the selection.
+.TP
+.B :yank
+Copy the selection's name, path or directory to the clipboard.
+.SH FILES
+Configuration is read from the shipped defaults, then
+.IR /etc/canger/ ,
+then
+.IR ~/.config/canger/ ,
+each adding to the last. A personal file therefore needs only the lines it
+changes.
+.TP
+.I ~/.config/canger/cc.conf
+Settings and key bindings. Every line is a command, the same ones the prompt
+accepts.
+.TP
+.I ~/.config/canger/commands.cs
+Commands written in C#, compiled at startup.
+.TP
+.I ~/.config/canger/rifle.conf
+Which program opens which file. Unlike cc.conf this is not additive: a personal
+copy replaces the shipped rules entirely, because a rule's meaning depends on
+the rules before it.
+.TP
+.I ~/.config/canger/scope.sh
+Generates previews. The interface is the same as ranger's, so an existing script
+works unchanged.
+.TP
+.I ~/.config/canger/plugins/
+Plugins, as C# source or compiled assemblies. Names beginning with an underscore
+are skipped, which is how one is disabled without deleting it.
+.TP
+.I ~/.local/share/canger/
+State rather than configuration: bookmarks, tags and history.
+.SH ENVIRONMENT
+.TP
+.B CANGER_INSTALL_DIR
+Where Canger is installed. Set by Canger itself, so a binding or a shell command
+can reach the shipped configuration by name.
+.TP
+.B CANGER_CONFIG_DIR
+The configuration directory in use.
+.TP
+.BR VISUAL ", " EDITOR
+Which editor opens a file.
+.TP
+.BR XDG_CONFIG_HOME ", " XDG_DATA_HOME ", " XDG_CACHE_HOME
+Where configuration, state and cached data live.
+.SH SEE ALSO
+.BR rifle (1)
+.SH LICENSE
+GNU General Public License version 3 or later.

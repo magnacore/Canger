@@ -1,0 +1,413 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.FileSystem;
+using Canger.Core.Tasks;
+
+namespace Canger.Core.FileOperations;
+
+/// <summary>Whether files are being copied or moved.</summary>
+public enum TransferKind
+{
+    /// <summary>The originals stay where they are.</summary>
+    Copy,
+
+    /// <summary>The originals are removed once they arrive.</summary>
+    Move,
+}
+
+/// <summary>How a name clash at the destination is resolved.</summary>
+public enum ClashPolicy
+{
+    /// <summary>Rename the incoming file, appending an underscore and then numbers.</summary>
+    Rename,
+
+    /// <summary>Rename the incoming file, keeping its extension on the end.</summary>
+    RenameKeepingExtension,
+
+    /// <summary>Replace what is already there.</summary>
+    Overwrite,
+}
+
+/// <summary>
+/// Copies or moves files in the background, a step at a time.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Expressed as a job the task queue advances rather than a method that runs to completion, so a
+/// copy of ten thousand files can be paused, reordered or cancelled, and the interface stays
+/// responsive throughout.
+/// </para>
+/// <para>
+/// A failure on one file is recorded and the rest continue. Abandoning a directory copy because
+/// one file could not be read would be worse than finishing and saying what was missed.
+/// </para>
+/// </remarks>
+public sealed class CopyJob : ILoadable
+{
+    private readonly IFileSystem _fileSystem;
+    private readonly CopyEngine _engine;
+    private readonly IReadOnlyList<string> _sources;
+    private readonly string _destination;
+    private readonly TransferKind _kind;
+    private readonly ClashPolicy _clashPolicy;
+    private readonly CancellationToken _cancellationToken;
+    private readonly List<string> _errors = [];
+
+    /// <summary>Prepares a transfer.</summary>
+    /// <param name="fileSystem">The filesystem to work against.</param>
+    /// <param name="sources">What to copy or move.</param>
+    /// <param name="destination">The directory to put it in.</param>
+    /// <param name="kind">Whether to copy or move.</param>
+    /// <param name="clashPolicy">What to do about a name already in use.</param>
+    /// <param name="cancellationToken">Abandons the transfer.</param>
+    public CopyJob(IFileSystem fileSystem, IReadOnlyList<string> sources, string destination,
+                   TransferKind kind = TransferKind.Copy,
+                   ClashPolicy clashPolicy = ClashPolicy.Rename,
+                   CancellationToken cancellationToken = default)
+    {
+        _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
+        _sources = sources ?? throw new ArgumentNullException(nameof(sources));
+        _destination = destination ?? throw new ArgumentNullException(nameof(destination));
+        _kind = kind;
+        _clashPolicy = clashPolicy;
+        _cancellationToken = cancellationToken;
+
+        _engine = new CopyEngine(fileSystem);
+        Progress = new CopyProgress(0, sources.Count);
+    }
+
+    /// <summary>How far along the transfer is.</summary>
+    public CopyProgress Progress { get; }
+
+    /// <summary>Files that could not be transferred, and why.</summary>
+    public IReadOnlyList<string> Errors => _errors;
+
+    /// <summary>Whether the transfer finished.</summary>
+    public bool IsFinished { get; private set; }
+
+    /// <inheritdoc />
+    public string Description
+    {
+        get
+        {
+            string verb = _kind == TransferKind.Copy ? "copying" : "moving";
+            string what = _sources.Count == 1
+                ? Path.GetFileName(_sources[0])
+                : $"{_sources.Count} items";
+
+            string detail = Progress.Describe();
+            string strategies = Progress.DescribeStrategies();
+
+            return strategies.Length > 0
+                ? $"{verb} {what}: {detail}  [{strategies}]"
+                : $"{verb} {what}: {detail}";
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Implemented explicitly so that <see cref="Progress"/> can carry the full detail the task
+    /// view shows, rather than being reduced to a single fraction.
+    /// </remarks>
+    double? ILoadable.Progress => Progress.Fraction;
+
+    /// <inheritdoc />
+    public IEnumerator<Unit> Steps()
+    {
+        // The total is measured first so the percentage and the estimate mean something from the
+        // start. Measuring yields as it goes, because walking a large tree is itself slow.
+        long total = 0;
+        foreach (string source in _sources)
+        {
+            foreach (long measured in Measure(source))
+            {
+                total += measured;
+                Progress.ReviseTotal(total);
+                yield return Unit.Value;
+            }
+        }
+
+        Progress.ReviseTotal(total);
+
+        foreach (string source in _sources)
+        {
+            if (Refuse(source) is { } reason)
+            {
+                _errors.Add($"{Path.GetFileName(source)}: {reason}");
+                continue;
+            }
+
+            string target = ResolveTarget(source);
+
+            foreach (Unit step in TransferAny(source, target))
+            {
+                yield return step;
+            }
+        }
+
+        IsFinished = true;
+    }
+
+    /// <summary>
+    /// Says why a source cannot be transferred where it has been asked to go.
+    /// </summary>
+    /// <param name="source">What is being transferred.</param>
+    /// <returns>The reason, or <see langword="null"/> when the transfer is fine.</returns>
+    /// <remarks>
+    /// Both cases here destroy data if they are allowed to proceed. Pasting a directory inside
+    /// itself would move it under a path that is about to stop existing, and the source is
+    /// removed afterwards either way; pasting into the directory a file already sits in would,
+    /// for a move, rename it onto itself and then delete it. Neither is worth attempting, so
+    /// both are refused before anything is touched.
+    /// </remarks>
+    private string? Refuse(string source)
+    {
+        string from = Path.GetFullPath(source);
+        string to = Path.GetFullPath(_destination);
+
+        if (string.Equals(from, to, StringComparison.Ordinal))
+        {
+            return "cannot be pasted into itself";
+        }
+
+        // Only a directory can contain the destination, and only then is the recursion a problem.
+        if (_fileSystem.GetStatus(from, followSymbolicLinks: false)
+            is { IsDirectory: true, IsSymbolicLink: false }
+            && IsInside(to, from))
+        {
+            return "cannot be pasted into a directory inside itself";
+        }
+
+        // A move whose source already sits in the destination is a rename onto itself. A copy is
+        // still meaningful, since the clash policy gives it a new name.
+        return _kind == TransferKind.Move
+               && string.Equals(Path.GetDirectoryName(from), to, StringComparison.Ordinal)
+            ? "is already there"
+            : null;
+    }
+
+    /// <summary>Whether one path lies within another.</summary>
+    private static bool IsInside(string candidate, string directory)
+    {
+        // The separator matters: without it "/a/bc" would count as inside "/a/b".
+        string prefix = directory.EndsWith(Path.DirectorySeparatorChar)
+            ? directory
+            : directory + Path.DirectorySeparatorChar;
+
+        return candidate.StartsWith(prefix, StringComparison.Ordinal);
+    }
+
+    /// <summary>Adds up how much there is to transfer.</summary>
+    private IEnumerable<long> Measure(string path)
+    {
+        _cancellationToken.ThrowIfCancellationRequested();
+
+        FileStatus? status = _fileSystem.GetStatus(path, followSymbolicLinks: false);
+
+        if (status is null)
+        {
+            yield break;
+        }
+
+        if (!status.Value.IsDirectory || status.Value.IsSymbolicLink)
+        {
+            yield return status.Value.Size;
+            yield break;
+        }
+
+        IReadOnlyList<DirectoryEntry> entries;
+        try
+        {
+            entries = _fileSystem.ListDirectory(path, _cancellationToken);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            yield break;
+        }
+
+        foreach (DirectoryEntry entry in entries)
+        {
+            foreach (long measured in Measure(Join(path, entry.Name)))
+            {
+                yield return measured;
+            }
+        }
+    }
+
+    /// <summary>Transfers one thing, whatever it is.</summary>
+    private IEnumerable<Unit> TransferAny(string source, string target)
+    {
+        _cancellationToken.ThrowIfCancellationRequested();
+
+        FileStatus? status = _fileSystem.GetStatus(source, followSymbolicLinks: false);
+
+        if (status is null)
+        {
+            _errors.Add($"{Path.GetFileName(source)}: could not be read");
+            yield break;
+        }
+
+        // A link to a directory is copied as a link, not descended into.
+        if (status.Value.IsDirectory && !status.Value.IsSymbolicLink)
+        {
+            foreach (Unit step in TransferDirectory(source, target))
+            {
+                yield return step;
+            }
+        }
+        else
+        {
+            foreach (Unit step in TransferFile(source, target, status.Value))
+            {
+                yield return step;
+            }
+        }
+    }
+
+    /// <summary>Transfers a single file.</summary>
+    private IEnumerable<Unit> TransferFile(string source, string target, FileStatus status)
+    {
+        Progress.BeginFile(source);
+
+        // Moving within one filesystem is a rename: no data moves at all, however large the file.
+        if (_kind == TransferKind.Move && CanRename(source, target))
+        {
+            bool renamed = false;
+            try
+            {
+                _fileSystem.Rename(source, target);
+                renamed = true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Fall through to copy-then-delete.
+            }
+
+            if (renamed)
+            {
+                Progress.CompleteWithoutTransfer(status.Size, CopyStrategy.Rename);
+                Progress.CompleteFile(CopyStrategy.Rename);
+                yield return Unit.Value;
+                yield break;
+            }
+        }
+
+        FileCopyResult result = _engine.CopyFile(
+            source, target, Progress.AdvanceTransferred, _cancellationToken);
+
+        if (!result.Succeeded)
+        {
+            _errors.Add($"{Path.GetFileName(source)}: {result.Error}");
+            yield return Unit.Value;
+            yield break;
+        }
+
+        // A reflink moves no bytes, so the percentage has to be advanced explicitly or the copy
+        // would appear stalled at whatever the last real transfer reached.
+        if (result.TransferredBytes == 0 && result.Strategy != CopyStrategy.Symlink)
+        {
+            Progress.CompleteWithoutTransfer(status.Size, result.Strategy);
+        }
+
+        MetadataCopier.Copy(_fileSystem, source, target, followSymbolicLinks: false);
+        Progress.CompleteFile(result.Strategy);
+
+        if (_kind == TransferKind.Move)
+        {
+            TryDelete(source);
+        }
+
+        yield return Unit.Value;
+    }
+
+    /// <summary>Transfers a directory and everything under it.</summary>
+    private IEnumerable<Unit> TransferDirectory(string source, string target)
+    {
+        try
+        {
+            _fileSystem.CreateDirectory(target);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _errors.Add($"{Path.GetFileName(source)}: {e.Message}");
+            yield break;
+        }
+
+        IReadOnlyList<DirectoryEntry> entries;
+        try
+        {
+            entries = _fileSystem.ListDirectory(source, _cancellationToken);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // One unreadable subdirectory should not abandon the whole transfer.
+            _errors.Add($"{Path.GetFileName(source)}: {e.Message}");
+            yield break;
+        }
+
+        foreach (DirectoryEntry entry in entries)
+        {
+            foreach (Unit step in TransferAny(Join(source, entry.Name), Join(target, entry.Name)))
+            {
+                yield return step;
+            }
+        }
+
+        MetadataCopier.Copy(_fileSystem, source, target);
+
+        if (_kind == TransferKind.Move)
+        {
+            TryDeleteDirectory(source);
+        }
+    }
+
+    /// <summary>Works out where something should land, avoiding a clash.</summary>
+    private string ResolveTarget(string source)
+    {
+        string target = Join(_destination, Path.GetFileName(source));
+
+        return _clashPolicy switch
+        {
+            ClashPolicy.Overwrite => target,
+            ClashPolicy.RenameKeepingExtension =>
+                SafePath.MakeUniqueKeepingExtension(_fileSystem, target),
+            _ => SafePath.MakeUnique(_fileSystem, target),
+        };
+    }
+
+    /// <summary>Whether a move can be done by renaming, which requires one filesystem.</summary>
+    private bool CanRename(string source, string target)
+    {
+        FileStatus? from = _fileSystem.GetStatus(source, followSymbolicLinks: false);
+        FileStatus? to = _fileSystem.GetStatus(
+            Path.GetDirectoryName(Path.GetFullPath(target)) ?? "/", followSymbolicLinks: true);
+
+        return from is { } a && to is { } b && a.IsOnSameDeviceAs(b);
+    }
+
+    private void TryDelete(string path)
+    {
+        try
+        {
+            _fileSystem.Delete(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _errors.Add($"{Path.GetFileName(path)}: could not remove the original: {e.Message}");
+        }
+    }
+
+    private void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            _fileSystem.DeleteRecursive(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            _errors.Add($"{Path.GetFileName(path)}: could not remove the original: {e.Message}");
+        }
+    }
+
+    private static string Join(string directory, string name) =>
+        directory == "/" ? "/" + name : directory + "/" + name;
+}

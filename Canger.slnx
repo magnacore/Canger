@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Canger.App/Canger.App.csproj" />
+    <Project Path="src/Canger.Core/Canger.Core.csproj" />
+    <Project Path="src/Canger.Plugins/Canger.Plugins.csproj" />
+    <Project Path="src/Canger.Preview/Canger.Preview.csproj" />
+    <Project Path="src/Canger.Rifle/Canger.Rifle.csproj" />
+    <Project Path="src/Canger.RifleCli/Canger.RifleCli.csproj" />
+    <Project Path="src/Canger.Tui/Canger.Tui.csproj" />
+    <Project Path="src/Canger.Ui/Canger.Ui.csproj" />
+    <Project Path="src/Canger.Vcs/Canger.Vcs.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Canger.App.Tests/Canger.App.Tests.csproj" />
+    <Project Path="tests/Canger.Core.Tests/Canger.Core.Tests.csproj" />
+    <Project Path="tests/Canger.Rifle.Tests/Canger.Rifle.Tests.csproj" />
+    <Project Path="tests/Canger.Plugins.Tests/Canger.Plugins.Tests.csproj" />
+    <Project Path="tests/Canger.Vcs.Tests/Canger.Vcs.Tests.csproj" />
+    <Project Path="tests/Canger.TestSupport/Canger.TestSupport.csproj" />
+    <Project Path="tests/Canger.Tui.Tests/Canger.Tui.Tests.csproj" />
+    <Project Path="tests/Canger.Ui.Tests/Canger.Ui.Tests.csproj" />
+  </Folder>
+</Solution>

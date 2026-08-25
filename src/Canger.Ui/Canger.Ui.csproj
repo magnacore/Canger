@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Widgets and views: miller columns, multipane, console, pager, status bar, colorschemes.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Canger.Core/Canger.Core.csproj" />
+    <ProjectReference Include="../Canger.Tui/Canger.Tui.csproj" />
+    <ProjectReference Include="../Canger.Preview/Canger.Preview.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Browser needs a real Terminal to construct, so the pieces of its logic that are pure
+         decisions rather than drawing are tested directly instead of through the whole widget. -->
+    <InternalsVisibleTo Include="Canger.Ui.Tests" />
+  </ItemGroup>
+
+</Project>

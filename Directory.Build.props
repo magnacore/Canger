@@ -1,0 +1,78 @@
+<Project>
+
+  <!--
+    Settings shared by every project in the Canger solution.
+    Individual projects override only what they genuinely need to.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Quality gates: the port should not accumulate warnings. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- Canger is Linux-only, like ranger. -->
+    <RuntimeIdentifiers>linux-x64;linux-arm64</RuntimeIdentifiers>
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!-- Roslyn-based plugin compilation requires a JIT, so NativeAOT is off the table. -->
+    <PublishAot>false</PublishAot>
+
+    <!--
+      ReadyToRun precompiles the IL to native code ahead of time while keeping the JIT present,
+      which is exactly the trade Canger needs: the plugin host compiles commands.cs at runtime and
+      cannot lose the JIT, but nothing else should be paying to have itself compiled on the way to
+      the first frame.
+
+      It applies at publish time and needs a RuntimeIdentifier, so it is build.sh's `publish`
+      target that produces it. Composite mode compiles the framework alongside Canger's own
+      assemblies, which is what removes the rest of the cold-start cost; it makes the output
+      runtime-version-specific, which is fine for a self-published Linux TUI.
+    -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRunComposite>true</PublishReadyToRunComposite>
+
+    <!--
+      Dynamic PGO is on by default in current .NET; named here so it is not silently lost, and
+      because a long-lived TUI benefits from the steady-state code quality as much as from the
+      startup time.
+    -->
+    <TieredPGO>true</TieredPGO>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!--
+      CA1848  prefers LoggerMessage source generators over ILogger extension methods.
+      CA2007  demands ConfigureAwait(false); Canger has no synchronisation context to capture.
+      CA1859  wants concrete types instead of interfaces for performance. That is in direct
+              conflict with programming against IFileSystem, ISettings and friends, which is
+              what makes the domain testable. Rejected deliberately.
+      CA1716  forbids member names that collide with keywords in other .NET languages, so it
+              rejects Get and Set. Canger is a Linux TUI with no cross-language consumers, and
+              those are the natural names for a settings API.
+      CA1720  forbids type names in identifiers, so it rejects SettingKind.Integer. The enum
+              names value types; that is the whole point of it.
+    -->
+    <NoWarn>$(NoWarn);CA1848;CA2007;CA1859;CA1716;CA1720</NoWarn>
+
+    <Authors>Canger contributors</Authors>
+    <Product>Canger</Product>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Canger is a Linux file manager, as ranger effectively is. It depends throughout on Linux
+      facilities with no portable equivalent: statx for file metadata, termios for raw input,
+      SIGWINCH for resize, and the FICLONE ioctl for reflink copies. Declaring the platform once
+      here lets the analysers verify those calls rather than flag every one of them.
+    -->
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatform">
+      <_Parameter1>linux</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

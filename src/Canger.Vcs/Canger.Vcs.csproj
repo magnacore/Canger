@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Version-control status providers: git, mercurial, subversion, bazaar.</Description>
+  </PropertyGroup>
+
+  <!--
+    Deliberately references nothing. Asking a repository for its status needs only a path and a
+    process, so keeping this project free of the domain means it can be tested against real
+    repositories without building a file manager around them — and the domain can depend on it
+    without a cycle.
+  -->
+
+</Project>

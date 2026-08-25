@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>File previews: scope.sh runner, preview cache, terminal image protocols.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Canger.Core/Canger.Core.csproj" />
+    <ProjectReference Include="../Canger.Tui/Canger.Tui.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>canger</AssemblyName>
+    <RootNamespace>Canger.App</RootNamespace>
+    <Description>Entry point: CLI argument parsing and composition root.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Canger.Core/Canger.Core.csproj" />
+    <ProjectReference Include="../Canger.Tui/Canger.Tui.csproj" />
+    <ProjectReference Include="../Canger.Ui/Canger.Ui.csproj" />
+    <ProjectReference Include="../Canger.Rifle/Canger.Rifle.csproj" />
+    <ProjectReference Include="../Canger.Preview/Canger.Preview.csproj" />
+    <ProjectReference Include="../Canger.Vcs/Canger.Vcs.csproj" />
+    <ProjectReference Include="../Canger.Plugins/Canger.Plugins.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The shipped defaults are deployed beside the executable and read from there, so a user
+         with no configuration of their own still gets a fully configured Canger. -->
+    <Content Include="../../config/**" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

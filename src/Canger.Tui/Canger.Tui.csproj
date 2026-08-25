@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Terminal layer: raw mode, diffing screen buffer, input decoding, keybinding trie, character widths.</Description>
+    <!-- The LibraryImport source generator emits unsafe marshalling code for the termios
+         bindings in Native/. No hand-written unsafe code exists in this project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Canger.Core/Canger.Core.csproj" />
+  </ItemGroup>
+
+</Project>

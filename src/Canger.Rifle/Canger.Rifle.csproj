@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Rifle file-opener engine: rifle.conf parsing, condition matching, launching.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Canger.Core/Canger.Core.csproj" />
+  </ItemGroup>
+
+</Project>

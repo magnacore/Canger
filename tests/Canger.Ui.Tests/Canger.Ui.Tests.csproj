@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- .NET 10 runs tests through Microsoft.Testing.Platform rather than VSTest.
+         xunit.v3 speaks it natively, so no separate runner package is needed. -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <OutputType>Exe</OutputType>
+    <!-- Test code does not need public XML documentation. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1707;CA1861;CA2201</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Canger.Ui/Canger.Ui.csproj" />
+    <ProjectReference Include="../../src/Canger.Core/Canger.Core.csproj" />
+    <ProjectReference Include="../../src/Canger.Tui/Canger.Tui.csproj" />
+    <ProjectReference Include="../Canger.TestSupport/Canger.TestSupport.csproj" />
+  </ItemGroup>
+
+</Project>

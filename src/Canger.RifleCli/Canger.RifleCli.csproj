@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>rifle</AssemblyName>
+    <RootNamespace>Canger.RifleCli</RootNamespace>
+    <Description>Standalone file launcher: opens a file with the program the rules choose.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Canger.Core/Canger.Core.csproj" />
+    <ProjectReference Include="../Canger.Rifle/Canger.Rifle.csproj" />
+    <ProjectReference Include="../Canger.Tui/Canger.Tui.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="../../config/rifle.conf" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
