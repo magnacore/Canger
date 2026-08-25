@@ -2069,6 +2069,39 @@ Two details worth keeping:
 
 Verified in a pty: shown at 0.5s, 2.0s and 3.5s; gone by 4.5s; cleared immediately by a keypress.
 
+### The three left over from the audit
+
+All three fixed, on the principle that behaviour should be correct even where ranger's is not.
+
+**A filename could substitute another file's name.** Seven copies of a shell quoter had grown up
+across `src/` and the plugins, disagreeing about one thing: quoting is not enough when the result
+goes into a line that `Execute` then expands, because the whole line is expanded — including the
+part just quoted. A per cent is read as the start of a macro, and the substituted value's own
+opening quote closes the quoting around the name, leaving the rest bare. `My%20Docs` was enough to
+break such a command; `x%sy.txt` beside `;id;.txt` was enough to make it run something.
+
+The pair is now named and provided once: `MacroExpander.ShellQuote` for a command going straight
+to a runner, `QuoteForCommandLine` for a line going to `Execute`. `RenameAppendCommand` had been
+doubling the per cent by hand with a comment explaining why — the trap was known and still easy to
+fall into. Checked which callers actually need it rather than doubling everywhere: archives and
+zoxide go through `Runner.Run` and must not, nor must rifle or the terminal runner.
+
+**One selected file could overwrite another.** `po` is a policy about what is already at the
+destination, not permission for two of the user's own files to collide — but a flattened listing
+holding `sub1/a.txt` and `sub2/a.txt` resolved both to one target, and on a move the second
+overwrote the first and then deleted its own source. `CopyJob` now remembers the targets it has
+written and makes a repeat unique whatever the policy says; an existing file is still replaced,
+which is what `po` was asked to do.
+
+**A newline in a path corrupted the tag and bookmark files.** Both use ranger's line-per-entry
+format so the files can be shared, and such a path cannot be represented: a tag became two lines
+and came back as two tags on paths that do not exist. Refused rather than escaped — escaping would
+fix the round trip and make the file unreadable to ranger, a poor trade when what is lost is the
+tag rather than the file. The refusal is narrow, and a test pins that spaces, quotes, colons and
+per cents still work.
+
+Thirteen tests; seven fail against the old behaviour.
+
 ## Data-loss audit
 
 A file manager that destroys data it should not is worse than no file manager. Three sweeps over
