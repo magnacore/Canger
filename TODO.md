@@ -2069,6 +2069,84 @@ Two details worth keeping:
 
 Verified in a pty: shown at 0.5s, 2.0s and 3.5s; gone by 4.5s; cleared immediately by a keypress.
 
+## Data-loss audit
+
+A file manager that destroys data it should not is worse than no file manager. Three sweeps over
+every path that removes, renames or writes over user data — destructive operations, overwrite
+paths, state files and shell quoting — each finding then re-read against the source and against
+ranger. Seventeen findings; ten fixed, and one of them was destroying data in ordinary use.
+
+### The one that mattered
+
+**A failed move deleted the source anyway.** `TransferDirectory` collects per-entry errors and
+carries on — deliberately, so one unreadable file does not abandon a transfer — then ran
+`DeleteRecursive(source)` without consulting them. A destination out of space, a name the
+filesystem will not take, a file past FAT32's four gigabytes: the original was gone, with a line
+in the task view to say so.
+
+Ranger reaches the opposite outcome from the other side: `copytree` raises when its error list is
+non-empty, which puts `rmtree(src)` out of reach (`ext/shutil_generatorized.py:277-279`,
+`:318-321`). The port kept the collecting and dropped the consequence.
+
+Counting errors per subtree rather than flagging is what makes the fix propagate: a failure three
+levels down is counted at every ancestor, so none of them delete. The resulting semantics beat
+ranger's — because Canger moves file by file, each file ends in exactly one place, where ranger
+leaves the whole source plus a partial copy.
+
+Verified end to end on btrfs: moving a tree containing an unreadable file to tmpfs leaves that
+file at the source, moves the rest, and reports two problems.
+
+### "Could not read" is not "empty"
+
+The same mistake in three separate classes, each losing everything accumulated, each silently:
+
+- `Tags.Reload` cleared before the `try`, so a read failure emptied the set and the next save
+  wrote the emptiness over every tag.
+- `Bookmarks.ReadFile` returned an empty dictionary on failure; the three-way merge re-adds only
+  keys *changed this session*, so every untouched bookmark was dropped and the result written.
+- `FileMetadata.Read` caught everything and returned empty, so one `:meta` on an unparseable
+  database replaced hundreds of annotations with a single entry.
+
+The trigger is ordinary — a state file left root-owned by one `sudo` run, any EACCES or EIO. The
+directory stays writable, so the rename succeeds and nothing is reported. Ranger guards all three.
+`FileMetadata` was also the last writer truncating in place, and it lives among the user's own
+files; it now writes beside and replaces, which needed `IFileSystem.Replace` — an explicitly
+overwriting rename, kept separate from `Rename`, which refuses an existing destination and is what
+stops `:rename` and `:bulkrename` destroying a file.
+
+### Reported honestly rather than claimed
+
+The audit called the missing same-file guard a data-loss bug. **It is not, and I measured before
+writing the fix.** .NET's advisory lock on Linux is inode-scoped, so opening one file for reading
+and for truncating writing collides: a self-copy, a copy onto a hard link, and a copy onto a
+symlink to the source all left the file intact. The guard went in anyway — that protection is an
+implementation detail rather than a decision, it disappears if `System.IO.DisableFileLocking` is
+set, and the error it produced ("used by another process") told the user nothing true. It is
+hardening and a better message, not a save.
+
+### The rest
+
+`:edit` built `{editor} {quoted}` with no `--`, so a file called `+!rm -rf ~/Documents` was read
+by vim as a command to run and `E` was enough — Canger's own `rifle.conf` carries the `--`; the
+command bypassed rifle and dropped it. The containment guard lived inside `CopyJob`, so the three
+linking pastes had none, and it compared paths as typed, missing a destination that reaches the
+source through a symlink; both now use `PathRelation`, which resolves first. `:delete` and
+`:trash` silently discarded an argument and acted on the selection instead — they refuse now,
+rather than gaining a shell-splitter inside the one command that cannot be undone. `SafePath`
+asked `Exists`, which follows links, so a *broken* link read as a free name and the write landed
+wherever it pointed; `ExistsNoFollow` is the `lstat` to that `stat`. `CopySymbolicLink` deleted
+before creating. Saving state through a symlink broke the link. `--clean` pointed tags at
+`/dev/null` and relied on a rename failing, which as root it does not.
+
+### Deliberately not done
+
+Two findings are ranger parity and were left: `po` with two selected files sharing a basename
+(overwrite invites it), and a newline in a tagged path corrupting the line-per-entry format. The
+`%`-in-a-filename hazard in the personal `commands.cs` is out of scope by agreement, and recorded
+in the plan with its one-line fix.
+
+Twenty-nine tests across five files, every one checked against the unfixed code.
+
 ### File sizes were rounded to one decimal place instead of three significant figures
 
 `19.9 M` showed as `20 M` and `7.59 M` as `7.6 M`. Ranger uses `%.3g` — three *significant
