@@ -161,3 +161,80 @@ public class FailedMoveTests
         Assert.True(fs.DirectoryExists("/src"));
     }
 }
+
+/// <summary>
+/// One selected file must not destroy another.
+/// </summary>
+/// <remarks>
+/// Overwriting is a policy about what is already at the destination, which is what <c>po</c> asks
+/// for. It is not permission for two of the user's own selected files to collide: a flattened
+/// listing, or a copy buffer built across directories, can hold two files with the same basename,
+/// and both resolve to the same target. The second overwrote the first and, on a move, then
+/// deleted its own source — leaving one of the two nowhere. Ranger has the same hole.
+/// </remarks>
+public class PasteCollisionTests
+{
+    private static void Run(CopyJob job)
+    {
+        IEnumerator<Unit> steps = job.Steps();
+        for (int i = 0; i < 100_000 && steps.MoveNext(); i++)
+        {
+        }
+    }
+
+    private static InMemoryFileSystem TwoOfTheSameName() =>
+        new InMemoryFileSystem()
+            .AddFile("/src/one/a.txt", "from one")
+            .AddFile("/src/two/a.txt", "from two")
+            .AddDirectory("/dest");
+
+    [Fact]
+    public void Overwrite_KeepsBothWhenTwoSourcesShareAName()
+    {
+        InMemoryFileSystem fs = TwoOfTheSameName();
+
+        CopyJob job = new(fs, ["/src/one/a.txt", "/src/two/a.txt"], "/dest",
+                          TransferKind.Copy, ClashPolicy.Overwrite);
+        Run(job);
+
+        Assert.True(fs.Exists("/dest/a.txt"));
+        Assert.True(fs.Exists("/dest/a.txt_"), "the second must not have replaced the first");
+    }
+
+    [Fact]
+    public void Overwrite_MovingTwoOfTheSameNameLosesNeither()
+    {
+        // The damaging shape: the second overwrote the first and then deleted its own source.
+        InMemoryFileSystem fs = TwoOfTheSameName();
+
+        CopyJob job = new(fs, ["/src/one/a.txt", "/src/two/a.txt"], "/dest",
+                          TransferKind.Move, ClashPolicy.Overwrite);
+        Run(job);
+
+        List<string> contents =
+        [
+            .. new[] { "/dest/a.txt", "/dest/a.txt_" }
+                .Where(fs.Exists)
+                .Select(p => new StreamReader(fs.OpenRead(p)).ReadToEnd())
+        ];
+
+        Assert.Contains("from one", contents);
+        Assert.Contains("from two", contents);
+    }
+
+    [Fact]
+    public void Overwrite_StillReplacesWhatWasAlreadyThere()
+    {
+        // The policy must still do what it was asked to do.
+        InMemoryFileSystem fs = new InMemoryFileSystem()
+            .AddFile("/src/a.txt", "new")
+            .AddFile("/dest/a.txt", "old");
+
+        CopyJob job = new(fs, ["/src/a.txt"], "/dest",
+                          TransferKind.Copy, ClashPolicy.Overwrite);
+        Run(job);
+
+        Assert.False(fs.Exists("/dest/a.txt_"), "an existing file is still replaced, not renamed");
+        Assert.Equal("new", new StreamReader(fs.OpenRead("/dest/a.txt")).ReadToEnd());
+    }
+}

@@ -380,18 +380,39 @@ public sealed class CopyJob : ILoadable
         TryDeleteDirectory(source);
     }
 
+    /// <summary>Names this job has already written to, so it cannot write to one twice.</summary>
+    private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
+
     /// <summary>Works out where something should land, avoiding a clash.</summary>
+    /// <param name="source">What is being transferred.</param>
+    /// <returns>Where to put it.</returns>
+    /// <remarks>
+    /// Overwriting is a policy about what is <em>already</em> at the destination, which is what
+    /// the user asked for by pressing <c>po</c>. It is not permission for one selected file to
+    /// destroy another: a flattened listing, or a copy buffer built up across directories, can
+    /// hold <c>sub1/a.txt</c> and <c>sub2/a.txt</c>, and both resolve here to the same name. The
+    /// second used to overwrite the first, and on a move then delete its own source — leaving one
+    /// of the two files nowhere at all.
+    ///
+    /// So a target this job has already used is made unique whatever the policy says. Ranger has
+    /// the same hole; that is a bug of its own rather than a behaviour to reproduce.
+    /// </remarks>
     private string ResolveTarget(string source)
     {
         string target = Join(_destination, Path.GetFileName(source));
 
-        return _clashPolicy switch
+        string resolved = _clashPolicy switch
         {
-            ClashPolicy.Overwrite => target,
+            ClashPolicy.Overwrite => _claimed.Contains(target)
+                ? SafePath.MakeUnique(_fileSystem, target)
+                : target,
             ClashPolicy.RenameKeepingExtension =>
                 SafePath.MakeUniqueKeepingExtension(_fileSystem, target),
             _ => SafePath.MakeUnique(_fileSystem, target),
         };
+
+        _claimed.Add(resolved);
+        return resolved;
     }
 
     /// <summary>Whether a move can be done by renaming, which requires one filesystem.</summary>
