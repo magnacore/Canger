@@ -2,6 +2,8 @@
 using Canger.Core.Model;
 using Canger.Core.Model.Filters;
 
+using System.Text.RegularExpressions;
+
 namespace Canger.Core.Commands.Builtin;
 
 /// <summary>
@@ -95,21 +97,104 @@ public sealed class ScoutCommand : CangerCommand
     }
 
     /// <summary>Builds the filter a pattern and flags describe.</summary>
+    /// <remarks>
+    /// <para>
+    /// A scout pattern is a regular expression, but only the <c>r</c> flag hands it over as one:
+    /// otherwise the text is escaped, so a name containing <c>(</c> or <c>.</c> matches itself.
+    /// <c>g</c> reads it as a glob and <c>l</c> lets any characters fall between the ones typed.
+    /// Ranger's <c>_build_regex</c> (<c>config/commands.py</c>), rule for rule.
+    /// </para>
+    /// <para>
+    /// A leading <c>^</c> and a trailing <c>$</c> are taken off first and put back as anchors
+    /// afterwards, whatever the method — which is the part that was missing. Canger matched the
+    /// pattern as a plain substring, so <c>scout -m ^Series</c> looked for a literal caret and
+    /// marked nothing at all, while still reporting that it had. That is what
+    /// <c>file_select_similar</c> issues, and why <c>,</c> announced a pattern and selected
+    /// nothing.
+    /// </para>
+    /// </remarks>
     private static IFileFilter BuildFilter(string pattern, string flags)
     {
-        bool ignoreCase = !flags.Contains('s', StringComparison.Ordinal) ||
-                          pattern.All(c => !char.IsUpper(c));
+        // Ranger's own special case: a lone dot matches everything.
+        if (pattern == ".")
+        {
+            return new NameFilter(string.Empty, ignoreCase: true, display: pattern);
+        }
 
-        IFileFilter filter = flags.Contains('r', StringComparison.Ordinal)
-            ? new NameFilter(pattern, ignoreCase)
-            : new PredicateFilter(
-                node => node.RelativePath.Contains(
-                    pattern,
-                    ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal),
-                $"contains {pattern}");
+        string body = pattern;
+        bool anchorStart = body.StartsWith('^');
+
+        if (anchorStart)
+        {
+            body = body[1..];
+        }
+
+        bool anchorEnd = body.EndsWith('$');
+
+        if (anchorEnd)
+        {
+            body = body[..^1];
+        }
+
+        string core =
+            flags.Contains('r', StringComparison.Ordinal) ? body
+            : flags.Contains('g', StringComparison.Ordinal)
+                ? Regex.Escape(body)
+                       .Replace("\\*", ".*", StringComparison.Ordinal)
+                       .Replace("\\?", ".", StringComparison.Ordinal)
+            : flags.Contains('l', StringComparison.Ordinal)
+                ? string.Join(".*", body.Select(c => Regex.Escape(c.ToString())))
+            : Regex.Escape(body);
+
+        string source = (anchorStart ? "^" : string.Empty)
+                      + core
+                      + (anchorEnd ? "$" : string.Empty);
+
+        // Case-sensitive unless asked otherwise: `i` always, `s` only when nothing was typed in
+        // capitals — which is what makes a lowercase search forgiving and a capitalised one
+        // deliberate.
+        bool ignoreCase = flags.Contains('i', StringComparison.Ordinal) ||
+                          (flags.Contains('s', StringComparison.Ordinal) && IsAllLower(pattern));
+
+        IFileFilter filter;
+
+        try
+        {
+            filter = new NameFilter(source, ignoreCase, display: pattern);
+        }
+        catch (ArgumentException)
+        {
+            // Half-typed regular expressions are the normal state of a pattern being typed, and
+            // ranger falls back to matching everything rather than refusing (`re.error` there).
+            filter = new NameFilter(string.Empty, ignoreCase: true, display: pattern);
+        }
 
         // 'v' inverts, which is how "hide" is built from the same command as "filter".
         return flags.Contains('v', StringComparison.Ordinal) ? new NotFilter(filter) : filter;
+    }
+
+    /// <summary>Whether a pattern has letters and none of them are capitals.</summary>
+    /// <param name="pattern">The pattern as typed.</param>
+    /// <returns><see langword="true"/> when smart case should ignore case.</returns>
+    /// <remarks>
+    /// Python's <c>str.islower()</c>, which wants at least one cased character — so <c>1234</c>
+    /// is not "lower" and a smart-case search for it stays case-sensitive, as it does in ranger.
+    /// </remarks>
+    private static bool IsAllLower(string pattern)
+    {
+        bool anyCased = false;
+
+        foreach (char c in pattern)
+        {
+            if (char.IsUpper(c))
+            {
+                return false;
+            }
+
+            anyCased |= char.IsLower(c);
+        }
+
+        return anyCased;
     }
 
     private void MarkMatching(string pattern, string flags, bool marked)
