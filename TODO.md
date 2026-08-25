@@ -1906,6 +1906,51 @@ search, `yy`/`pp`, `:mkdir`, `cw`, `dD`, `:flat`, `zf`, the task view, `?`, tabs
 tab, `:cd` completion, bookmarks, and paging. One apparent failure was the test's own fault — it
 asserted a 24-row page in a twelve-entry directory, where clamping at the end is right.
 
+### The copy engine, tested against `cp` — and `pc`/`pm`/`pb` removed
+
+Three bindings ran an outside program to do what `pp` does: `pb` was
+`cp -rv --reflink=auto --preserve=timestamps %c %d`, and `pc`/`pm` called personal scripts whose
+own headers say they exist to give ranger *"a progress bar"*. All three were workarounds for
+things ranger lacks and Canger has.
+
+Before removing them, Canger's paste was compared against `cp -rv --reflink=auto
+--preserve=timestamps` on btrfs over a directory built to be awkward: a 100 MB sparse file, two
+hard links to one inode, a symlink, a nested tree, and files with non-default modes and a 2020
+mtime.
+
+| | result |
+|---|---|
+| sparse file | 100 M apparent, **0 allocated** both sides — the reflink preserves the holes |
+| hard links | become two separate inodes — **the same as `cp -rv`**, which needs `-a` or `--preserve=links` to do otherwise |
+| symlink | recreated as a link, not followed |
+| modes | `700` and `755` preserved |
+| mtimes | preserved to the nanosecond |
+| recursion, contents | identical |
+
+`diff -r --no-dereference` between Canger's result and `cp`'s reports **no difference at all**.
+
+**One real gap, found and fixed.** A cancelled copy left the bytes it had managed at the
+destination, under the right name, with nothing to say it was a fragment. `cp` does the same on
+Ctrl-C, but a file manager with a cancel key in its task view is a different proposition: the user
+pressed something that says stop. `CopyEngine` now removes a partial destination on cancellation
+*and* on an I/O error — but only when the copy created it, since overwriting one that already
+existed has truncated it already and deleting it too would turn a damaged file into a missing one.
+
+Testing that needed care. On this machine a same-filesystem copy is reflinked and a 700 MB
+cross-filesystem copy finishes in 0.3 s, so racing it with a timer proves nothing; the test
+cancels from inside the progress callback, with reflink and kernel copy disabled so there is a
+mid-file moment to cancel at. `tests/Canger.Core.Tests/FileOperations/CancelledCopyTests.cs`, 4
+tests, checked against a reverted fix.
+
+**And `shell -q`.** The removed bindings were worse in Canger for a reason that outlives them: a
+`shell` command takes the terminal for its whole duration, so a long conversion blanks the screen
+with no sign anything is happening. `-q` — Canger's own flag, ranger has nowhere to run a shell
+command but the foreground — puts it on the task queue instead: spinner, task view, cancellable,
+browser still usable. Verified with `:shell -q sleep 4`, moving the cursor while it ran.
+
+Their other long-running `shell` bindings are candidates for `-q`, but that is their config to
+change rather than mine.
+
 ### Control characters were written straight to the terminal
 
 Reported as "the popup menu is not cleanly formatted": the hint window had fragments of other
