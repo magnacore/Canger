@@ -72,6 +72,9 @@ public sealed class LinemodeSelector(
     /// </summary>
     public bool CountFiles { get; set; } = true;
 
+    /// <summary>Whether byte counts are written out in full, per <c>size_in_bytes</c>.</summary>
+    public bool ExactBytes { get; set; }
+
     /// <summary>
     /// Adds a rule, which takes precedence over everything added before it.
     /// </summary>
@@ -135,7 +138,7 @@ public sealed class LinemodeSelector(
     /// <param name="now">The moment "recent" is judged against.</param>
     /// <returns>The context.</returns>
     public LinemodeContext ContextAt(DateTimeOffset now) =>
-        new(now, BinaryPrefix, CountFiles);
+        new(now, BinaryPrefix, CountFiles, ExactBytes);
 
     private bool Applies(LinemodeRule rule, FsNode node) => rule.Scope switch
     {

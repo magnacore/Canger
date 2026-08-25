@@ -21,6 +21,11 @@ public static class HumanReadable
     /// What goes between the number and the unit. Ranger passes <c>"? "</c> to mark a figure it
     /// can no longer vouch for.
     /// </param>
+    /// <param name="exact">
+    /// Whether to write the count out in full with the locale's thousands separators instead of
+    /// a prefix. The <c>size_in_bytes</c> setting, which ranger checks before anything else
+    /// (<c>ext/human_readable.py:36-37</c>).
+    /// </param>
     /// <returns>A short representation, such as <c>7.59 M</c>.</returns>
     /// <remarks>
     /// <para>
@@ -38,9 +43,17 @@ public static class HumanReadable
     /// <c>1.50 k</c> and 20 million is <c>20 M</c> rather than <c>20.0 M</c>.
     /// </para>
     /// </remarks>
-    public static string Format(long bytes, bool binary = false, string separator = " ")
+    public static string Format(long bytes, bool binary = false, string separator = " ",
+                                bool exact = false)
     {
         ArgumentNullException.ThrowIfNull(separator);
+
+        // Before the zero check, as in ranger: asking for exact bytes and being told "0" with no
+        // unit is the same answer either way, but asking for them and being told "1.2 k" is not.
+        if (exact)
+        {
+            return bytes.ToString("N0", CultureInfo.CurrentCulture);
+        }
 
         // Bare, with no unit and no separator, as ranger has it
         // (`ext/human_readable.py:34-35`). A size of nothing needs no unit to be understood.

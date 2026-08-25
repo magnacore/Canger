@@ -1768,6 +1768,7 @@ public sealed class Browser : IFileManager, IDisposable
         Vcs?.Request(CurrentTab.Path);
         Linemodes.BinaryPrefix = Settings.BinarySizePrefix;
         Linemodes.CountFiles = Settings.AutomaticallyCountFiles;
+        Linemodes.ExactBytes = Settings.SizeInBytes;
 
         // A changed colourscheme repaints everything, since every cached style is now wrong.
         //
@@ -1869,6 +1870,8 @@ public sealed class Browser : IFileManager, IDisposable
             _statusBar.MessageIsError = _messageIsError;
             _statusBar.ShowFreeSpace = Settings.DisplayFreeSpaceInStatusBar;
             _statusBar.ShowSize = Settings.DisplaySizeInStatusBar;
+            _statusBar.BinaryPrefix = Settings.BinarySizePrefix;
+            _statusBar.ExactBytes = Settings.SizeInBytes;
             _statusBar.Head = repository is { IsLoaded: true } ? repository.Head : null;
             _statusBar.VcsMessageLength = Math.Max(Settings.VcsMessageLength, 1);
             _statusBar.ShowProgressBar = Settings.DrawProgressBarInStatusBar;

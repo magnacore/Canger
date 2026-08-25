@@ -86,6 +86,20 @@ public class HumanReadableSizeTests
     }
 
     [Fact]
+    public void Format_WritesTheCountInFullWhenAskedForExactBytes()
+    {
+        // `size_in_bytes`, which ranger checks before anything else
+        // (`ext/human_readable.py:36-37`) and writes with the locale's grouping.
+        string exact = HumanReadable.Format(1_234_567, exact: true);
+
+        Assert.DoesNotContain("M", exact, StringComparison.Ordinal);
+        Assert.Equal("1234567", exact.Replace(",", string.Empty, StringComparison.Ordinal)
+                                     .Replace(".", string.Empty, StringComparison.Ordinal)
+                                     .Replace("\u00a0", string.Empty, StringComparison.Ordinal)
+                                     .Replace(" ", string.Empty, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Format_PutsTheSeparatorBetweenTheNumberAndTheUnit()
     {
         // How ranger marks a measured size it can no longer vouch for.

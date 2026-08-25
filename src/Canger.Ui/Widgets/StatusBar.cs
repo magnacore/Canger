@@ -113,7 +113,7 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
 
         if (ShowSize && !entry.IsDirectory)
         {
-            x += screen.Write(x, Bounds.Y, " " + HumanReadable.Format(status.Size), baseStyle);
+            x += screen.Write(x, Bounds.Y, " " + Size(status.Size), baseStyle);
         }
 
         x += screen.Write(x, Bounds.Y,
@@ -180,7 +180,7 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
 
         if (marked.Count > 0)
         {
-            parts.Add($"{HumanReadable.Format(MarkedSize(directory, marked))}/" +
+            parts.Add($"{Size(MarkedSize(directory, marked))}/" +
                       marked.Count.ToString(CultureInfo.InvariantCulture));
 
             // Where the position indicator would be. Marks are easy to scroll away from and then
@@ -190,10 +190,10 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         }
         else
         {
-            string sum = $"{HumanReadable.Format(directory.DiskUsage)} sum";
+            string sum = $"{Size(directory.DiskUsage)} sum";
 
             parts.Add(ShowFreeSpace && FreeBytes is { } free
-                ? $"{sum}, {HumanReadable.Format(free)} free"
+                ? $"{sum}, {Size(free)} free"
                 : sum);
 
             parts.Add(directory.Count == 0
@@ -218,6 +218,18 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         screen.Write(Bounds.Right - width, Bounds.Y, text, style);
         return width;
     }
+
+    /// <summary>Whether to divide by 1024 and use binary prefixes.</summary>
+    /// <remarks>The <c>binary_size_prefix</c> setting, which reached the row but not this bar.</remarks>
+    public bool BinaryPrefix { get; set; }
+
+    /// <summary>Whether byte counts are written out in full, per <c>size_in_bytes</c>.</summary>
+    public bool ExactBytes { get; set; }
+
+    /// <summary>Formats a byte count the way the rest of the interface is formatting them.</summary>
+    /// <param name="bytes">The count.</param>
+    /// <returns>The rendered size.</returns>
+    private string Size(long bytes) => HumanReadable.Format(bytes, BinaryPrefix, exact: ExactBytes);
 
     /// <summary>The total size of what is marked.</summary>
     /// <param name="directory">The listing the marks are in.</param>
