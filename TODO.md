@@ -1906,6 +1906,38 @@ search, `yy`/`pp`, `:mkdir`, `cw`, `dD`, `:flat`, `zf`, the task view, `?`, tabs
 tab, `:cd` completion, bookmarks, and paging. One apparent failure was the test's own fault — it
 asserted a 24-row page in a twelve-entry directory, where clamping at the end is right.
 
+### A visual selection did not say it was still open
+
+Reported as a bug: two files selected, a third created between them, and the new one joined the
+selection.
+
+It is not a bug in the marking. Marks survive a reload by *path* — verified at the model level
+and through three routes a file can appear — and plain `<Space>` marks never picked the new file
+up. It happens only while visual mode is still on, and then it is the range doing what a range
+does: ranger recomputes `targets` from the live listing on every move
+(`core/actions.py:524-558`), so anything between the two ends is in the selection, exactly as
+vim's visual mode works.
+
+What was missing is any sign that the range was still open. Ranger shows none either — its status
+bar knows about the filter, the marks, the position and frozen files, but never the mode — which
+is why a selection quietly absorbing a new file reads as a defect. The status bar now says `VIS`
+beside `Mrk`, and `UNVIS` for the range `uV` starts, following the `u`-means-undo convention the
+bindings already use.
+
+Considered and rejected: remembering the range as a set of files rather than a span of positions.
+It would stop moving back over your own path from deselecting, which is what visual mode is for —
+a rare surprise traded for a constant one. Also rejected: ending the mode when the listing changes
+underneath, which would drop a selection at unpredictable moments.
+
+| state | status bar |
+|---|---|
+| two plain marks | `0/2  Mrk` |
+| `V` | `0/1  Mrk  VIS` |
+| `V` `j` | `0/2  Mrk  VIS` |
+| `V` `j` `V` | `0/2  Mrk` |
+| `uV` `j` | `2/4  33%  UNVIS` |
+| range open, a file appears between the ends | `0/3  Mrk  VIS` |
+
 ### Path-scoped settings were never consulted
 
 `setinregex`, `setinpath` and `setintag` were parsed, validated, stored and reported without

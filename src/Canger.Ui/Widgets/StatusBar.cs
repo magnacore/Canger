@@ -204,6 +204,13 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             parts.Add(ScrollIndicator(directory));
         }
 
+        // Beside the mark count, because that is what it governs: while this is showing, the
+        // selection is a live range and anything appearing between its ends joins it.
+        if (IsVisualMode)
+        {
+            parts.Add(IsVisualReverse ? "UNVIS" : "VIS");
+        }
+
         // Said plainly, because a listing that has stopped updating is indistinguishable from a
         // broken one. Ranger puts it in the same place (`gui/widgets/statusbar.py:322-325`).
         if (Frozen)
@@ -225,6 +232,33 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         screen.Write(Bounds.Right - width, Bounds.Y, text, style);
         return width;
     }
+
+    /// <summary>
+    /// Whether a visual selection is open, which the bar says out loud.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Visual mode marks a <em>range</em> — everything between the anchor and the cursor — and it
+    /// is recomputed from the listing on every move, so a file that appears between the two ends
+    /// joins the selection. That is what ranger does too (<c>core/actions.py:524-558</c>) and
+    /// what vim's own visual mode does, so the behaviour is right.
+    /// </para>
+    /// <para>
+    /// What was missing is any sign that the range is still open. Ranger shows none either — its
+    /// status bar knows about the filter, the marks, the position and frozen files, but never the
+    /// mode — which is why a selection quietly absorbing a newly created file reads as a bug
+    /// rather than as a range doing its job. Worth a word of width: with a range still live, a
+    /// later <c>dD</c> acts on more than was chosen.
+    /// </para>
+    /// </remarks>
+    public bool IsVisualMode { get; set; }
+
+    /// <summary>Whether that selection unmarks as it moves, which <c>uV</c> starts.</summary>
+    /// <remarks>
+    /// Shown as <c>UNVIS</c>, following the <c>u</c>-means-undo convention the bindings already
+    /// use — <c>uv</c> unmarks everything, <c>uV</c> starts a range that unmarks.
+    /// </remarks>
+    public bool IsVisualReverse { get; set; }
 
     /// <summary>Whether listings are frozen, which the bar says out loud.</summary>
     public bool Frozen { get; set; }

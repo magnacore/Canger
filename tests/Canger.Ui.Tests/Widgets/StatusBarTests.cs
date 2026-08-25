@@ -171,6 +171,53 @@ public class StatusBarTests
     }
 
     [Fact]
+    public void Draw_SaysWhenAVisualSelectionIsStillOpen()
+    {
+        // Without this a range quietly absorbs a file created between its ends, which reads as a
+        // bug rather than as a range doing its job. Ranger shows nothing here either.
+        (StatusBar bar, ScreenBuffer screen, DirectoryNode directory) = BuildWithFolders();
+        directory.Entries[0].IsMarked = true;
+        bar.IsVisualMode = true;
+
+        Assert.Contains("Mrk  VIS", Line(Rendered(bar, screen)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Draw_DistinguishesTheRangeThatUnmarks()
+    {
+        // `uV`, following the u-means-undo convention the bindings already use.
+        (StatusBar bar, ScreenBuffer screen, _) = BuildWithFolders();
+        bar.IsVisualMode = true;
+        bar.IsVisualReverse = true;
+
+        Assert.Contains("UNVIS", Line(Rendered(bar, screen)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Draw_SaysNothingWhenTheRangeIsClosed()
+    {
+        // Marks made by a closed range stay marked, and are no longer live — which is the whole
+        // distinction the indicator exists to draw.
+        (StatusBar bar, ScreenBuffer screen, DirectoryNode directory) = BuildWithFolders();
+        directory.Entries[0].IsMarked = true;
+
+        string line = Line(Rendered(bar, screen));
+
+        Assert.Contains("Mrk", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("VIS", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Draw_ShowsTheRangeEvenWithNothingMarkedYet()
+    {
+        // `uV` on an unmarked listing marks nothing, so there is no `Mrk` to hang it off.
+        (StatusBar bar, ScreenBuffer screen, _) = BuildWithFolders();
+        bar.IsVisualMode = true;
+
+        Assert.Contains("VIS", Line(Rendered(bar, screen)), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Draw_ShowsTheLatestCommitWhenThereIsOne()
     {
         // Wider than the default, because the right-hand side is laid out first and takes what

@@ -1923,6 +1923,8 @@ public sealed class Browser : IFileManager, IDisposable
             _statusBar.ShowSize = Settings.DisplaySizeInStatusBar;
             _statusBar.BinaryPrefix = Settings.BinarySizePrefix;
             _statusBar.Frozen = Settings.FreezeFiles;
+            _statusBar.IsVisualMode = IsVisualMode;
+            _statusBar.IsVisualReverse = _visualReverse;
             _statusBar.ExactBytes = Settings.SizeInBytes;
             _statusBar.Head = repository is { IsLoaded: true } ? repository.Head : null;
             _statusBar.VcsMessageLength = Math.Max(Settings.VcsMessageLength, 1);
