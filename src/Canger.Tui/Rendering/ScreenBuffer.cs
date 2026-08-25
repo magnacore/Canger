@@ -175,6 +175,8 @@ public sealed class ScreenBuffer
     /// <returns>How many cells were used: two for a wide character, otherwise one.</returns>
     public int Set(int x, int y, Rune rune, CellStyle style = default)
     {
+        rune = Printable(rune);
+
         int width = CellWidth.Of(rune);
 
         if (!Contains(x, y))
@@ -199,6 +201,34 @@ public sealed class ScreenBuffer
 
         return width;
     }
+
+    /// <summary>Replaces anything that would steer the terminal rather than fill a cell.</summary>
+    /// <param name="rune">The character about to be stored.</param>
+    /// <returns>Something safe to write, one cell wide.</returns>
+    /// <remarks>
+    /// <para>
+    /// The buffer's whole contract is one cell per column, and a control character breaks it: a
+    /// tab moves the cursor to the next tab stop without clearing what it passes over, so the
+    /// row keeps whatever was drawn there before and everything after it lands in the wrong
+    /// column. That is what made the hint window unreadable for bindings written with a trailing
+    /// tab and a comment, which ranger keeps in the command exactly as Canger does
+    /// (<c>core/actions.py:378-381</c> skips only lines that *start* with <c>#</c>).
+    /// </para>
+    /// <para>
+    /// The same hole is worse than untidy. Nothing between a filename and the terminal was
+    /// checking, so a file named with an escape sequence had that sequence written out verbatim
+    /// — enough to recolour the screen, clear it, or reposition the cursor, chosen by whoever
+    /// named the file rather than by whoever is reading it. Ranger has the same gap and says so
+    /// (<c>gui/widgets/titlebar.py:92</c>, <em>"TODO: Properly escape non-printable chars"</em>).
+    /// </para>
+    /// <para>
+    /// A tab becomes a space because that is what it was standing in for; everything else
+    /// becomes <c>?</c>, which is visible rather than silent — a name with something odd in it
+    /// should look odd.
+    /// </para>
+    /// </remarks>
+    private static Rune Printable(Rune rune) =>
+        Rune.IsControl(rune) ? new Rune(rune.Value == '\t' ? ' ' : '?') : rune;
 
     /// <summary>Draws text, stopping at the right edge.</summary>
     /// <param name="x">Column to start at.</param>
