@@ -89,6 +89,25 @@ public sealed class CopyEngine(IFileSystem fileSystem)
             return CopySymbolicLink(source, destination);
         }
 
+        // Refusing before anything is opened, as ranger does
+        // (`ext/shutil_generatorized.py:133-136`). Reached only for a real file copy: a symbolic
+        // link source is recreated above and never reads its own target.
+        //
+        // On a stock runtime this is belt and braces — .NET takes an inode-scoped advisory lock,
+        // so opening the same file for reading and for truncating writing collides and the copy
+        // fails anyway. Measured: a self-copy, a copy onto a hard link, and a copy onto a symlink
+        // to the source all leave the file intact. But that protection is an implementation
+        // detail rather than a decision, it disappears if `System.IO.DisableFileLocking` is ever
+        // set, and the error it produces — "used by another process" — tells the user nothing
+        // true. A file manager should not rely on an accident for this.
+        if (IsSameFile(source, destination))
+        {
+            return new FileCopyResult(
+                CopyStrategy.None, 0,
+                $"'{Path.GetFileName(source)}' and '{Path.GetFileName(destination)}' "
+                + "are the same file");
+        }
+
         // The fast paths need real file descriptors, which only a real filesystem has. Anything
         // else — a test double, or a future virtual filesystem — copies through streams, which
         // works everywhere and is what the fallback does in any case.
@@ -134,6 +153,26 @@ public sealed class CopyEngine(IFileSystem fileSystem)
             DiscardPartial(destination, destinationIsOurs);
             return new FileCopyResult(CopyStrategy.None, 0, e.Message);
         }
+    }
+
+    /// <summary>Whether two paths lead to the same bytes.</summary>
+    /// <param name="source">The file being read.</param>
+    /// <param name="destination">The file about to be written.</param>
+    /// <returns><see langword="true"/> when they are one file under two names.</returns>
+    /// <remarks>
+    /// By device and inode, not by path, because the interesting cases are the ones where the
+    /// paths differ: a hard link, a symbolic link to the source, or the same name in a different
+    /// case on a filesystem that does not distinguish them. Links are followed on both sides,
+    /// which is what <c>os.path.samefile</c> does and therefore what ranger's check does.
+    ///
+    /// A destination that does not exist yet has no status, and is not the source.
+    /// </remarks>
+    private bool IsSameFile(string source, string destination)
+    {
+        FileStatus? from = _fileSystem.GetStatus(source, followSymbolicLinks: true);
+        FileStatus? to = _fileSystem.GetStatus(destination, followSymbolicLinks: true);
+
+        return from is { } a && to is { } b && a.Device == b.Device && a.Inode == b.Inode;
     }
 
     /// <summary>Removes a half-written destination, when it was this copy that created it.</summary>
