@@ -7,14 +7,22 @@ namespace Canger.Core.Model.Filters;
 /// <summary>Shows only nodes whose displayed name matches a regular expression.</summary>
 /// <param name="pattern">The pattern, as the user typed it.</param>
 /// <param name="ignoreCase">Whether matching ignores case.</param>
-public sealed class NameFilter(string pattern, bool ignoreCase = true) : IFileFilter
+/// <param name="display">What to show as the pattern, when it is not the expression itself.</param>
+public sealed class NameFilter(string pattern, bool ignoreCase = true, string? display = null)
+    : IFileFilter
 {
     private readonly Regex _regex = new(
         pattern,
         (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None) | RegexOptions.CultureInvariant);
 
-    /// <summary>The pattern as the user typed it.</summary>
-    public string Pattern { get; } = pattern;
+    /// <summary>
+    /// The pattern as the user typed it, which is not always the expression that was compiled.
+    /// </summary>
+    /// <remarks>
+    /// A scout pattern is escaped and anchored on its way to a regex, so the compiled form is
+    /// unreadable. What the filter stack shows should be what was typed.
+    /// </remarks>
+    public string Pattern { get; } = display ?? pattern;
 
     /// <inheritdoc />
     public bool Accepts(FsNode node)
