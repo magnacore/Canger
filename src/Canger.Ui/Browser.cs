@@ -195,6 +195,7 @@ public sealed class Browser : IFileManager, IDisposable
         Opener = opener ?? throw new ArgumentNullException(nameof(opener));
         _terminal = terminal ?? throw new ArgumentNullException(nameof(terminal));
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+
         KeyMaps = keyMaps ?? throw new ArgumentNullException(nameof(keyMaps));
         Commands = commands ?? throw new ArgumentNullException(nameof(commands));
         Directories = cache ?? throw new ArgumentNullException(nameof(cache));
@@ -227,6 +228,13 @@ public sealed class Browser : IFileManager, IDisposable
         {
             [1] = new Tab(cache, startPath, settings.MaxHistorySize ?? 20),
         };
+
+        // What makes `setinregex`, `setinpath` and `setintag` mean anything: without a path to
+        // resolve against, every read is the global value and a rule scoped to a directory is
+        // stored and never consulted. Read through a function so the answer is current at the
+        // moment of the read, since settings are read between frames as well as during them.
+        Settings.CurrentPath = () =>
+            _tabs.TryGetValue(CurrentTabNumber, out Tab? tab) ? tab.Path : null;
 
         ApplySettingsToDirectory();
 

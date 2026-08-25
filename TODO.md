@@ -1906,6 +1906,34 @@ search, `yy`/`pp`, `:mkdir`, `cw`, `dD`, `:flat`, `zf`, the task view, `?`, tabs
 tab, `:cd` completion, bookmarks, and paging. One apparent failure was the test's own fault — it
 asserted a 24-row page in a twelve-entry directory, where clamping at the end is right.
 
+### Path-scoped settings were never consulted
+
+`setinregex`, `setinpath` and `setintag` were parsed, validated, stored and reported without
+error — and read by nothing. A rule saying "sort this one directory by date" did nothing at all,
+silently, which is the worst way for a configuration directive to fail.
+
+`SettingsStore.Get` resolves a path scope only when it is *given* a path, and `CangerSettings` —
+the typed facade every reader in the codebase goes through — never passed one. All 66 accessors
+asked for the global value. Ranger falls back to `fm.thisdir.path` inside its own lookup
+(`container/settings.py:222-235`); `CangerSettings.CurrentPath` is that, as a function rather than
+a value because settings are read between frames as well as during them and the answer has to be
+current at the moment of the read.
+
+This had been suspected earlier in the session — *"the eight `setinregex sort mtime` rules appear
+to be inert"* — and recorded rather than chased. It was worth chasing.
+
+Verified in a pty on the reported directory, comparing the same listing with and without the
+rule: the order changes, and the `~/...` form and the absolute form produce the same order, so
+the tilde is expanded correctly. A controlled directory of three files with known timestamps
+gives exactly the expected order for `sort mtime` + `sort_reverse true`, and a neighbouring
+directory with no rule stays alphabetical.
+
+Cost: resolving a scope walks the rules with a compiled regex per read. With their sixteen rules
+in a thousand-entry directory, key latency measures 1.3 ms median and 6.1 ms worst — no change
+worth reporting. With no scoped rules the list is empty and the loop costs nothing.
+
+`tests/Canger.Core.Tests/Settings/PathScopedSettingsTests.cs`, 8 tests.
+
 ### Status-bar messages never went away
 
 A message sat on the status bar until the next keystroke. If the keystroke that produced it was
