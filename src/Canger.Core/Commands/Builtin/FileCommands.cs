@@ -233,7 +233,12 @@ public sealed class EditCommand : CangerCommand
                         ?? Environment.GetEnvironmentVariable("EDITOR")
                         ?? "vi";
 
-        FileManager.RunProgram($"{editor} {MacroExpander.ShellQuote(target)}");
+        // `--` because quoting stops the shell, not the program. Without it a file called
+        // `+!rm -rf ~/Documents` is read by vim as a command to run at startup, and pressing `E`
+        // on it is enough. Canger's own shipped rifle.conf has the `--` on its editor rules;
+        // this command bypasses rifle and had dropped it, where ranger routes `:edit` through
+        // rifle precisely so as not to.
+        FileManager.RunProgram($"{editor} -- {MacroExpander.ShellQuote(target)}");
     }
 
     /// <inheritdoc />

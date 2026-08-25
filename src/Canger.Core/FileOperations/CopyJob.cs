@@ -161,8 +161,12 @@ public sealed class CopyJob : ILoadable
     /// </remarks>
     private string? Refuse(string source)
     {
-        string from = Path.GetFullPath(source);
-        string to = Path.GetFullPath(_destination);
+        // Resolved, not merely normalised. `Path.GetFullPath` expands `.` and `..` and leaves
+        // symbolic links alone, so a destination reaching the source by another name — `~/work`
+        // pointing at `/mnt/data/work` — compared as two unrelated paths and the recursion went
+        // ahead.
+        string from = _fileSystem.ResolvePath(source);
+        string to = _fileSystem.ResolvePath(_destination);
 
         if (string.Equals(from, to, StringComparison.Ordinal))
         {
@@ -170,9 +174,9 @@ public sealed class CopyJob : ILoadable
         }
 
         // Only a directory can contain the destination, and only then is the recursion a problem.
-        if (_fileSystem.GetStatus(from, followSymbolicLinks: false)
+        if (_fileSystem.GetStatus(source, followSymbolicLinks: false)
             is { IsDirectory: true, IsSymbolicLink: false }
-            && IsInside(to, from))
+            && PathRelation.IsInside(to, from))
         {
             return "cannot be pasted into a directory inside itself";
         }
@@ -185,16 +189,6 @@ public sealed class CopyJob : ILoadable
             : null;
     }
 
-    /// <summary>Whether one path lies within another.</summary>
-    private static bool IsInside(string candidate, string directory)
-    {
-        // The separator matters: without it "/a/bc" would count as inside "/a/b".
-        string prefix = directory.EndsWith(Path.DirectorySeparatorChar)
-            ? directory
-            : directory + Path.DirectorySeparatorChar;
-
-        return candidate.StartsWith(prefix, StringComparison.Ordinal);
-    }
 
     /// <summary>Adds up how much there is to transfer.</summary>
     private IEnumerable<long> Measure(string path)

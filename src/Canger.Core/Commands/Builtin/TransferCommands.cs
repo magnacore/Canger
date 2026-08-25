@@ -86,6 +86,22 @@ public sealed class DeleteCommand : CangerCommand
     /// <inheritdoc />
     public override void Execute()
     {
+        // `dD` opens the console on `:delete `, which invites typing a name — and the name was
+        // then discarded and the *selection* deleted instead. The confirmation does list the real
+        // targets, but someone who has just typed a filename reads that as agreement, and with
+        // `confirm_on_delete` at its default a single selection is removed without any prompt at
+        // all. Refusing is the safe reading of an instruction Canger cannot carry out. (Ranger
+        // does support the argument; adding that here means shell-splitting a line inside the one
+        // command that cannot be undone, which is a change to make deliberately and not in
+        // passing.)
+        if (Rest(1).Trim().Length > 0)
+        {
+            FileManager.Notify(
+                $"{Line.Word(0)}: takes no arguments — it acts on the selection", isError: true);
+
+            return;
+        }
+
         IReadOnlyList<FsNode> selection = FileManager.Selection;
 
         if (selection.Count == 0)
@@ -144,6 +160,22 @@ public sealed class TrashCommand : CangerCommand
     /// <inheritdoc />
     public override void Execute()
     {
+        // `dD` opens the console on `:delete `, which invites typing a name — and the name was
+        // then discarded and the *selection* deleted instead. The confirmation does list the real
+        // targets, but someone who has just typed a filename reads that as agreement, and with
+        // `confirm_on_delete` at its default a single selection is removed without any prompt at
+        // all. Refusing is the safe reading of an instruction Canger cannot carry out. (Ranger
+        // does support the argument; adding that here means shell-splitting a line inside the one
+        // command that cannot be undone, which is a change to make deliberately and not in
+        // passing.)
+        if (Rest(1).Trim().Length > 0)
+        {
+            FileManager.Notify(
+                $"{Line.Word(0)}: takes no arguments — it acts on the selection", isError: true);
+
+            return;
+        }
+
         IReadOnlyList<FsNode> selection = FileManager.Selection;
 
         if (selection.Count == 0)
