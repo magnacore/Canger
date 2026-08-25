@@ -1906,6 +1906,29 @@ search, `yy`/`pp`, `:mkdir`, `cw`, `dD`, `:flat`, `zf`, the task view, `?`, tabs
 tab, `:cd` completion, bookmarks, and paging. One apparent failure was the test's own fault — it
 asserted a 24-row page in a twelve-entry directory, where clamping at the end is right.
 
+### Status-bar messages never went away
+
+A message sat on the status bar until the next keystroke. If the keystroke that produced it was
+the last one for a while — `,` marking a set of files, then reading the screen — it stayed there
+indefinitely, hiding the line about the file under the cursor.
+
+Ranger does both things: `ui.press` clears the message on any key (`gui/ui.py:209`), *and* it
+expires on its own after four seconds (`fm.notify`'s `duration=4`, `core/actions.py:165`). Canger
+had only the first half.
+
+Two details worth keeping:
+
+- The expiry runs at the top of the frame, not inside the status bar's own branch. The loop now
+  shortens its input wait while a message is showing, so a message that could never expire —
+  with the console open over it, say — would leave the loop spinning on a zero timeout. Measured
+  at 0.8% CPU with the console open over a message, against a spin if the check sat in the
+  branch, which is where I first put it.
+- The wait is capped at the time remaining. Otherwise the loop sleeps for the whole `idle_delay`
+  and the message lingers up to two seconds past its four, which is half again as long as it was
+  meant to be there.
+
+Verified in a pty: shown at 0.5s, 2.0s and 3.5s; gone by 4.5s; cleared immediately by a keypress.
+
 ### File sizes were rounded to one decimal place instead of three significant figures
 
 `19.9 M` showed as `20 M` and `7.59 M` as `7.6 M`. Ranger uses `%.3g` — three *significant
