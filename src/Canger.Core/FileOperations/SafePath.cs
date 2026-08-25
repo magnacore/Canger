@@ -29,13 +29,13 @@ public static class SafePath
         ArgumentNullException.ThrowIfNull(fileSystem);
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        if (!fileSystem.Exists(path))
+        if (!fileSystem.ExistsNoFollow(path))
         {
             return path;
         }
 
         string candidate = path + "_";
-        if (!fileSystem.Exists(candidate))
+        if (!fileSystem.ExistsNoFollow(candidate))
         {
             return candidate;
         }
@@ -43,7 +43,7 @@ public static class SafePath
         for (int index = 0; index < int.MaxValue; index++)
         {
             candidate = path + "_" + index.ToString(CultureInfo.InvariantCulture);
-            if (!fileSystem.Exists(candidate))
+            if (!fileSystem.ExistsNoFollow(candidate))
             {
                 return candidate;
             }
@@ -67,7 +67,7 @@ public static class SafePath
         ArgumentNullException.ThrowIfNull(fileSystem);
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        if (!fileSystem.Exists(path))
+        if (!fileSystem.ExistsNoFollow(path))
         {
             return path;
         }
@@ -81,7 +81,7 @@ public static class SafePath
         string extension = dot <= 0 ? string.Empty : name[dot..];
 
         string candidate = Path.Join(directory, stem + "_" + extension);
-        if (!fileSystem.Exists(candidate))
+        if (!fileSystem.ExistsNoFollow(candidate))
         {
             return candidate;
         }
@@ -92,7 +92,7 @@ public static class SafePath
                 directory,
                 stem + "_" + index.ToString(CultureInfo.InvariantCulture) + extension);
 
-            if (!fileSystem.Exists(candidate))
+            if (!fileSystem.ExistsNoFollow(candidate))
             {
                 return candidate;
             }

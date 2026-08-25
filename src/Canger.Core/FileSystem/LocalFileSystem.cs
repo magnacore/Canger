@@ -233,6 +233,10 @@ public sealed class LocalFileSystem : IFileSystem
     }
 
     /// <inheritdoc />
+    public bool ExistsNoFollow(string path) =>
+        Stat(path, followSymbolicLinks: false) is not null;
+
+    /// <inheritdoc />
     public void Replace(string sourcePath, string destinationPath) =>
         File.Move(sourcePath, destinationPath, overwrite: true);
 

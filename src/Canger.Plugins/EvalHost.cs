@@ -124,7 +124,11 @@ public sealed partial class EvalHost(ScriptCompiler compiler)
               }
               """;
 
-        string file = Path.Join(Path.GetTempPath(), name + ".cs");
+        // A random component, so the name cannot be pre-created as a link to something else by
+        // anyone sharing /tmp. `BulkRenameCommand` already does this; this one hashed the snippet,
+        // which is a pure function of text that often comes from a shipped configuration.
+        string file = Path.Join(Path.GetTempPath(),
+                                name + "-" + Path.GetRandomFileName() + ".cs");
 
         try
         {

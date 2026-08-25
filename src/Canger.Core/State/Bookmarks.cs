@@ -262,11 +262,34 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
                 temporary,
                 entries.OrderBy(e => e.Key).Select(e => $"{e.Key}:{e.Value}"));
 
-            File.Move(temporary, Path, overwrite: true);
+            File.Move(temporary, RealPath(Path), overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Losing bookmarks is unfortunate; failing to exit because of it would be worse.
         }
     }
+    /// <summary>Where a state file really lives, following a link if it is one.</summary>
+    /// <param name="path">The configured path.</param>
+    /// <returns>The path to rename over.</returns>
+    /// <remarks>
+    /// <c>rename(2)</c> replaces a symbolic link rather than what it points at, so replacing the
+    /// file in place would break the link and leave later changes accumulating in an untracked
+    /// regular file — until the next re-install of the dotfiles put the stale copy back and took
+    /// everything since with it. Keeping this file as a link into a dotfiles repository is a
+    /// common enough arrangement that ranger has the same branch
+    /// (<c>container/bookmarks.py:200-204</c>).
+    /// </remarks>
+    private static string RealPath(string path)
+    {
+        try
+        {
+            return File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return path;
+        }
+    }
+
 }

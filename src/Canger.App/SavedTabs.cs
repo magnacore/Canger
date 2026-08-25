@@ -69,7 +69,11 @@ internal static class SavedTabs
             // file that cannot be restored does not stop every future session as well.
             if (rest.Length > 0)
             {
-                File.WriteAllText(path, rest);
+                // Beside and over, like every other state file. Truncating in place left a
+                // moment where a crash lost every queued record rather than one.
+                string temporary = path + ".new";
+                File.WriteAllText(temporary, rest);
+                File.Move(temporary, path, overwrite: true);
             }
             else
             {
