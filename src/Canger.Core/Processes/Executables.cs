@@ -25,7 +25,58 @@ public static class Executables
     }
 
     /// <summary>Forgets what has been looked up, so a newly installed program is noticed.</summary>
-    public static void Invalidate() => Cache.Clear();
+    public static void Invalidate()
+    {
+        Cache.Clear();
+        _names = null;
+    }
+
+    private static IReadOnlyList<string>? _names;
+
+    /// <summary>Every program on the PATH whose name begins with a prefix.</summary>
+    /// <param name="prefix">What has been typed so far.</param>
+    /// <returns>The matching names, in order, without duplicates.</returns>
+    /// <remarks>
+    /// What <c>:shell</c> completes against, as ranger's <c>get_executables()</c> does for the
+    /// same command. The whole PATH is walked once and kept: it is a few thousand names on a
+    /// normal machine, and walking it on every keystroke would be felt.
+    /// </remarks>
+    public static IReadOnlyList<string> Matching(string prefix)
+    {
+        ArgumentNullException.ThrowIfNull(prefix);
+
+        _names ??= All();
+
+        return [.. _names.Where(n => n.StartsWith(prefix, StringComparison.Ordinal))];
+    }
+
+    /// <summary>Walks the PATH once.</summary>
+    private static List<string> All()
+    {
+        SortedSet<string> found = new(StringComparer.Ordinal);
+        string? path = Environment.GetEnvironmentVariable("PATH");
+
+        foreach (string directory in (path ?? string.Empty)
+                     .Split(':', StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                foreach (string file in Directory.EnumerateFiles(directory))
+                {
+                    if (IsExecutable(file))
+                    {
+                        found.Add(Path.GetFileName(file));
+                    }
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // A PATH entry that does not exist or cannot be read is ordinary; skip it.
+            }
+        }
+
+        return [.. found];
+    }
 
     private static bool Search(string program)
     {
