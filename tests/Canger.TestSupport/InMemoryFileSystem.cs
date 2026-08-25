@@ -416,6 +416,13 @@ public sealed class InMemoryFileSystem : IFileSystem
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The store holds a link as a node in its own right, so a name is taken whether or not what
+    /// it points at exists — which is the distinction this asks about.
+    /// </remarks>
+    public bool ExistsNoFollow(string path) => _nodes.ContainsKey(Normalize(path));
+
+    /// <inheritdoc />
     public void Replace(string sourcePath, string destinationPath)
     {
         _nodes.Remove(Normalize(destinationPath));

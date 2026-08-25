@@ -392,9 +392,26 @@ public sealed class CopyEngine(IFileSystem fileSystem)
                 return new FileCopyResult(CopyStrategy.None, 0, "could not read the link");
             }
 
-            if (_fileSystem.Exists(destination))
+            // Built beside and moved over, rather than deleted and recreated. The old shape had
+            // a moment with nothing at the destination at all: if creating the link then failed —
+            // a read-only directory, no inodes left — the user's file was gone and nothing
+            // replaced it.
+            //
+            // `ExistsNoFollow`, because a broken link occupies the name while `Exists` reports it
+            // absent; the old test skipped the delete and the create then failed with EEXIST.
+            if (_fileSystem.ExistsNoFollow(destination))
             {
-                _fileSystem.Delete(destination);
+                string temporary = destination + ".canger-new";
+
+                if (_fileSystem.ExistsNoFollow(temporary))
+                {
+                    _fileSystem.Delete(temporary);
+                }
+
+                _fileSystem.CreateSymbolicLink(temporary, target);
+                _fileSystem.Replace(temporary, destination);
+
+                return new FileCopyResult(CopyStrategy.Symlink, 0);
             }
 
             _fileSystem.CreateSymbolicLink(destination, target);

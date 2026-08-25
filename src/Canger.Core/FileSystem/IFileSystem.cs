@@ -149,6 +149,20 @@ public interface IFileSystem
     /// </remarks>
     void Replace(string sourcePath, string destinationPath);
 
+    /// <summary>
+    /// Whether anything occupies a name, including a link that points nowhere.
+    /// </summary>
+    /// <param name="path">The name to test.</param>
+    /// <returns><see langword="true"/> when the name is taken.</returns>
+    /// <remarks>
+    /// <see cref="Exists"/> follows links and so reports a broken one as absent — which is right
+    /// for "can I read this" and wrong for "is this name free". Writing to a name held by a
+    /// dangling link follows it and lands wherever it pointed, outside the directory the user is
+    /// looking at. This is <c>lstat</c> to that question's <c>stat</c>, and what ranger uses when
+    /// it asks the same thing (<c>os.path.lexists</c>).
+    /// </remarks>
+    bool ExistsNoFollow(string path);
+
     /// <summary>Creates a symbolic link.</summary>
     /// <param name="linkPath">Absolute path of the link to create.</param>
     /// <param name="target">The target to record in the link.</param>

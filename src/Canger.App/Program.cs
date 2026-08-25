@@ -231,7 +231,7 @@ internal static class Program
                 SaveBacktickBookmark = settings.SaveBacktickBookmark,
             };
 
-            Tags tags = new(options.Clean ? "/dev/null" : paths.Data("tagged"));
+            Tags tags = new(paths.Data("tagged")) { Persistent = !options.Clean };
 
             if (!options.Clean)
             {

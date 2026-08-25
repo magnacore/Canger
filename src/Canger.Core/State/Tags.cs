@@ -165,6 +165,18 @@ public sealed class Tags(string path)
     }
 
     /// <summary>
+    /// Whether tags are kept at all, as opposed to being held only for this session.
+    /// </summary>
+    /// <remarks>
+    /// <c>--clean</c> passes <c>/dev/null</c> as the path, and the save is a rename over it — as
+    /// an ordinary user that fails harmlessly, but as root it replaces the device node with a
+    /// regular file and everything on the system redirecting to <c>/dev/null</c> starts filling
+    /// a disk. Ranger avoids the question with a separate do-nothing class,
+    /// <c>container/tags.py</c>'s <c>TagsDummy</c>.
+    /// </remarks>
+    public bool Persistent { get; init; } = true;
+
+    /// <summary>
     /// Whether the last read of the tag file failed, so writing would destroy it.
     /// </summary>
     /// <remarks>
@@ -237,7 +249,7 @@ public sealed class Tags(string path)
     /// </remarks>
     public void Save()
     {
-        if (CouldNotBeRead)
+        if (CouldNotBeRead || !Persistent)
         {
             return;
         }
@@ -257,11 +269,34 @@ public sealed class Tags(string path)
                 _tags.OrderBy(e => e.Key, StringComparer.Ordinal)
                      .Select(e => e.Value == DefaultTag ? e.Key : $"{e.Value}:{e.Key}"));
 
-            File.Move(temporary, Path, overwrite: true);
+            File.Move(temporary, RealPath(Path), overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Losing tags is unfortunate; failing because of it would be worse.
         }
     }
+    /// <summary>Where a state file really lives, following a link if it is one.</summary>
+    /// <param name="path">The configured path.</param>
+    /// <returns>The path to rename over.</returns>
+    /// <remarks>
+    /// <c>rename(2)</c> replaces a symbolic link rather than what it points at, so replacing the
+    /// file in place would break the link and leave later changes accumulating in an untracked
+    /// regular file — until the next re-install of the dotfiles put the stale copy back and took
+    /// everything since with it. Keeping this file as a link into a dotfiles repository is a
+    /// common enough arrangement that ranger has the same branch
+    /// (<c>container/bookmarks.py:200-204</c>).
+    /// </remarks>
+    private static string RealPath(string path)
+    {
+        try
+        {
+            return File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return path;
+        }
+    }
+
 }
