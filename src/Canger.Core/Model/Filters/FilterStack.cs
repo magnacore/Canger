@@ -58,6 +58,26 @@ public sealed class FilterStack
     /// <summary>Removes every filter.</summary>
     public void Clear() => _filters.Clear();
 
+    /// <summary>Removes the topmost filter if it is one a search or <c>zf</c> put there.</summary>
+    /// <returns>Whether anything was removed.</returns>
+    /// <remarks>
+    /// Ranger models its legacy <c>Directory.filter</c> as a view over the top of this stack, and
+    /// clearing it pops that entry only when it is a name filter
+    /// (<c>container/directory.py:167-192</c>). Anything else on top was put there deliberately
+    /// with <c>:filter_stack</c>, one clause at a time, and is not something to discard because
+    /// the user walked into another directory.
+    /// </remarks>
+    public bool PopNameFilter()
+    {
+        if (_filters.Count == 0 || _filters[^1] is not NameFilter and not PredicateFilter)
+        {
+            return false;
+        }
+
+        _filters.RemoveAt(_filters.Count - 1);
+        return true;
+    }
+
     /// <summary>
     /// Combines the top two filters with a binary combinator, replacing them with the result.
     /// </summary>

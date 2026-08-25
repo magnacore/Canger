@@ -234,6 +234,10 @@ public sealed class FakeFileManager : IFileManager
     public bool Execute(string line, int? quantifier = null, IReadOnlyList<int>? wildcards = null) =>
         Dispatcher.Execute(line, quantifier, wildcards);
 
+    /// <summary>How many rows the browser is pretending to occupy.</summary>
+    /// <remarks>Twenty-four rows less the title and status bars, a plausible terminal.</remarks>
+    public int BrowserHeight { get; set; } = 22;
+
     /// <inheritdoc />
     public void ReloadCurrentDirectory()
     {

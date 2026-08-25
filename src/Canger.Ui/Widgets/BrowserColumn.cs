@@ -354,11 +354,18 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             return "->?";
         }
 
+        // Read from the selector rather than assumed: this path was hard-coded to decimal
+        // prefixes and exact-off, so `binary_size_prefix` gave two renderings of the same
+        // quantity on one screen and `size_in_bytes` did nothing here at all.
         bool countFiles = Linemodes?.CountFiles ?? true;
+        bool binary = Linemodes?.BinaryPrefix ?? false;
+        bool exact = Linemodes?.ExactBytes ?? false;
 
         return entry.IsDirectory
-            ? LinemodeText.Size(entry, binaryPrefix: false, countFiles)
-            : entry.Size is { } size ? HumanReadable.Format(size) : string.Empty;
+            ? LinemodeText.Size(entry, binary, countFiles, exact)
+            : entry.Size is { } size
+                ? HumanReadable.Format(size, binary, exact: exact)
+                : string.Empty;
     }
 
     /// <summary>Works out which contexts apply to an entry.</summary>

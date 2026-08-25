@@ -238,8 +238,18 @@ public sealed class Direction
     /// binding such as <c>move down=1 pages=True</c>.
     /// </summary>
     /// <param name="arguments">The argument names and their textual values.</param>
+    /// <param name="cycle">
+    /// Whether movement wraps round the ends when the binding does not say. This is the
+    /// <c>wrap_scroll</c> setting: ranger passes it as a default the binding may override
+    /// (<c>core/actions.py:485</c>), which is the only thing that setting does.
+    /// </param>
+    /// <param name="oneIndexed">
+    /// Whether an absolute destination counts from one. The <c>one_indexed</c> setting, passed
+    /// the same way (<c>core/actions.py:486</c>).
+    /// </param>
     /// <returns>The movement request.</returns>
-    public static Direction FromArguments(IReadOnlyDictionary<string, string> arguments)
+    public static Direction FromArguments(IReadOnlyDictionary<string, string> arguments,
+                                          bool cycle = false, bool oneIndexed = false)
     {
         ArgumentNullException.ThrowIfNull(arguments);
 
@@ -253,8 +263,8 @@ public sealed class Direction
             relative: Flag(arguments, "relative"),
             pages: Flag(arguments, "pages") ?? false,
             percentage: Flag(arguments, "percentage") ?? false,
-            cycle: Flag(arguments, "cycle") ?? false,
-            oneIndexed: Flag(arguments, "one_indexed") ?? false);
+            cycle: Flag(arguments, "cycle") ?? cycle,
+            oneIndexed: Flag(arguments, "one_indexed") ?? oneIndexed);
     }
 
     private static double? Number(IReadOnlyDictionary<string, string> arguments, string name) =>

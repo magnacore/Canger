@@ -163,6 +163,16 @@ public interface IFileManager
     /// <returns><see langword="true"/> when a command ran.</returns>
     bool Execute(string line, int? quantifier = null, IReadOnlyList<int>? wildcards = null);
 
+    /// <summary>
+    /// How many rows the browser occupies, which is what a page of movement means.
+    /// </summary>
+    /// <remarks>
+    /// Ranger passes its browser's height as the page size (<c>core/actions.py:522</c>). Canger
+    /// used <c>scroll_offset * 2</c> — a constant sixteen whatever the terminal was — so a page
+    /// down on a tall window moved a third of the way and on a short one overshot.
+    /// </remarks>
+    int BrowserHeight { get; }
+
     /// <summary>Re-reads the directory being shown.</summary>
     void ReloadCurrentDirectory();
 

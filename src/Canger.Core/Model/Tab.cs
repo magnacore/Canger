@@ -131,6 +131,17 @@ public sealed class Tab
     public DirectoryNode? SelectedDirectory =>
         Selected is { IsDirectory: true } selected ? _cache.Get(selected.Path) : null;
 
+    /// <summary>Whether leaving a directory clears the filter set on it.</summary>
+    /// <remarks>
+    /// The <c>clear_filters_on_dir_change</c> setting, kept here rather than read from the
+    /// settings because <see cref="Enter"/> is reached from a dozen places and none of them
+    /// should have to remember to ask.
+    ///
+    /// Only the scout filter, as in ranger: the filter *stack* is built deliberately, one
+    /// clause at a time, and is not something to throw away because someone pressed <c>l</c>.
+    /// </remarks>
+    public bool ClearFilterOnLeave { get; set; }
+
     /// <summary>An optional label shown in the tab bar.</summary>
     public string? Label { get; set; }
 
@@ -166,6 +177,17 @@ public sealed class Tab
 
         // Being given a file rather than a directory means "go there and put the cursor on it",
         // which is what makes --selectfile and jumping to a search result work.
+        // The filter belongs to the listing you set it on, not to you, and ranger clears it as
+        // you leave rather than as you arrive (`core/tab.py:140-142`) — so coming back to a
+        // directory shows it whole. Without this a `zf` set in one place quietly followed the
+        // user everywhere, which reads as the listing being wrong rather than filtered.
+        if (ClearFilterOnLeave && Current is { } leaving)
+        {
+            leaving.PreviewFilter = null;
+            leaving.FilterStack.PopNameFilter();
+            leaving.Refilter();
+        }
+
         DirectoryNode candidate = _cache.Get(target);
         if (candidate.Status is { IsDirectory: false })
         {
