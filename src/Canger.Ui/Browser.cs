@@ -1676,7 +1676,15 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <summary>The region the columns occupy, between the two bars.</summary>
-    private Rect BrowserBounds() => new(0, 1, _screen.Width, Math.Max(_screen.Height - 2, 0));
+    /// <remarks>
+    /// The screen less the title bar and whichever row the status bar has taken. With
+    /// <c>status_bar_on_top</c> the browser starts a row lower rather than losing a row from the
+    /// bottom, so the console still has the last row to itself — which is how ranger arranges it
+    /// (<c>gui/ui.py:360-362</c>): the status bar moves, the console does not.
+    /// </remarks>
+    private Rect BrowserBounds() =>
+        new(0, Settings.StatusBarOnTop ? 2 : 1,
+            _screen.Width, Math.Max(_screen.Height - (Settings.StatusBarOnTop ? 3 : 2), 0));
 
     /// <summary>Passes the settings the two views share on to the multipane one.</summary>
     /// <remarks>
@@ -1721,6 +1729,14 @@ public sealed class Browser : IFileManager, IDisposable
                                 .Select(t => new TabHeading(t.Key, t.Value.Path, t.Value.Label))];
         _titleBar.ActiveTabNumber = CurrentTabNumber;
         _titleBar.DirnameInTabs = Settings.DirnameInTabs;
+
+        // Pushed onto every tab, not just the current one: a background tab's filter should go
+        // the same way when it is next left.
+        foreach (Tab tab in _tabs.Values)
+        {
+            tab.ClearFilterOnLeave = Settings.ClearFiltersOnDirChange;
+        }
+
         _titleBar.Ellipsis = Settings.UnicodeEllipsis ? "…" : "~";
 
         // Read from whatever the last refresh produced; nothing here waits on the repository.
@@ -1834,17 +1850,20 @@ public sealed class Browser : IFileManager, IDisposable
             }
         }
 
-        // The console and the status bar share the bottom row; whichever is active owns it.
+        // The console owns the bottom row. The status bar shares it, unless it has been asked
+        // to sit under the title bar instead — in which case both are on screen at once.
         Rect bottom = new(0, _screen.Height - 1, _screen.Width, 1);
+        bool statusOnTop = Settings.StatusBarOnTop;
 
         if (_console.IsOpen)
         {
             _console.Layout(bottom);
             _console.Render(_screen);
         }
-        else
+
+        if (!_console.IsOpen || statusOnTop)
         {
-            _statusBar.Layout(bottom);
+            _statusBar.Layout(statusOnTop ? new Rect(0, 1, _screen.Width, 1) : bottom);
             _statusBar.Tab = CurrentTab;
             _statusBar.Message = _message;
             _statusBar.MessageIsError = _messageIsError;
