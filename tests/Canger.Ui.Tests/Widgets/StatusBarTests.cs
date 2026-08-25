@@ -129,6 +129,57 @@ public class StatusBarTests
     }
 
     [Fact]
+    public void Draw_HighlightsTheMarkIndicatorWithoutHighlightingTheSizeBesideIt()
+    {
+        // The whole right-hand side used to be written in one style, so the `marked` colour —
+        // `bold | reverse`, i.e. a solid block — spread across the byte count too. Ranger colours
+        // each fragment on its own (`gui/widgets/statusbar.py:253-327`) and adds the sizes with no
+        // context at all, so only the indicator lights up.
+        (StatusBar bar, ScreenBuffer screen, DirectoryNode directory) = BuildWithFolders();
+
+        foreach (FsNode entry in directory.Entries.Where(e => !e.IsDirectory))
+        {
+            entry.IsMarked = true;
+        }
+
+        bar.Render(screen);
+
+        string line = Line(screen);
+        int mrk = line.IndexOf("Mrk", StringComparison.Ordinal);
+        int size = line.IndexOf("3 k/2", StringComparison.Ordinal);
+        Assert.True(mrk > 0 && size > 0, line);
+
+        Assert.True(screen[mrk, 0].Style.Attributes.HasFlag(CellAttributes.Reverse),
+                    "the mark indicator should stand out");
+        Assert.False(screen[size, 0].Style.Attributes.HasFlag(CellAttributes.Reverse),
+                     "the size beside it should not");
+
+        // Including the gap between them, which is where a stray block would show most.
+        Assert.False(screen[mrk - 1, 0].Style.Attributes.HasFlag(CellAttributes.Reverse),
+                     "the separator should not be highlighted");
+    }
+
+    [Fact]
+    public void Draw_DoesNotHighlightThePositionWhenNothingIsMarked()
+    {
+        // The unmarked line carries `scroll` on the position and its indicator, and nothing on the
+        // sizes. None of it reverses, so the bar stays quiet until there is something to say.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+
+        bar.Render(screen);
+
+        string line = Line(screen);
+        int sum = line.IndexOf("sum", StringComparison.Ordinal);
+        Assert.True(sum > 0, line);
+
+        for (int x = sum; x < Width; x++)
+        {
+            Assert.False(screen[x, 0].Style.Attributes.HasFlag(CellAttributes.Reverse),
+                         $"column {x} should not be highlighted: {line}");
+        }
+    }
+
+    [Fact]
     public void Draw_UsesTheDirectorysOwnTotalWhenEverythingIsMarked()
     {
         // Ranger's shortcut (`statusbar.py:285-286`): the same figure the unmarked line shows,

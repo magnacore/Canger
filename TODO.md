@@ -2519,6 +2519,40 @@ detail that looks cosmetic.** The hash was reimplemented thoughtfully — differ
 path, a comment explaining collision-avoidance — and the one part that was pure formatting turned
 out to be the part the scripts depended on.
 
+## The marked-size figure was highlighted along with the indicator
+
+Reported from a screenshot: with files marked, the whole right-hand side of the status bar became
+one solid block — `27.5 M/2  Mrk  VIS` — where ranger colours only the indicator.
+
+`DrawRight` assembled its pieces with `string.Join` and wrote the result in a single style, built
+as `InStatusbar + Scroll` plus `Marked` when anything was marked. The colour scheme gives
+`in_statusbar + marked` `Bold | Reverse` with bright yellow — a deliberate block, because it has
+one short word to draw attention to — and applying it to the joined line painted the byte count
+and the free-space figure with it.
+
+Ranger builds the same line as separately-tagged fragments (`gui/widgets/statusbar.py:253-327`),
+each added with its own contexts and recoloured between by `_print_result`. What is worth noticing
+is which fragments get *nothing*: the sizes. `right.add(human_readable(sumsize, separator=''))`
+takes no context at all, and neither does `... + " sum"` or the free-space figure. Only the
+indicators are flagged — `right.add('Mrk', base, 'marked')`, `'All'`/`'Top'`/`'Bot'`/percentage
+with `base` plus their own key, `FROZEN` with `base, 'frozen'`. The numbers stay quiet so the flag
+beside them can be loud.
+
+`DrawRight` now carries a list of `(text, context)` and writes each piece with its own resolved
+style, separators included — those were part of the block too, which is why it read as continuous.
+`ScrollIndicator` returns its context alongside its word, so `All`/`Top`/`Bot`/`%` are tagged
+individually as ranger tags them; the default scheme gives those four no colour, but a scheme is
+free to, and that is the point of tagging them.
+
+`VIS`/`UNVIS` has no ranger counterpart — ranger shows the mode on the left, in place of the
+permission string — so it borrows `marked`, being the same kind of statement about the same set of
+files. Verified in a pty: `Mrk` and `VIS` carry SGR `1;7;93`, the separator between them carries
+none, and `50 k/2` beside them is unstyled.
+
+The general shape, again: **a style that is correct for one word is wrong for the line it sits
+in.** Joining first and colouring once is the convenient order and it silently widens every
+highlight to the whole row.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
