@@ -254,6 +254,10 @@ internal static class Program
             browser.LoadConsoleHistory();
 
             browserForQuit = browser;
+
+            // Needs both the launcher and the browser, so it is wired here where both exist —
+            // which is also where ranger installs it, on the way up rather than inside either.
+            ImageViewerHandover.Install(opener, browser);
             pluginHost.NotifyInit(browser);
 
             // Tabs remembered from the last session, but only when the user has not said where
