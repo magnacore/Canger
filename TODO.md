@@ -1865,8 +1865,35 @@ for both commands and paths; console history; bookmark, tag and console-history 
 | 15 | **`w3m_delay`, `w3m_offset`, `iterm2_font_width`, `iterm2_font_height`, `sixel_dithering` dead** — but so are the backends they configure, so these follow the backends rather than lead them. | Blocked |
 | 16 | **`canger --clean` still loads a plugin** (`commands-c8234704: 2 commands`), though `--clean` is documented as ignoring all configuration and plugins. | Debugging |
 
-Ordered for fixing by what stops someone using Canger for a day's work: 1, then 2, 3, 4, then the
-layout and console ones, then the niche ones. 15 waits on the image backends.
+Two further findings came out of fixing the above rather than the sweep itself:
+
+| | What | Impact |
+|---|---|---|
+| 17 | **A page of movement was a constant sixteen rows** — `scroll_offset * 2` — on every terminal, where ranger uses the browser's own height (`core/actions.py:522`). Page-down on a tall window moved a third of the way down it. | Visible |
+| 18 | **`canger a b c` opened only `a`.** Ranger builds one tab per start path (`core/fm.py:127`); Canger read `Paths[0]` and dropped the rest, despite the usage line saying `[path ...]`. | Visible |
+
+### Fixed
+
+1, 2 (partly), 3, 4, 5, 7, 10, 16, 17, 18 — see the commits on `feature/qa-sweep`.
+
+**Not a bug after all: the window title.** Ranger only writes one when the terminal advertises a
+status line (`curses.tigetflag('hs')`, `gui/ui.py:131`). `xterm-256color` does not have it, so
+ranger sets no title there either — implementing this would change nothing on the terminal it was
+reported against. It remains a genuine gap on `tmux-256color` and `alacritty`, which do advertise
+one, and `update_tmux_title` is a separate mechanism that would work anywhere. Both left.
+
+### Still open
+
+`collapse_preview` (6), `cd_bookmarks` and `cd_tab_fuzzy` (8), `freeze_files` (9), `flushinput`
+(11), `open_all_images` (12), `xterm_alt_key` (13), `bidi_support` (14), the title family (2), and
+the settings that follow the unimplemented image backends (15).
+
+### Regression sweep after the fixes
+
+Nineteen workflows re-driven in a pty and all correct: the listing, `G`, `zh`, marking, `uv`,
+search, `yy`/`pp`, `:mkdir`, `cw`, `dD`, `:flat`, `zf`, the task view, `?`, tabs, `q` closing a
+tab, `:cd` completion, bookmarks, and paging. One apparent failure was the test's own fault — it
+asserted a 24-row page in a twelve-entry directory, where clamping at the end is right.
 
 ### File sizes were rounded to one decimal place instead of three significant figures
 
