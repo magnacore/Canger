@@ -344,6 +344,10 @@ public sealed class CopyJob : ILoadable
             yield break;
         }
 
+        // Taken before the children are transferred so that anything that fails beneath this
+        // directory — at any depth — is visible here afterwards. See the guard below.
+        int errorsBefore = _errors.Count;
+
         foreach (DirectoryEntry entry in entries)
         {
             foreach (Unit step in TransferAny(Join(source, entry.Name), Join(target, entry.Name)))
@@ -354,10 +358,32 @@ public sealed class CopyJob : ILoadable
 
         MetadataCopier.Copy(_fileSystem, source, target);
 
-        if (_kind == TransferKind.Move)
+        if (_kind != TransferKind.Move)
         {
-            TryDeleteDirectory(source);
+            yield break;
         }
+
+        // The source is removed only when everything under it arrived. Errors are deliberately
+        // collected rather than thrown — one unreadable file should not abandon the rest of the
+        // transfer — but a move that then deletes the source regardless destroys precisely the
+        // files that failed to copy. A destination that ran out of space, a name the filesystem
+        // will not accept, a file larger than FAT32 allows: any of them, and the originals were
+        // gone.
+        //
+        // Ranger reaches the same rule from the other direction: `copytree` raises when its own
+        // error list is non-empty, which puts `rmtree(src)` out of reach
+        // (`ext/shutil_generatorized.py:277-279` and `:318-321`). The port kept the collecting
+        // and dropped the consequence.
+        //
+        // Counting rather than flagging is what makes this propagate: a failure three levels
+        // down is still counted here, so every ancestor keeps its source too.
+        if (_errors.Count != errorsBefore)
+        {
+            _errors.Add($"{Path.GetFileName(source)}: kept, because not everything could be moved");
+            yield break;
+        }
+
+        TryDeleteDirectory(source);
     }
 
     /// <summary>Works out where something should land, avoiding a clash.</summary>
