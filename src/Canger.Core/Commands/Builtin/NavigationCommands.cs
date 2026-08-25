@@ -17,7 +17,10 @@ public sealed class MoveCommand : CangerCommand
     /// <inheritdoc />
     public override void Execute()
     {
-        Direction direction = Direction.FromArguments(NamedArguments());
+        Direction direction = Direction.FromArguments(
+            NamedArguments(),
+            cycle: FileManager.Settings.WrapScroll,
+            oneIndexed: FileManager.Settings.OneIndexed);
 
         if (direction.IsHorizontal)
         {
@@ -46,7 +49,7 @@ public sealed class MoveCommand : CangerCommand
             minimum: 0,
             maximum: Math.Max(directory.Count, 1),
             current: directory.Cursor.Index,
-            pageSize: Math.Max(FileManager.Settings.ScrollOffset * 2, 1));
+            pageSize: Math.Max(FileManager.BrowserHeight, 1));
 
         FileManager.CurrentTab.MoveCursor(destination);
     }

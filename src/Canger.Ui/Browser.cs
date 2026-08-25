@@ -84,7 +84,10 @@ public sealed class Browser : IFileManager, IDisposable
     /// <remarks>
     /// The screen buffer diffs against what it last wrote. After another program has drawn over
     /// the terminal that record is fiction, so an ordinary diffed frame writes almost nothing and
-    /// leaves the display blank.
+    /// leaves the display blank. A resize is the same situation arrived at differently: the
+    /// terminal reflows what it is holding, and nothing the buffer believes about it is true.
+    ///
+    /// Written from the signal thread as well as the drawing thread, hence <see cref="Volatile"/>.
     /// </remarks>
     private bool _needsFullRepaint;
 
@@ -169,7 +172,7 @@ public sealed class Browser : IFileManager, IDisposable
 
         Runner.Resumed += (_, _) =>
         {
-            _needsFullRepaint = true;
+            Volatile.Write(ref _needsFullRepaint, true);
 
             // The image was cleared on the way out and the helper has been told nothing since,
             // so it has to be sent again rather than assumed to still be there.
@@ -218,7 +221,20 @@ public sealed class Browser : IFileManager, IDisposable
             tab.Left += (_, from) => Bookmarks.RememberPrevious(from);
         }
 
-        _terminal.Resized += (_, size) => _screen.Resize(size.Width, size.Height);
+        _terminal.Resized += (_, size) =>
+        {
+            _screen.Resize(size.Width, size.Height);
+
+            // Resizing the buffer is not enough on its own, and both halves of this were
+            // missing. The signal arrives on the runtime's signal thread while the main loop is
+            // blocked in `WaitForInput` for up to the whole idle delay, so the flag alone would
+            // change nothing until the next keystroke — which is what the user saw: a wrapped,
+            // garbled screen that came right only when they pressed something. And a diffed
+            // flush would repaint only the cells the new layout happens to differ in, over a
+            // terminal that has already reflowed everything, so the frame has to be forced.
+            Volatile.Write(ref _needsFullRepaint, true);
+            RequestRedraw();
+        };
     }
 
     // ---- IFileManager ----------------------------------------------------------------
@@ -755,6 +771,13 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>Records where the user is leaving, for the previous-directory bookmark.</summary>
     /// <param name="from">The directory being left.</param>
     public void RememberPreviousDirectory(string from) => Bookmarks.RememberPrevious(from);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The screen less the title bar and the status bar, which is ranger's <c>browser.hei</c>
+    /// — the container's height rather than a column's, so borders do not change it.
+    /// </remarks>
+    public int BrowserHeight => Math.Max(_screen.Height - 2, 1);
 
     /// <inheritdoc />
     public void ReloadCurrentDirectory()
@@ -1840,10 +1863,11 @@ public sealed class Browser : IFileManager, IDisposable
 
         StringBuilder output = new();
 
-        // A frame after another program had the terminal is written in full: the buffer's record
-        // of what is on screen is fiction until it has been rewritten once.
-        _screen.Flush(output, force: _needsFullRepaint);
-        _needsFullRepaint = false;
+        // A frame after another program had the terminal — or after a resize — is written in
+        // full: the buffer's record of what is on screen is fiction until it has been rewritten
+        // once.
+        _screen.Flush(output, force: Volatile.Read(ref _needsFullRepaint));
+        Volatile.Write(ref _needsFullRepaint, false);
 
         _terminal.Write(output.ToString());
 
