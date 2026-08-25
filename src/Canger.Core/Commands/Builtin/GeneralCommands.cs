@@ -2,6 +2,8 @@
 using Canger.Core.Model;
 using Canger.Core.Settings;
 
+using Canger.Core.Processes;
+
 namespace Canger.Core.Commands.Builtin;
 
 /// <summary>Leaves Canger.</summary>
@@ -292,6 +294,32 @@ public sealed class ShellCommand : CangerCommand
             return;
         }
 
+        // `-q` puts it on the task queue rather than in front of the interface: the browser stays
+        // usable, the job shows in the task view with the spinner, and it can be cancelled from
+        // there. Canger's own flag — ranger has nowhere to run a shell command except the
+        // foreground, which is why a long conversion there blanks the screen until it is done.
+        if (new ProcessFlags(flags).Queued)
+        {
+            FileManager.RunInBackground(Describe(command), command,
+                                        finished: _ => FileManager.ReloadCurrentDirectory());
+            return;
+        }
+
         FileManager.RunProgram(command, flags);
+    }
+
+    /// <summary>Names a queued command for the task view.</summary>
+    /// <param name="command">The command line.</param>
+    /// <returns>Something short enough to read in a list.</returns>
+    /// <remarks>
+    /// The first word and no more. A command line carrying a selection can run to hundreds of
+    /// characters, and the task view has one row for it.
+    /// </remarks>
+    private static string Describe(string command)
+    {
+        string trimmed = command.TrimStart();
+        int space = trimmed.IndexOf(' ', StringComparison.Ordinal);
+
+        return space < 0 ? trimmed : trimmed[..space];
     }
 }

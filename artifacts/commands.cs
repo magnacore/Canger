@@ -19,34 +19,14 @@
 // Three of the ranger commands are deliberately absent: mark_tag, unmark_tag and paste_ext are
 // built into Canger already, so a copy here would only shadow the real thing.
 
+
+
 /// <summary>Quotes one argument for the shell these commands run through.</summary>
 internal static class ShellWord
 {
     /// <summary>Wraps a word in single quotes, escaping any it contains.</summary>
     internal static string Quote(string value) =>
         "'" + value.Replace("'", @"'\''", System.StringComparison.Ordinal) + "'";
-}
-
-/// <summary>Copy selected files to the current directory.</summary>
-[Command("ranger_pycopy", Summary = "Copy selected files to the current directory.")]
-public sealed class RangerPycopyCommand : CangerCommand
-{
-    /// <inheritdoc />
-    public override void Execute()
-    {
-        FileManager.Execute("shell file-copy-ranger %c %d");
-    }
-}
-
-/// <summary>Move selected files to the current directory.</summary>
-[Command("ranger_pymove", Summary = "Move selected files to the current directory.")]
-public sealed class RangerPymoveCommand : CangerCommand
-{
-    /// <inheritdoc />
-    public override void Execute()
-    {
-        FileManager.Execute("shell file-move-ranger %c %d");
-    }
 }
 
 /// <summary>Resize images.</summary>

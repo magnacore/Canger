@@ -40,6 +40,19 @@ public readonly record struct ProcessFlags(string Letters)
     /// <summary>Act on the file under the cursor rather than the whole selection.</summary>
     public bool CurrentFileOnly => Has('c');
 
+    /// <summary>
+    /// Run the program on the task queue instead of in front of the interface.
+    /// </summary>
+    /// <remarks>
+    /// Canger's own, with no counterpart in ranger, and the answer to work that takes a while and
+    /// has nothing to say — a conversion, a sync, a long copy through an outside tool. Without it
+    /// such a command takes the terminal for its whole duration: the screen goes blank, nothing
+    /// else can be done, and there is no sign anything is happening. With it the job appears in
+    /// the task view with the spinner turning, can be cancelled from there, and the browser stays
+    /// usable. Anything the program writes to standard error is reported when it ends.
+    /// </remarks>
+    public bool Queued => Has('q');
+
     /// <summary>Whether a flag is set.</summary>
     /// <param name="flag">The lowercase letter.</param>
     /// <returns><see langword="true"/> when it survives cancellation.</returns>

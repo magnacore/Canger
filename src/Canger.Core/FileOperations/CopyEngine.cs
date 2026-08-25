@@ -78,6 +78,10 @@ public sealed class CopyEngine(IFileSystem fileSystem)
 
         FileStatus? sourceStatus = _fileSystem.GetStatus(source, followSymbolicLinks: false);
 
+        // Whether the destination is ours to remove if this is abandoned part-way. Taken before
+        // anything is opened, because opening it for writing is what truncates it.
+        bool destinationIsOurs = !_fileSystem.Exists(destination);
+
         // A symbolic link is recreated rather than followed, so copying a tree of links does not
         // silently turn them into copies of whatever they pointed at.
         if (sourceStatus is { IsSymbolicLink: true })
@@ -122,11 +126,49 @@ public sealed class CopyEngine(IFileSystem fileSystem)
         }
         catch (OperationCanceledException)
         {
+            DiscardPartial(destination, destinationIsOurs);
             throw;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            DiscardPartial(destination, destinationIsOurs);
             return new FileCopyResult(CopyStrategy.None, 0, e.Message);
+        }
+    }
+
+    /// <summary>Removes a half-written destination, when it was this copy that created it.</summary>
+    /// <param name="destination">The file being written.</param>
+    /// <param name="isOurs">Whether nothing was there before this copy started.</param>
+    /// <remarks>
+    /// <para>
+    /// A cancelled copy used to leave the bytes it had managed so far sitting at the destination,
+    /// under the right name, with nothing to say it was a fragment. <c>cp</c> does the same on
+    /// Ctrl-C, but a file manager with a cancel key in its task view is a different proposition:
+    /// the user pressed something that says stop, and is entitled to assume nothing was left.
+    /// </para>
+    /// <para>
+    /// Only when the destination did not exist beforehand. Overwriting one that did — which is
+    /// what <c>po</c> asks for — has already truncated it by the time any of this runs, and
+    /// deleting it as well would turn a damaged file into a missing one.
+    /// </para>
+    /// </remarks>
+    private void DiscardPartial(string destination, bool isOurs)
+    {
+        if (!isOurs)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_fileSystem.Exists(destination))
+            {
+                _fileSystem.Delete(destination);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Nothing useful to do about it, and the copy is already being abandoned.
         }
     }
 
@@ -257,6 +299,7 @@ public sealed class CopyEngine(IFileSystem fileSystem)
                                               Action<long>? onProgress,
                                               CancellationToken cancellationToken)
     {
+        bool isOurs = !_fileSystem.Exists(destination);
         byte[] buffer = ArrayPool<byte>.Shared.Rent(BlockSize);
 
         try
@@ -285,10 +328,12 @@ public sealed class CopyEngine(IFileSystem fileSystem)
         }
         catch (OperationCanceledException)
         {
+            DiscardPartial(destination, isOurs);
             throw;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            DiscardPartial(destination, isOurs);
             return new FileCopyResult(CopyStrategy.None, 0, e.Message);
         }
         finally
