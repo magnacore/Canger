@@ -21,6 +21,20 @@ namespace Canger.Core.Model;
 /// </remarks>
 public sealed class DirectoryCache(IFileSystem fileSystem)
 {
+    /// <summary>Whether listings are held as they are rather than re-read.</summary>
+    /// <remarks>
+    /// The <c>freeze_files</c> setting. It lives here rather than on each node because
+    /// <see cref="DirectoryNode.Load"/> is reached from a dozen places — entering, the outdated
+    /// check, a finished copy, a preview column — and none of them should have to remember to
+    /// ask. Ranger puts the same test at the top of <c>load_content</c> and of
+    /// <c>FileSystemObject.load</c> (<c>container/directory.py:500</c>,
+    /// <c>container/fsobject.py:288</c>).
+    ///
+    /// It is for looking at something that is changing underneath you — a directory being
+    /// written to — without the listing moving while you read it.
+    /// </remarks>
+    public bool Frozen { get; set; }
+
     private readonly IFileSystem _fileSystem =
         fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
 

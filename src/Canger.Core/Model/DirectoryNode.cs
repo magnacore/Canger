@@ -355,6 +355,14 @@ public sealed class DirectoryNode : FsNode
     /// <param name="cancellationToken">Abandons a scan of a large or slow directory.</param>
     public void Load(CancellationToken cancellationToken = default)
     {
+        // Frozen means the listing is held as it is, so a directory being written to can be read
+        // without it moving underfoot. A directory never loaded still loads once: freezing an
+        // empty screen would show nothing at all rather than holding what is there.
+        if (_cache is { Frozen: true } && IsLoaded)
+        {
+            return;
+        }
+
         // Taken before the scan, because the scan is what makes this a *re*load.
         bool reloading = IsLoaded;
 

@@ -1072,6 +1072,14 @@ public sealed class Browser : IFileManager, IDisposable
                 }
 
                 Handle(_decoder.Feed(input.Span));
+
+                // Whatever was typed while that key was being handled is thrown away, so a slow
+                // command does not end with a burst of keystrokes running somewhere unintended.
+                // Not while the console is open: there the keys are text the user meant to type.
+                if (Settings.Flushinput && !_console.IsOpen && !_decoder.HasPendingInput)
+                {
+                    Terminal.DiscardPendingInput();
+                }
             }
             else if (_decoder.HasPendingInput)
             {
@@ -1766,6 +1774,7 @@ public sealed class Browser : IFileManager, IDisposable
         _view.Tags = Tags;
         _view.DisplayTagsInAllColumns = Settings.DisplayTagsInAllColumns;
         _view.CollapsePreview = Settings.CollapsePreview;
+        Directories.Frozen = Settings.FreezeFiles;
         Vcs?.Request(CurrentTab.Path);
         Linemodes.BinaryPrefix = Settings.BinarySizePrefix;
         Linemodes.CountFiles = Settings.AutomaticallyCountFiles;
@@ -1872,6 +1881,7 @@ public sealed class Browser : IFileManager, IDisposable
             _statusBar.ShowFreeSpace = Settings.DisplayFreeSpaceInStatusBar;
             _statusBar.ShowSize = Settings.DisplaySizeInStatusBar;
             _statusBar.BinaryPrefix = Settings.BinarySizePrefix;
+            _statusBar.Frozen = Settings.FreezeFiles;
             _statusBar.ExactBytes = Settings.SizeInBytes;
             _statusBar.Head = repository is { IsLoaded: true } ? repository.Head : null;
             _statusBar.VcsMessageLength = Math.Max(Settings.VcsMessageLength, 1);
