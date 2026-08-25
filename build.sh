@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds the Canger solution.
 #
-# The .NET SDK on this machine lives outside the default search path, so DOTNET_ROOT must be
-# exported for the test apphosts to find a runtime. Override CANGER_DOTNET_ROOT if yours differs.
+# The SDK is found on PATH, or at the path it lives at on the machine Canger was written on.
+# Set CANGER_DOTNET_ROOT if yours is somewhere else again.
 #
 #   ./build.sh                 Debug build, for development and for `dotnet test`
 #   ./build.sh Release         Release build
@@ -13,7 +13,21 @@
 # on the way to the first frame. Everything Canger measured before this existed was a Debug build.
 set -euo pipefail
 
-export DOTNET_ROOT="${CANGER_DOTNET_ROOT:-/opt/anaconda3/envs/dotnet/lib/dotnet}"
+# Where the SDK is. CANGER_DOTNET_ROOT wins; then the path it lives at on the machine Canger was
+# written on, which is outside the default search path; then whatever `dotnet` is on PATH, which
+# is how it is found on anyone else's machine. Without one of these a .NET apphost finds no
+# runtime, and the failure it reports does not say so.
+if [ -n "${CANGER_DOTNET_ROOT:-}" ]; then
+    DOTNET_ROOT="$CANGER_DOTNET_ROOT"
+elif [ -x /opt/anaconda3/envs/dotnet/lib/dotnet/dotnet ]; then
+    DOTNET_ROOT=/opt/anaconda3/envs/dotnet/lib/dotnet
+elif command -v dotnet >/dev/null 2>&1; then
+    DOTNET_ROOT=$(dirname "$(readlink -f "$(command -v dotnet)")")
+else
+    echo "canger: no .NET SDK found. Install .NET 10, or set CANGER_DOTNET_ROOT to its directory." >&2
+    exit 1
+fi
+export DOTNET_ROOT
 cd "$(dirname "$0")"
 
 target="${1:-Debug}"
