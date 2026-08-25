@@ -1874,7 +1874,8 @@ Two further findings came out of fixing the above rather than the sweep itself:
 
 ### Fixed
 
-1, 2 (partly), 3, 4, 5, 7, 10, 16, 17, 18 — see the commits on `feature/qa-sweep`.
+1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19 — see the commits on `feature/qa-sweep`
+and `feature/qa-sweep-2`. Fifteen of nineteen.
 
 **Not a bug after all: the window title.** Ranger only writes one when the terminal advertises a
 status line (`curses.tigetflag('hs')`, `gui/ui.py:131`). `xterm-256color` does not have it, so
@@ -1882,15 +1883,25 @@ ranger sets no title there either — implementing this would change nothing on 
 reported against. It remains a genuine gap on `tmux-256color` and `alacritty`, which do advertise
 one, and `update_tmux_title` is a separate mechanism that would work anywhere. Both left.
 
+### Second pass
+
+A nineteenth finding came out of implementing the eighth: **`:cd` completed only against names in
+the current directory**, so `:cd /usr/lo` and `:cd ~/Doc` did nothing at all — most of the typing
+a `:cd` saves. Fixed with 6, 8, 9, 11 and 12.
+
+One trap worth remembering from that: `UserPath.Expand` falls back to the *process's* working
+directory, which is wherever Canger was started from rather than where the user is now. Relative
+completion worked in a pty and failed in a test for exactly that reason.
+
 ### Still open
 
-`collapse_preview` (6), `cd_bookmarks` and `cd_tab_fuzzy` (8), `freeze_files` (9), `flushinput`
-(11), `open_all_images` (12), `xterm_alt_key` (13), `bidi_support` (14), the title family (2), and
-the settings that follow the unimplemented image backends (15).
+`cd_tab_fuzzy` — a recursive multi-token directory matcher, and off by default in ranger, so it
+is opt-in rather than missing. `xterm_alt_key` (13), `bidi_support` (14), the title family (2),
+and the settings that follow the unimplemented image backends (15).
 
 ### Regression sweep after the fixes
 
-Nineteen workflows re-driven in a pty and all correct: the listing, `G`, `zh`, marking, `uv`,
+Twenty-three workflows re-driven in a pty and all correct: the listing, `G`, `zh`, marking, `uv`,
 search, `yy`/`pp`, `:mkdir`, `cw`, `dD`, `:flat`, `zf`, the task view, `?`, tabs, `q` closing a
 tab, `:cd` completion, bookmarks, and paging. One apparent failure was the test's own fault — it
 asserted a 24-row page in a twelve-entry directory, where clamping at the end is right.

@@ -193,7 +193,8 @@ public sealed class ChangeDirectoryCommand : CangerCommand
     }
 
     /// <inheritdoc />
-    public override IReadOnlyList<string> Complete(int direction) => CompleteDirectories();
+    public override IReadOnlyList<string> Complete(int direction) =>
+        CompleteDirectories(FileManager.Settings.CdBookmarks);
 }
 
 /// <summary>Steps back and forward through the directories this tab has visited.</summary>

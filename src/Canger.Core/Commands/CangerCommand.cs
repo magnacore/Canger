@@ -171,21 +171,90 @@ public abstract class CangerCommand
         ];
     }
 
-    /// <summary>Completes against the directories of the current directory.</summary>
+    /// <summary>Completes a directory path being typed.</summary>
+    /// <param name="includeBookmarks">
+    /// Whether bookmarks under a candidate are offered alongside it. The <c>cd_bookmarks</c>
+    /// setting, which is on by default and which <c>:cd</c> asks for.
+    /// </param>
     /// <returns>The candidate lines.</returns>
-    protected IReadOnlyList<string> CompleteDirectories()
+    /// <remarks>
+    /// The typed text is split into the directory part and the partial name, and the directory
+    /// part is what gets listed. Without that only names in the current directory completed, so
+    /// <c>:cd /usr/lo</c> and <c>:cd ~/Doc</c> did nothing at all — which is most of the typing a
+    /// <c>:cd</c> saves. Ranger splits it the same way (<c>config/commands.py:291-297</c>).
+    /// </remarks>
+    protected IReadOnlyList<string> CompleteDirectories(bool includeBookmarks = false)
     {
         string typed = Rest(1);
         string prefix = Line.Word(0) + " ";
 
-        return
-        [
-            .. FileManager.CurrentDirectory.Entries
-                .Where(e => e.IsDirectory)
-                .Select(e => e.RelativePath)
-                .Where(name => name.StartsWith(typed, StringComparison.OrdinalIgnoreCase))
-                .Order(StringComparer.Ordinal)
-                .Select(name => prefix + name + "/"),
-        ];
+        // What the user typed up to the last separator is echoed back unchanged, so a `~` stays a
+        // `~` and an absolute path stays absolute rather than being rewritten under their feet.
+        int separator = typed.LastIndexOf('/');
+        string head = separator < 0 ? string.Empty : typed[..(separator + 1)];
+        string tail = separator < 0 ? typed : typed[(separator + 1)..];
+
+        string directory = FileManager.CurrentDirectory.Path;
+
+        if (head.Length > 0)
+        {
+            // Resolved against the listing, not the process's working directory — which is what
+            // `Expand` falls back to, and which is wherever Canger happened to be started from
+            // rather than where the user is now.
+            directory = FileSystem.UserPath.Expand(head, directory);
+        }
+
+        List<string> candidates = [];
+
+        try
+        {
+            foreach (string entry in System.IO.Directory.EnumerateDirectories(directory))
+            {
+                string name = System.IO.Path.GetFileName(entry);
+
+                if (name.StartsWith(tail, StringComparison.OrdinalIgnoreCase))
+                {
+                    candidates.Add(name);
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // A path being typed is unreadable more often than not; offering nothing is the
+            // right answer and refusing to complete anything else would not be.
+        }
+
+        candidates.Sort(StringComparer.Ordinal);
+
+        List<string> lines = [.. candidates.Select(name => prefix + head + name + "/")];
+
+        if (!includeBookmarks)
+        {
+            return lines;
+        }
+
+        // A bookmark that lies under one of the candidates is offered beside it, so a place you
+        // named once is reachable without typing the rest of the way to it. Ranger puts these
+        // first (`config/commands.py:277-282`), where they are seen before the plain directories.
+        List<string> bookmarks = [];
+
+        foreach (string target in FileManager.Bookmarks.Entries.Values)
+        {
+            foreach (string name in candidates)
+            {
+                string under = System.IO.Path.Join(directory, name) + "/";
+
+                if (target.StartsWith(under, StringComparison.Ordinal))
+                {
+                    bookmarks.Add(prefix + head + System.IO.Path.GetRelativePath(directory, target));
+                    break;
+                }
+            }
+        }
+
+        bookmarks.Sort(StringComparer.Ordinal);
+        lines.InsertRange(0, bookmarks);
+
+        return lines;
     }
 }

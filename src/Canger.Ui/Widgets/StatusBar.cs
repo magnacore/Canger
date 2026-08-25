@@ -204,6 +204,13 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             parts.Add(ScrollIndicator(directory));
         }
 
+        // Said plainly, because a listing that has stopped updating is indistinguishable from a
+        // broken one. Ranger puts it in the same place (`gui/widgets/statusbar.py:322-325`).
+        if (Frozen)
+        {
+            parts.Add("FROZEN");
+        }
+
         string text = string.Join("  ", parts) + " ";
         int width = CellWidth.Of(text);
         if (width >= Bounds.Width)
@@ -218,6 +225,9 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         screen.Write(Bounds.Right - width, Bounds.Y, text, style);
         return width;
     }
+
+    /// <summary>Whether listings are frozen, which the bar says out loud.</summary>
+    public bool Frozen { get; set; }
 
     /// <summary>Whether to divide by 1024 and use binary prefixes.</summary>
     /// <remarks>The <c>binary_size_prefix</c> setting, which reached the row but not this bar.</remarks>
