@@ -2069,6 +2069,44 @@ Two details worth keeping:
 
 Verified in a pty: shown at 0.5s, 2.0s and 3.5s; gone by 4.5s; cleared immediately by a keypress.
 
+### Every binding with a tab before its comment was dead
+
+Reported: `edn`, `eft`, `cer`, `cvr`, `ctr` do nothing. Thirty-six bindings in the real
+configuration were affected.
+
+They are written `map edn directories_number_highlight<TAB><TAB><TAB># Number Highlighted
+Directory`, and ranger keeps a trailing comment in the command — `source` skips only lines that
+*start* with `#` (`core/actions.py:378-381`). Ranger then splits with `str.split()`, which treats
+a tab as a separator, so the name comes out clean and the comment is harmless.
+
+`CommandLine` split on `' '` alone. The tabs and the comment stayed inside the first word, so the
+name was `directories_number_highlight\t\t\t#` and no such command existed. `Rest` had the same
+assumption, so flags and arguments were mis-parsed for the same lines.
+
+The `shell …` ones *appeared* to work, which is why this went unnoticed: the whole line after
+`shell` is passed to `sh`, and `sh` ignores the comment itself.
+
+**The diagnostic had been taught to agree with the bug.** `--config`'s binding check does this:
+
+```csharp
+// Split on any whitespace, not just a space: a `map` line may separate the command from a
+// trailing comment with tabs, and taking "cmd\t\t#" as the name reported a great many
+// perfectly good bindings as broken.
+string name = line.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries) ...
+```
+
+So the problem *was* seen — in the report — and fixed there, in the one place that only describes
+behaviour, rather than in `CommandLine`, which produces it. The check was made to agree with what
+the user expected while the runtime went on disagreeing, and the thirty-six dead bindings became
+invisible. Worth remembering: when a diagnostic and the code disagree, the diagnostic is the one
+that must not be adjusted first.
+
+Now split on any whitespace in both `Words` and `Rest`, matching ranger. Verified in a pty against
+the real configuration: `edn` reports "Numbering directories.", and `eft`, `cer`, `cvr` and `ctr`
+no longer produce `unknown command`, which is what a genuinely missing one still says.
+
+Seven tests; five fail against the old behaviour.
+
 ### The three left over from the audit
 
 All three fixed, on the principle that behaviour should be correct even where ranger's is not.
