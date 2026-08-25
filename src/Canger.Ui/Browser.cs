@@ -1765,6 +1765,7 @@ public sealed class Browser : IFileManager, IDisposable
         _view.Vcs = Vcs;
         _view.Tags = Tags;
         _view.DisplayTagsInAllColumns = Settings.DisplayTagsInAllColumns;
+        _view.CollapsePreview = Settings.CollapsePreview;
         Vcs?.Request(CurrentTab.Path);
         Linemodes.BinaryPrefix = Settings.BinarySizePrefix;
         Linemodes.CountFiles = Settings.AutomaticallyCountFiles;

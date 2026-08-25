@@ -122,4 +122,52 @@ public class MillerViewTests
             Assert.Equal(18, column.Height);
         });
     }
+
+    [Fact]
+    public void ComputeColumns_CollapsedGivesThePreviewsWidthToTheMainColumn()
+    {
+        // `collapse_preview`, on by default and doing nothing: the listing stayed squeezed into
+        // its share while the other half of the window showed nothing at all. Ranger's
+        // `stretch_ratios` hand the width to the column *before* the preview rather than
+        // spreading it around (`gui/widgets/view_miller.py:60-65`).
+        IReadOnlyList<Rect> normal =
+            MillerView.ComputeColumns(new Rect(0, 0, 100, 20), [1, 3, 4]);
+        IReadOnlyList<Rect> collapsed =
+            MillerView.ComputeColumns(new Rect(0, 0, 100, 20), [1, 3, 4], collapse: true);
+
+        Assert.Equal(normal[0].Width, collapsed[0].Width);
+        Assert.True(collapsed[1].Width > normal[1].Width,
+                    $"main column should widen: {normal[1].Width} -> {collapsed[1].Width}");
+        Assert.True(collapsed[2].Width < normal[2].Width,
+                    $"preview should shrink: {normal[2].Width} -> {collapsed[2].Width}");
+    }
+
+    [Fact]
+    public void ComputeColumns_CollapsedKeepsATenthOfThePreviewAsPadding()
+    {
+        // A sliver rather than nothing, so the listing does not run into the window's edge.
+        IReadOnlyList<Rect> collapsed =
+            MillerView.ComputeColumns(new Rect(0, 0, 100, 20), [1, 3, 4], collapse: true);
+
+        Assert.Equal(5, collapsed[2].Width);
+    }
+
+    [Fact]
+    public void ComputeColumns_CollapsedKeepsNothingWithoutPaddingRight()
+    {
+        IReadOnlyList<Rect> collapsed = MillerView.ComputeColumns(
+            new Rect(0, 0, 100, 20), [1, 3, 4], paddingRight: false, collapse: true);
+
+        Assert.Equal(0, collapsed[2].Width);
+    }
+
+    [Fact]
+    public void ComputeColumns_CollapsedStillFillsTheWidth()
+    {
+        IReadOnlyList<Rect> collapsed =
+            MillerView.ComputeColumns(new Rect(0, 0, 100, 20), [1, 3, 4], collapse: true);
+
+        Assert.True(collapsed[^1].Right <= 100,
+                    $"columns must not overrun the window: {collapsed[^1].Right}");
+    }
 }
