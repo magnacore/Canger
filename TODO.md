@@ -2069,6 +2069,32 @@ Two details worth keeping:
 
 Verified in a pty: shown at 0.5s, 2.0s and 3.5s; gone by 4.5s; cleared immediately by a keypress.
 
+### Tab completion picked one match and stopped, and `:shell` offered none
+
+Two separate faults behind the same report.
+
+**The cycle was defeated from outside.** `CycleCompletions` is written correctly — it seeds a list
+with the typed line and the candidates, then walks it. But the caller recomputes the candidates
+from the console's *current* text on every Tab, and after the first Tab that text is no longer
+`f` but `fd_next ` — which contains a space, so `CompletionsForCurrentLine` takes the
+argument-completion branch and comes back empty. The empty list hit an early return placed
+*before* the "a cycle is already running" check, so the second Tab did nothing.
+
+The check for candidates now applies only when starting a cycle. A running one needs no
+candidates: it already holds the list.
+
+**`:shell` had no completion at all**, where ranger completes against `get_executables()`. `s` is
+bound to `console shell%space`, so the whole program name had to be typed. `Executables` gains a
+PATH walk, cached, and `ShellCommand.Complete` offers matching programs — keeping any flags
+already typed, and offering nothing once the program is named, since past that the user is writing
+a command line and every binary on the machine would be noise.
+
+Verified in a pty against the real configuration: `:f` then Tab walks `fd_next`, `fd_prev`,
+`fd_search`, `file_convert_text`, `file_copy_similar`, and Shift-Tab walks back; `s lsb` offers
+`lsb_release` then `lsblk`; `:shell -w gz` offers `gzexe` then `gzip` with the `-w` intact.
+
+Eleven tests; three fail against the old behaviour and four cover a path that had none.
+
 ### Every binding with a tab before its comment was dead
 
 Reported: `edn`, `eft`, `cer`, `cvr`, `ctr` do nothing. Thirty-six bindings in the real

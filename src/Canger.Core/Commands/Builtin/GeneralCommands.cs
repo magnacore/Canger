@@ -308,6 +308,29 @@ public sealed class ShellCommand : CangerCommand
         FileManager.RunProgram(command, flags);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Completes the program name against the PATH, which is what ranger's <c>shell</c> does with
+    /// <c>get_executables()</c> (<c>config/commands.py</c>). Only while the program itself is
+    /// being named: once there is an argument after it, the user is writing the command line and
+    /// a list of every binary on the machine would be noise.
+    /// </remarks>
+    public override IReadOnlyList<string> Complete(int direction)
+    {
+        (string flags, string command) = Line.ParseFlags();
+
+        // Anything past the first word means the program has been named already.
+        if (command.Contains(' ', StringComparison.Ordinal) ||
+            command.Contains('\t', StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        string prefix = Line.Word(0) + (flags.Length > 0 ? " -" + flags : string.Empty) + " ";
+
+        return [.. Executables.Matching(command).Select(program => prefix + program)];
+    }
+
     /// <summary>Names a queued command for the task view.</summary>
     /// <param name="command">The command line.</param>
     /// <returns>Something short enough to read in a list.</returns>
