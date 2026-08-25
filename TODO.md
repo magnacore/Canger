@@ -1827,6 +1827,47 @@ text and the active tab's background rather than the inputs — which is the cla
 getting through.
 
 
+## QA sweep — self-testing instead of being tested
+
+Run on `feature/qa-sweep`, driving Canger in a pty through the workflows a daily driver actually
+uses, plus a mechanical audit of every setting for the defect shape this port keeps producing:
+*the setting is defined, typed, parsed and readable, and nothing consumes it.*
+
+**Method.** For each of the 82 settings, resolve its `CangerSettings` property and count readers
+outside `CangerSettings.cs`. Seventeen are read by string key and all seventeen are wired.
+Twenty-one have a property nothing reads at all.
+
+**What was checked and found working**, so it is not re-investigated: navigation and the scroll
+clamp; all eight sort orders (`om` is mtime — `ot` is type, which cost a false alarm); `zh`;
+marking with `<Space>`, `v`, `uv`; search with wrap-around; bookmarks; `yy`/`pp`, `dd`/`pp`,
+`:mkdir`, `:touch`, `cw` rename; `dD` with and without the multiple-file confirmation; `:flat`;
+`zf` filtering and `:filter` clearing; the task view; `?` help and its pager; console completion
+for both commands and paths; console history; bookmark, tag and console-history persistence.
+
+### Found
+
+| | What | Impact |
+|---|---|---|
+| 1 | **Resizing the terminal does not redraw.** The screen keeps the old geometry — wrapped and garbled — until a key is pressed. `Terminal.Resized` sets neither redraw flag; measured 0 bytes emitted after `SIGWINCH`. | Blocks daily use in a tiled WM or tmux |
+| 2 | **`update_title`, `update_tmux_title`, `shorten_title` dead.** Canger never emits an OSC title sequence, so the window title never says where you are. | Visible every session |
+| 3 | **`wrap_scroll` dead.** `j` at the bottom never wraps to the top. | Visible |
+| 4 | **`save_tabs_on_exit` dead**, and so `filter_dead_tabs_on_startup` with it. No `tabs` file is written and tabs do not survive a restart. Bookmarks, tags and history all persist correctly; only tabs do not. | Visible |
+| 5 | **`status_bar_on_top` dead.** The bar stays at the bottom. | Layout |
+| 6 | **`collapse_preview` dead.** The preview column keeps its width with nothing to show. | Layout |
+| 7 | **`clear_filters_on_dir_change` dead.** A filter set in one directory follows you into the next. | Surprising |
+| 8 | **`cd_bookmarks` and `cd_tab_fuzzy` dead.** `:cd` completion offers neither bookmarks nor fuzzy matching. | Console |
+| 9 | **`freeze_files` dead.** No way to stop the listing reloading, and no `FROZEN` indicator. | Niche |
+| 10 | **`size_in_bytes` dead**, and **`binary_size_prefix` only half-wired** — it reaches the linemode but not `StatusBar` or `BrowserColumn`, so one screen shows two renderings of the same quantity. | Visible when on |
+| 11 | **`flushinput` dead.** Keys typed during a load are not discarded. | Niche |
+| 12 | **`open_all_images` dead.** Opening one image does not hand the whole directory to the viewer. | Visible for media |
+| 13 | **`xterm_alt_key` dead.** | Niche |
+| 14 | **`bidi_support` dead.** Right-to-left names are not reordered. | Niche |
+| 15 | **`w3m_delay`, `w3m_offset`, `iterm2_font_width`, `iterm2_font_height`, `sixel_dithering` dead** — but so are the backends they configure, so these follow the backends rather than lead them. | Blocked |
+| 16 | **`canger --clean` still loads a plugin** (`commands-c8234704: 2 commands`), though `--clean` is documented as ignoring all configuration and plugins. | Debugging |
+
+Ordered for fixing by what stops someone using Canger for a day's work: 1, then 2, 3, 4, then the
+layout and console ones, then the niche ones. 15 waits on the image backends.
+
 ### File sizes were rounded to one decimal place instead of three significant figures
 
 `19.9 M` showed as `20 M` and `7.59 M` as `7.6 M`. Ranger uses `%.3g` — three *significant
