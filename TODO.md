@@ -2486,6 +2486,39 @@ bindings and renders with borders, counts, line numbers and a tilde-abbreviated 
 
 ---
 
+## PDF previews never appeared
+
+Reported as "pdf preview cannot be seen". Images worked everywhere else, which is what made it
+findable: the fault was not in the image pipeline but in the *name* Canger asked the script to
+write to.
+
+`ScopeScriptRunner.CachePathFor` returned a bare SHA-256 hex digest with no extension. Ranger's
+equivalent is `'{0}.jpg'.format(sha512(...).hexdigest())` (`actions.py:1048-1054`) — the
+extension is load-bearing, not decoration. Scope scripts come in two spellings:
+
+- **write straight to `"${IMAGE_CACHE_PATH}"`** — 14 of the rules in the shipped script. These
+  worked with either name, which is why every other image preview was fine.
+- **strip the extension and hand the stem to a tool that appends its own** —
+  `pdftoppm ... "${IMAGE_CACHE_PATH%.*}"` with `-singlefile -jpeg`. Given `<hash>.jpg` this
+  round-trips exactly back; given a bare `<hash>` there is no dot to strip, so pdftoppm wrote
+  `<hash>.jpg` while Canger went on to look at `<hash>`, found nothing, and returned
+  `PreviewResult.None`. Silent — no error anywhere, because from the runner's point of view the
+  script merely declined to produce an image.
+
+PDF was the only rule genuinely broken by this. The font rule also uses `%.*`, but only to build
+a `/tmp` scratch name, so it was unaffected.
+
+Fix: `CachePathFor` appends `.jpg`, matching ranger exactly, which makes both spellings land on
+the path the runner checks. Two regression tests, one per spelling — the strip-and-restore one
+fails without the fix and the direct-write one guards against fixing PDFs by breaking the other 14.
+Verified end to end against the real `~/.config/canger/scope.sh` and `~/.cache/canger`: exit 6,
+and a JPEG at exactly the path Canger asks for.
+
+Worth remembering as a shape: **a convention borrowed from another program can have a load-bearing
+detail that looks cosmetic.** The hash was reimplemented thoughtfully — different algorithm, full
+path, a comment explaining collision-avoidance — and the one part that was pure formatting turned
+out to be the part the scripts depended on.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
