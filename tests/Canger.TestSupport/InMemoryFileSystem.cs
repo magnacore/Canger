@@ -416,6 +416,13 @@ public sealed class InMemoryFileSystem : IFileSystem
     }
 
     /// <inheritdoc />
+    public void Replace(string sourcePath, string destinationPath)
+    {
+        _nodes.Remove(Normalize(destinationPath));
+        Rename(sourcePath, destinationPath);
+    }
+
+    /// <inheritdoc />
     public void CreateSymbolicLink(string linkPath, string target) =>
         AddSymbolicLink(linkPath, target);
 

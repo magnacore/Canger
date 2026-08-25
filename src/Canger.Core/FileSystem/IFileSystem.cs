@@ -135,6 +135,20 @@ public interface IFileSystem
     /// <param name="destinationPath">Absolute path to move it to.</param>
     void Rename(string sourcePath, string destinationPath);
 
+    /// <summary>
+    /// Moves a file over another, replacing it.
+    /// </summary>
+    /// <param name="sourcePath">The file to move.</param>
+    /// <param name="destinationPath">What it replaces.</param>
+    /// <remarks>
+    /// Deliberately separate from <see cref="Rename"/>, which refuses an existing destination and
+    /// is what stops <c>:rename</c> and <c>:bulkrename</c> destroying a file. This one exists for
+    /// the last step of a write-beside-then-replace, where overwriting is the entire point and
+    /// the thing being replaced is a file Canger wrote a moment ago. Naming them apart is what
+    /// keeps a future caller from reaching for the destructive one by accident.
+    /// </remarks>
+    void Replace(string sourcePath, string destinationPath);
+
     /// <summary>Creates a symbolic link.</summary>
     /// <param name="linkPath">Absolute path of the link to create.</param>
     /// <param name="target">The target to record in the link.</param>

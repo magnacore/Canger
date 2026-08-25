@@ -75,7 +75,7 @@ public sealed class MetadataManager(IFileSystem fileSystem)
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
     private readonly Dictionary<string, FileMetadata> _entries = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Dictionary<string, Dictionary<string, string>>> _files =
+    private readonly Dictionary<string, Dictionary<string, Dictionary<string, string>>?> _files =
         new(StringComparer.Ordinal);
 
     private readonly Lock _gate = new();
@@ -132,7 +132,15 @@ public sealed class MetadataManager(IFileSystem fileSystem)
         lock (_gate)
         {
             string target = DeepSearch ? OwningFile(path) : MetadataFiles(path).First();
-            Dictionary<string, Dictionary<string, string>> entries = Load(target);
+
+            // A database that could not be read is not an empty one. Treating it as empty and
+            // then writing replaced a file of hundreds of annotations with a single entry — the
+            // user's own notes, sitting among their own files. Ranger raises rather than
+            // swallowing, so its write is never reached (`core/metadata.py:116-125`).
+            if (Load(target) is not { } entries)
+            {
+                return;
+            }
 
             // Existing fields are kept: an update names only what changes.
             string key = entries.ContainsKey(path) ? path : System.IO.Path.GetFileName(path);
@@ -169,7 +177,11 @@ public sealed class MetadataManager(IFileSystem fileSystem)
 
         foreach (string metadataFile in MetadataFiles(path))
         {
-            Dictionary<string, Dictionary<string, string>> entries = Load(metadataFile);
+            // Reading only: a database that could not be read simply contributes nothing.
+            if (Load(metadataFile) is not { } entries)
+            {
+                continue;
+            }
 
             // A full path wins over a bare name, so a deep-search database can single out one
             // file among many that share a name.
@@ -192,7 +204,11 @@ public sealed class MetadataManager(IFileSystem fileSystem)
         foreach (string metadataFile in MetadataFiles(path))
         {
             first ??= metadataFile;
-            Dictionary<string, Dictionary<string, string>> entries = Load(metadataFile);
+
+            if (Load(metadataFile) is not { } entries)
+            {
+                continue;
+            }
 
             if (entries.ContainsKey(path) || entries.ContainsKey(name))
             {
@@ -233,22 +249,32 @@ public sealed class MetadataManager(IFileSystem fileSystem)
     }
 
     /// <summary>Reads a database, remembering it so a listing does not reread it per row.</summary>
-    private Dictionary<string, Dictionary<string, string>> Load(string metadataFile)
+    /// <returns>
+    /// The database, or <see langword="null"/> when it could not be read. A caller that only
+    /// looks things up can treat that as empty; a caller that intends to write must not.
+    /// </returns>
+    private Dictionary<string, Dictionary<string, string>>? Load(string metadataFile)
     {
         if (_files.TryGetValue(metadataFile, out Dictionary<string, Dictionary<string, string>>? cached))
         {
             return cached;
         }
 
-        Dictionary<string, Dictionary<string, string>> entries = Read(metadataFile);
+        // A failed read is remembered as null, so a listing does not retry it for every row and
+        // so `Set` can tell "nothing recorded" from "could not be read".
+        Dictionary<string, Dictionary<string, string>>? entries = Read(metadataFile);
         _files[metadataFile] = entries;
         return entries;
     }
 
+    /// <returns>
+    /// The database, or <see langword="null"/> when the file exists and could not be read — which
+    /// is not the same as its being absent.
+    /// </returns>
     [SuppressMessage("Design", "CA1031:Do not catch general exception types",
                      Justification = "A malformed or unreadable database must not stop a listing "
-                                   + "from being drawn; it simply contributes nothing.")]
-    private Dictionary<string, Dictionary<string, string>> Read(string metadataFile)
+                                   + "from being drawn; it contributes nothing and is not written.")]
+    private Dictionary<string, Dictionary<string, string>>? Read(string metadataFile)
     {
         try
         {
@@ -264,13 +290,29 @@ public sealed class MetadataManager(IFileSystem fileSystem)
         }
         catch (Exception)
         {
-            return [];
+            return null;
         }
     }
 
+    /// <summary>Replaces a database, without a moment where it is neither old nor new.</summary>
+    /// <param name="metadataFile">The database to replace.</param>
+    /// <param name="entries">What it should now contain.</param>
+    /// <remarks>
+    /// Written beside the real file and renamed over it, as <c>Tags</c>, <c>Bookmarks</c> and the
+    /// console history all do. This one was left writing in place, which truncates at open — so a
+    /// crash, a full disk, or a closed terminal between the truncate and the flush left a
+    /// half-written or empty database. It sits among the user's own files rather than in Canger's
+    /// state directory, which makes it the worst place to have kept that.
+    /// </remarks>
     private void Write(string metadataFile, Dictionary<string, Dictionary<string, string>> entries)
     {
-        using Stream stream = fileSystem.OpenWrite(metadataFile);
-        JsonSerializer.Serialize(stream, entries, WriteOptions);
+        string temporary = metadataFile + ".new";
+
+        using (Stream stream = fileSystem.OpenWrite(temporary))
+        {
+            JsonSerializer.Serialize(stream, entries, WriteOptions);
+        }
+
+        fileSystem.Replace(temporary, metadataFile);
     }
 }

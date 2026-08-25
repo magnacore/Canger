@@ -164,15 +164,31 @@ public sealed class Tags(string path)
         Save();
     }
 
+    /// <summary>
+    /// Whether the last read of the tag file failed, so writing would destroy it.
+    /// </summary>
+    /// <remarks>
+    /// Every change re-reads before writing, so that two running instances cannot clobber one
+    /// another. That makes a failed read dangerous rather than merely unhelpful: the set would be
+    /// empty, and saving it would write the emptiness over every tag the user has.
+    /// </remarks>
+    public bool CouldNotBeRead { get; private set; }
+
     /// <summary>Re-reads the tags from disk.</summary>
     public void Reload()
     {
-        _tags.Clear();
+        // Read into a local and assign only on success. Clearing first — which is what this did —
+        // means a read failure leaves nothing behind and the next Save writes that nothing over
+        // the file. Ranger keeps its existing dictionary and notifies (`container/tags.py:74-83`);
+        // it empties only when the file genuinely does not exist.
+        Dictionary<string, char> read = new(StringComparer.Ordinal);
 
         try
         {
             if (!File.Exists(Path))
             {
+                _tags.Clear();
+                CouldNotBeRead = false;
                 return;
             }
 
@@ -188,23 +204,44 @@ public sealed class Tags(string path)
                 // are read correctly.
                 if (line.Length >= 3 && line[1] == ':' && IsValidTag(line[0]) && line[0] != '/')
                 {
-                    _tags[line[2..]] = line[0];
+                    read[line[2..]] = line[0];
                 }
                 else
                 {
-                    _tags[line] = DefaultTag;
+                    read[line] = DefaultTag;
                 }
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // An unreadable tag file should not stop Canger starting.
+            // An unreadable tag file should not stop Canger starting — but it must stop Canger
+            // writing, or starting is what destroys it.
+            CouldNotBeRead = true;
+            return;
         }
+
+        _tags.Clear();
+
+        foreach ((string path, char tag) in read)
+        {
+            _tags[path] = tag;
+        }
+
+        CouldNotBeRead = false;
     }
 
     /// <summary>Writes the tags to disk.</summary>
+    /// <remarks>
+    /// Refuses when the file could not be read, since what is in memory is then not the user's
+    /// tags but the absence of them.
+    /// </remarks>
     public void Save()
     {
+        if (CouldNotBeRead)
+        {
+            return;
+        }
+
         try
         {
             string? directory = System.IO.Path.GetDirectoryName(Path);

@@ -233,6 +233,10 @@ public sealed class LocalFileSystem : IFileSystem
     }
 
     /// <inheritdoc />
+    public void Replace(string sourcePath, string destinationPath) =>
+        File.Move(sourcePath, destinationPath, overwrite: true);
+
+    /// <inheritdoc />
     public void CreateSymbolicLink(string linkPath, string target) =>
         File.CreateSymbolicLink(linkPath, target);
 
