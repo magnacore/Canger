@@ -2963,6 +2963,29 @@ instrument has been shown to be able to see the thing. Two measurements agreed t
 and both were too coarse to see a two-frame event. The fix was written before any of them, from
 reading the code, and nearly got reverted as unvalidated.
 
+## `console -s` was not implemented, so the separator appeared as text
+
+`map efc console -s | compress |.tar.lz` opened `:| compress |.tar.lz` with the cursor at the end,
+where ranger opens `:compress .tar.lz` with the cursor on the dot.
+
+Ranger's `:console` takes two ways of placing the cursor (`config/commands.py:930-955`): `-pN` is a
+column, and `-s` takes a separator as **its own argument**, finds it in the command, removes it,
+and leaves the cursor in the gap. Canger had `-pN` and not `-s`.
+
+The reason it degraded the way it did is worth keeping. `ParseFlags` folds leading `-x` words into
+a set of letters and returns the rest of the line from the first word that is not one. Given
+`-s | compress |.tar.lz` it produced flags `s` — which nothing read — and a command starting at the
+separator. So the flag vanished silently and its argument became text. **A flag with an argument
+cannot go through flag parsing at all**, and the failure is quiet: no error, just the argument
+turning up on screen.
+
+Both forms are now read off the first word the way ranger reads them, which is also why `-p` moved
+off `ParseFlags` in the same change. Five tests: the reported line, a separator that occurs again
+later (only the first is removed), a separator that is not there at all (line untouched, default
+cursor), and a multi-character separator, which ranger's own help allows — "any char[s] sequence".
+
+Verified in a pty with the real binding: `efc` gives `:compress .tar.lz` with the caret on the dot.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

@@ -185,21 +185,61 @@ public sealed class SetCommand : CangerCommand
 public sealed class ConsoleCommand : CangerCommand
 {
     /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// Two ways to say where the cursor goes, both ranger's
+    /// (<c>config/commands.py:930-955</c>). <c>-pN</c> is a column number. <c>-s</c> takes a
+    /// separator as its own argument, finds it in the command, <em>removes</em> it and leaves the
+    /// cursor in the gap — so <c>console -s | compress |.tar.lz</c> opens
+    /// <c>compress .tar.lz</c> with the cursor on the dot, ready for a name.
+    /// </para>
+    /// <para>
+    /// Written the way ranger writes it, on the first word rather than through
+    /// <see cref="CommandLine.ParseFlags"/>. Flag parsing folds <c>-s</c> into a set of letters
+    /// and then hands back the rest of the line starting at the separator, which is how the
+    /// separator ended up on screen as text: <c>:| compress |.tar.lz</c>, with the cursor at the
+    /// end. <c>-s</c> is not a flag, it is a flag and its argument.
+    /// </para>
+    /// </remarks>
     public override void Execute()
     {
-        (string flags, string rest) = Line.ParseFlags();
-
-        // -pN puts the cursor at position N, so a binding can open a partly typed command with
-        // the cursor where the user needs to continue.
         int cursor = -1;
-        int position = flags.IndexOf('p', StringComparison.Ordinal);
-        if (position >= 0 && position + 1 < flags.Length &&
-            int.TryParse(flags.AsSpan(position + 1), out int parsed))
+        string first = Line.Word(1);
+        string command;
+
+        if (first.StartsWith("-p", StringComparison.Ordinal))
         {
-            cursor = parsed;
+            command = Line.Rest(2);
+
+            if (int.TryParse(first.AsSpan(2), out int parsed))
+            {
+                cursor = parsed;
+            }
+        }
+        else if (first.StartsWith("-s", StringComparison.Ordinal))
+        {
+            // The separator is a word of its own, so the command starts one word later again.
+            string sentinel = Line.Word(2);
+            command = Line.Rest(3);
+
+            int at = sentinel.Length == 0
+                ? -1
+                : command.IndexOf(sentinel, StringComparison.Ordinal);
+
+            if (at >= 0)
+            {
+                // Only the first occurrence, so a separator that also appears in the command
+                // itself still leaves the rest of the line alone.
+                command = command.Remove(at, sentinel.Length);
+                cursor = at;
+            }
+        }
+        else
+        {
+            command = Line.Rest(1);
         }
 
-        FileManager.OpenConsole(rest, cursor);
+        FileManager.OpenConsole(command, cursor);
     }
 }
 
