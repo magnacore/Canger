@@ -165,29 +165,47 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
     /// <returns><see langword="true"/> when a directory was held for that path.</returns>
     public bool Evict(string path) => _directories.Remove(Normalize(path));
 
-    /// <summary>
-    /// Forgets directories that nothing is using, to bound how much a long session accumulates.
-    /// </summary>
-    /// <param name="keep">Paths that must be retained, such as those open in a tab.</param>
-    /// <param name="olderThan">Only drop directories last scanned before this time.</param>
-    /// <returns>How many were dropped.</returns>
-    public int Trim(IReadOnlySet<string> keep, DateTimeOffset olderThan)
+    /// <summary>Drops the listings of directories nobody is sitting on and nobody has touched.</summary>
+    /// <param name="keep">Directories to leave alone, whatever their age.</param>
+    /// <param name="olderThan">Only unload listings last scanned before this moment.</param>
+    /// <returns>How many listings were dropped.</returns>
+    /// <remarks>
+    /// <para>
+    /// The cache never forgets a directory, because forgetting one would break the single-object
+    /// rule <see cref="Intern"/> rests on — the next lookup would mint a second node for the same
+    /// path, and its cursor row, its marks and any measured size would quietly be someone else's.
+    /// What it can do is let go of the listings, which is where the memory is: around a kilobyte
+    /// an entry, against a node of a dozen small fields. A directory returned to pays for one
+    /// scan and remembers everything else. See <see cref="DirectoryNode.Unload"/>.
+    /// </para>
+    /// <para>
+    /// Ranger has the same collector and the same two conditions — old enough, and not under any
+    /// tab (<c>core/fm.py:472-486</c>) — and its periodic call is commented out in its own main
+    /// loop (<c>core/fm.py:531-534</c>). That is why Canger inherited an unbounded cache: the
+    /// port was faithful, including the part that never runs.
+    /// </para>
+    /// </remarks>
+    public int UnloadIdle(IReadOnlySet<DirectoryNode> keep, DateTimeOffset olderThan)
     {
         ArgumentNullException.ThrowIfNull(keep);
 
-        List<string> stale =
-        [
-            .. _directories
-                .Where(entry => !keep.Contains(entry.Key) && entry.Value.LastLoaded < olderThan)
-                .Select(entry => entry.Key),
-        ];
+        int unloaded = 0;
 
-        foreach (string path in stale)
+        // Only the nodes are touched, never the dictionary, so this can iterate it directly.
+        foreach (DirectoryNode directory in _directories.Values)
         {
-            _directories.Remove(path);
+            if (keep.Contains(directory) || directory.LastLoaded >= olderThan)
+            {
+                continue;
+            }
+
+            if (directory.Unload())
+            {
+                unloaded++;
+            }
         }
 
-        return stale.Count;
+        return unloaded;
     }
 
     /// <summary>Forgets every directory.</summary>

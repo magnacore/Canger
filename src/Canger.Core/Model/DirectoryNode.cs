@@ -366,7 +366,14 @@ public sealed class DirectoryNode : FsNode
         // Taken before the scan, because the scan is what makes this a *re*load.
         bool reloading = IsLoaded;
 
-        RememberMarks();
+        // Only when there is a listing to read them from. After `Unload` there is not, and the
+        // marks it saved on the way out are the ones to restore — asking again here would find an
+        // empty listing, conclude nothing was marked, and quietly throw a selection away.
+        if (reloading)
+        {
+            RememberMarks();
+        }
+
         _allEntries.Clear();
         LoadError = null;
 
@@ -447,6 +454,42 @@ public sealed class DirectoryNode : FsNode
     /// (<c>container/directory.py:443</c>), where it is likewise files only.
     /// </remarks>
     public long DiskUsage { get; private set; }
+
+    /// <summary>Drops the listing, keeping everything the directory knows about itself.</summary>
+    /// <returns>Whether there was a listing to drop.</returns>
+    /// <remarks>
+    /// <para>
+    /// The entries are what a cached directory costs — around a kilobyte each — while the node
+    /// itself is a path, a cursor row, a sort order and a set of marked paths. Dropping the
+    /// entries and keeping the node frees effectively all of it and keeps the guarantee
+    /// <see cref="DirectoryCache.Intern"/> depends on: one object per path, however it is reached.
+    /// Discarding the node instead would let the next lookup mint a second one, and the cursor,
+    /// the marks and any measured size would quietly be someone else's.
+    /// </para>
+    /// <para>
+    /// Nothing has to be told this happened. <see cref="LoadIfOutdated"/> and
+    /// <see cref="DirectoryCache.GetLoaded"/> both scan when <see cref="IsLoaded"/> is false, so
+    /// the listing comes back the moment it is drawn or entered.
+    /// </para>
+    /// </remarks>
+    public bool Unload()
+    {
+        if (!IsLoaded)
+        {
+            return false;
+        }
+
+        // Before the entries go: this reads them, and it is what puts the marks back on reload.
+        RememberMarks();
+
+        _allEntries.Clear();
+        _allEntries.TrimExcess();
+        _entries = [];
+        Cursor.Forget();
+        IsLoaded = false;
+
+        return true;
+    }
 
     /// <summary>Re-derives the filtered listing, after a filter or the hidden setting changed.</summary>
     public void Refilter()

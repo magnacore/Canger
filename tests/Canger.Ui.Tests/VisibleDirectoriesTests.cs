@@ -117,6 +117,27 @@ public class VisibleDirectoriesTests
     }
 
     [Fact]
+    public void RetainedCoversEveryTabWhateverTheViewMode()
+    {
+        // What the idle sweep protects. Unloading is cheap to undo, so a background tab could be
+        // swept too — but the saving is in the directories nobody is sitting on, and sweeping a
+        // tab's own would put a scan in front of every tab switch for nothing.
+        (Tab tab, DirectoryCache cache) = Build();
+        Tab far = new(cache, "/elsewhere", 20);
+        far.Current.Load(TestContext.Current.CancellationToken);
+
+        IReadOnlyList<string> retained =
+        [
+            .. Browser.RetainedDirectories(new Dictionary<int, Tab> { [1] = tab, [2] = far })
+                      .Select(d => d.Path),
+        ];
+
+        Assert.Contains("/home/work", retained);
+        Assert.Contains("/elsewhere", retained);
+        Assert.Equal(retained.Distinct().Count(), retained.Count);
+    }
+
+    [Fact]
     public void ReturnsEachDirectoryOnlyOnce()
     {
         // Two tabs on the same directory, or an ancestor that is also another tab's current
