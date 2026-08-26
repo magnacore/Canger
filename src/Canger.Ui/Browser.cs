@@ -907,6 +907,66 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void ShowInExternalPager(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        // `$PAGER` may carry arguments — `less -R` is common — so only its first word names the
+        // program to look for. Ranger's default is the same (`ranger/__init__.py:53`).
+        string configured = Environment.GetEnvironmentVariable("PAGER") is { Length: > 0 } set
+            ? set
+            : DefaultPager;
+        string program = configured.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                                   .FirstOrDefault() ?? DefaultPager;
+
+        // Ranger runs `$PAGER` unconditionally and shows nothing when it is missing. Falling back
+        // means help still opens on a system without one — worse than `less`, better than silence.
+        if (!Executables.Exists(program))
+        {
+            ShowInPager(text);
+            return;
+        }
+
+        string path = Path.Join(Path.GetTempPath(), "canger-" + Path.GetRandomFileName());
+
+        try
+        {
+            // CreateNew rather than Create: it fails rather than following a symbolic link
+            // somebody left at the name we picked. The mode is set before anything is written,
+            // so the contents are never briefly world-readable.
+            using (FileStream file = new(path, FileMode.CreateNew, FileAccess.Write,
+                                         FileShare.None))
+            {
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+                using StreamWriter writer = new(file);
+                writer.Write(text);
+            }
+
+            RunProgram($"{configured} {MacroExpander.ShellQuote(path)}");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Nowhere to write means no external pager, not no help.
+            ShowInPager(text);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // A file left in the temporary directory is not worth reporting.
+            }
+        }
+    }
+
+    /// <summary>The pager used when <c>$PAGER</c> says nothing, as in ranger.</summary>
+    private const string DefaultPager = "less";
+
+    /// <inheritdoc />
     public void RunProgram(string command, string flags = "")
     {
         ProcessResult result = Runner.Run(new ProcessRequest(

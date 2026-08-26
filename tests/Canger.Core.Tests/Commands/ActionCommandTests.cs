@@ -232,6 +232,39 @@ public class ActionCommandTests
                         StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData('k')]
+    [InlineData('c')]
+    [InlineData('s')]
+    public void Help_SendsTheDumpsToTheUsersOwnPager(char answer)
+    {
+        // They went to Canger's pager, which only scrolls — so `/` did nothing and a few hundred
+        // lines of bindings had to be read by eye. Ranger hands these three to `$PAGER`
+        // (`core/actions.py:1483-1484`, `1514`), which is where their search comes from.
+        FakeFileManager manager = Manager();
+
+        manager.Execute("help");
+        manager.Answer(answer);
+
+        Assert.Single(manager.ExternalPagerText);
+        Assert.Empty(manager.PagerText);
+        Assert.NotEmpty(manager.ExternalPagerText[0]);
+    }
+
+    [Fact]
+    public void Help_StillShowsTheManPageThroughMan()
+    {
+        // `m` is not a dump: man formats and pages it itself, so it does not go through either
+        // pager.
+        FakeFileManager manager = Manager();
+
+        manager.Execute("help");
+        manager.Answer('m');
+
+        Assert.Empty(manager.ExternalPagerText);
+        Assert.Contains(("man canger", string.Empty), manager.LaunchedPrograms);
+    }
+
     [Fact]
     public void DrawBookmarks_AsksForTheWindowRatherThanWritingALine()
     {

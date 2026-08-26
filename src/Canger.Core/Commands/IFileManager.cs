@@ -220,6 +220,17 @@ public interface IFileManager
     /// <param name="text">What to show.</param>
     void ShowInPager(string text);
 
+    /// <summary>Shows text in the user's own pager, rather than in Canger's.</summary>
+    /// <param name="text">What to show.</param>
+    /// <remarks>
+    /// For the help dumps, which are long and are read by searching them. Canger's pager scrolls
+    /// and nothing more, so <c>/</c> does nothing in it; <c>less</c> brings its search, its
+    /// <c>n</c>/<c>N</c>, its line addressing and everything else the reader already knows.
+    /// Ranger draws the same line — <c>_run_pager</c> (<c>core/actions.py:1483-1484</c>) hands
+    /// the dumps to <c>$PAGER</c> while previews stay in the built-in one.
+    /// </remarks>
+    void ShowInExternalPager(string text);
+
     /// <summary>Closes the pager.</summary>
     void ClosePager();
 
