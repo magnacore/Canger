@@ -267,17 +267,18 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Visual mode marks a <em>range</em> — everything between the anchor and the cursor — and it
-    /// is recomputed from the listing on every move, so a file that appears between the two ends
-    /// joins the selection. That is what ranger does too (<c>core/actions.py:524-558</c>) and
-    /// what vim's own visual mode does, so the behaviour is right.
+    /// Visual mode marks a <em>range</em> — everything between the anchor and the cursor — swept
+    /// afresh each time the cursor moves. It is not swept at any other time: a file appearing
+    /// between the two ends while the cursor sits still does not join the selection. This comment
+    /// once claimed the opposite was ranger's behaviour and therefore right; it is not. Ranger
+    /// sweeps from inside <c>move</c> (<c>core/actions.py:522-559</c>) and nowhere else, so a
+    /// listing that changes on its own never re-marks anything.
     /// </para>
     /// <para>
-    /// What was missing is any sign that the range is still open. Ranger shows none either — its
-    /// status bar knows about the filter, the marks, the position and frozen files, but never the
-    /// mode — which is why a selection quietly absorbing a newly created file reads as a bug
-    /// rather than as a range doing its job. Worth a word of width: with a range still live, a
-    /// later <c>dD</c> acts on more than was chosen.
+    /// Ranger shows no sign that the mode is open — its status bar knows about the filter, the
+    /// marks, the position and frozen files, but never the mode. Worth a word of width here all
+    /// the same: with a range still live, the next movement extends it, and a later <c>dD</c>
+    /// acts on everything it has swept rather than on what was chosen deliberately.
     /// </para>
     /// </remarks>
     public bool IsVisualMode { get; set; }

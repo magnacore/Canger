@@ -528,6 +528,14 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>Where the cursor was when visual mode began.</summary>
     private int? _visualStart;
 
+    /// <summary>The file the cursor was on when visual mode began.</summary>
+    /// <remarks>
+    /// The anchor's real identity. <see cref="_visualStart"/> is only where it was standing, and
+    /// rows move when a listing changes underneath a selection — see
+    /// <see cref="VisualRange.AnchorIndex"/>.
+    /// </remarks>
+    private string? _visualStartPath;
+
     /// <summary>The directory visual mode began in, and the tab it was shown in.</summary>
     /// <remarks>
     /// A visual selection is a range of rows in one listing, so it means nothing anywhere else.
@@ -562,6 +570,7 @@ public sealed class Browser : IFileManager, IDisposable
         {
             case "visual" when _visualStart is null:
                 _visualStart = CurrentTab.Current.Cursor.Index;
+                _visualStartPath = CurrentTab.Selected?.Path;
                 _visualDirectory = CurrentTab.Current;
                 _visualTab = CurrentTabNumber;
                 _visualReverse = reverse;
@@ -579,6 +588,7 @@ public sealed class Browser : IFileManager, IDisposable
 
             case "normal" when _visualStart is not null:
                 _visualStart = null;
+                _visualStartPath = null;
                 _visualDirectory = null;
                 _selectionBeforeVisual = null;
                 break;
@@ -594,34 +604,46 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>
     /// Extends a visual selection to wherever the cursor has just moved.
     /// </summary>
+    /// <param name="cursorPathBefore">The file the cursor was on before the command ran.</param>
     /// <remarks>
+    /// <para>
     /// Marks everything between the anchor and the cursor and unmarks everything outside it,
     /// except what was already marked before the mode began — so moving back over your own path
     /// deselects, but an unrelated earlier mark survives.
+    /// </para>
+    /// <para>
+    /// Only when the cursor actually moved, which is the whole reason for
+    /// <paramref name="cursorPathBefore"/>. Ranger sweeps from inside <c>move</c> itself
+    /// (<c>core/actions.py:522-559</c>), so a listing that gains a file while the cursor sits
+    /// still is never re-swept and the new file stays unmarked. Sweeping after every command
+    /// instead meant re-deriving the range from whatever now lay between the two ends: a file
+    /// written into the middle of a selection — the usual way being a command that generates one —
+    /// joined it by itself.
+    /// </para>
+    /// <para>
+    /// Compared by path rather than by reference: a reload rebuilds the listing and carries marks
+    /// across by path (<c>DirectoryNode.RestoreMarks</c>), so the same file is not the same
+    /// object afterwards and reference equality would read every reload as a movement.
+    /// </para>
     /// </remarks>
-    private void UpdateVisualSelection()
+    private void UpdateVisualSelection(string? cursorPathBefore)
     {
         LeaveVisualModeIfMoved();
 
-        if (_visualStart is not { } anchor)
+        if (_visualStart is not { } fallback)
         {
             return;
         }
 
-        int cursor = CurrentTab.Current.Cursor.Index;
-        (int low, int high) = anchor <= cursor ? (anchor, cursor) : (cursor, anchor);
+        if (string.Equals(CurrentTab.Selected?.Path, cursorPathBefore, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         IReadOnlyList<FsNode> entries = CurrentTab.Current.Entries;
 
-        // Ranger expresses this as set arithmetic (core/actions.py:549-558); written out per
-        // entry it is simply: inside the range takes the mode's value, outside it reverts to
-        // whatever the entry had before the mode began. Either way, moving back over your own
-        // path undoes it while an unrelated earlier mark survives.
-        for (int i = 0; i < entries.Count; i++)
-        {
-            bool previously = _selectionBeforeVisual?.Contains(entries[i].Path) ?? false;
-
-            entries[i].IsMarked = i >= low && i <= high ? !_visualReverse : previously;
-        }
+        VisualRange.Apply(entries, VisualRange.AnchorIndex(entries, _visualStartPath, fallback),
+                          CurrentTab.Current.Cursor.Index, _visualReverse, _selectionBeforeVisual);
     }
 
     /// <summary>Ends visual mode once the cursor has left the listing it started in.</summary>
@@ -1254,12 +1276,17 @@ public sealed class Browser : IFileManager, IDisposable
 
             if (command is not null)
             {
+                // Noted before the command runs, so afterwards the selection can tell a movement
+                // from a listing that changed on its own. Ranger gets that distinction for free by
+                // sweeping inside `move`; this is the price of doing it in one place instead.
+                string? cursorBefore = CurrentTab.Selected?.Path;
+
                 _dispatcher.Execute(command, quantifier, wildcards);
 
                 // Ranger extends the selection inside `move` itself; doing it after whatever the
                 // key did covers the same ground without every movement command having to know
                 // about the mode. Cheap: it is a no-op unless visual mode is on.
-                UpdateVisualSelection();
+                UpdateVisualSelection(cursorBefore);
                 AnnounceDirectory();
             }
 

@@ -2553,6 +2553,42 @@ The general shape, again: **a style that is correct for one word is wrong for th
 in.** Joining first and colouring once is the convenient order and it silently widens every
 highlight to the whole row.
 
+## A visual selection absorbed files created inside it
+
+Reported: with `A` and `C` selected by `Shift+V` and a command then writing `B` between them, `B`
+joined the selection. Space-marking the same two files did not have the problem.
+
+That difference is the whole diagnosis. Space marking sets `IsMarked` on a file and never revisits
+it, and a reload carries marks across by path (`DirectoryNode.RestoreMarks`), so the two survive
+untouched. Visual mode instead *re-derived* the range: `UpdateVisualSelection` ran after every
+command and marked everything currently lying between the anchor row and the cursor row. A file
+written into that gap was between them by the time the next command ran, so it got swept in.
+
+Ranger cannot do this, and the reason is placement rather than logic. Its sweep lives inside
+`move` itself (`core/actions.py:522-559`) — nothing else calls it. A listing that gains a file
+while the cursor sits still is never re-swept. Canger had lifted the sweep out to a single place
+after command dispatch, which reads as tidier and is how the behaviour was lost: "after any
+command" is a much larger set of moments than "when the user moved".
+
+An earlier comment on `StatusBar.IsVisualMode` asserted that absorbing new files *was* ranger's
+behaviour and therefore correct. It was wrong, and it is corrected in place — a wrong citation is
+worse than none, because the next reader stops looking.
+
+Two fixes, one cause — a row number is not a stable name for a file when the listing can change
+underneath:
+
+- The sweep now runs only when the cursor is on a different file than before the command. Compared
+  by path, not by reference: a reload rebuilds the entries, so reference equality would read every
+  reload as a movement and defeat the guard.
+- The anchor is remembered as a path and its row found at sweep time. Otherwise a file arriving
+  *above* the anchor shifts every row below it and the next real movement sweeps a range the user
+  never chose. Ranger keeps only the number and clamps it (`core/actions.py:525`); that clamp is
+  kept as the fallback for when the anchor's own file has been deleted.
+
+The arithmetic moved to `VisualRange` so it can be tested without a terminal — six tests, plus a
+pty run of the reported sequence. Measured both ways: without the fix the status bar goes from
+`8 B/2` to `12 B/3` when `b.txt` appears; with it, it stays at `8 B/2`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
