@@ -3021,16 +3021,41 @@ That makes three separate instances of the same shape in this file — the keys 
 mechanism existed, and nothing joined them. It is worth a standing suspicion: **a context key that
 compiles is not a context key that is read.**
 
-### Deliberately not copied
+### Two divergences proposed, and overruled — rightly
 
-Ranger ticks every clean file with `✓`. In a source tree that is a tick on almost every row to say
-nothing is wrong, and a status column earns its width by being mostly blank. `VcsStatus.Sync` now
-maps to `null` explicitly rather than falling through the default, so the silence reads as a
-decision. Remote status stays in the title bar as `↑`/`↓` rather than ranger's per-row `>`/`<`/`Y`:
-being ahead is a property of the repository, not of each file.
+I argued for leaving out ranger's `✓` on every clean file (noise) and its per-row remote marks
+(a repository property repeated on every row), keeping the title bar's `↑`/`↓` instead. Both were
+overruled on one argument that beats both of mine: **a ranger user who scans for a mark and does
+not find it cannot tell a clean file from a broken file manager.** Absence is not neutral when the
+reader has been trained to expect a symbol. Tidiness is worth less than that.
 
-Verified against this repository, which has all three at once: `·` plain on `dist` and
-`TestResults`, `+` red on `src`, `?` cyan on `tests`.
+So `VcsStatus.Sync` ticks, and a directory that is itself a repository now carries ranger's remote
+mark in its own column before the file one — `Y` diverged, `>` ahead, `<` behind, `=` in sync,
+`⌂` for a repository with no remote at all. Coloured on their own scale, as ranger colours them
+(`colorschemes/default.py:173-184`): green means nothing to do, red means the remote is ahead of
+you, blue means you have something to push. The title bar keeps its `↑`/`↓` as well; the two answer
+different questions and ranger shows both.
+
+### The remote mark would have been inert
+
+Worth its own note, because it nearly shipped invisible. A repository is only drawn once it has
+been refreshed, and **only the current directory's repository was ever refreshed**
+(`Vcs?.Request(CurrentTab.Path)`, and nothing else). So in a listing of project directories — the
+one place a per-row remote mark earns anything — every repository was found, none was loaded, and
+every marker came back `null`. The feature would have existed, compiled, been tested at the table
+level, and shown nothing.
+
+`RequestVcsForListedRepositories` now asks for each subdirectory in the listing, once per listing
+rather than once per frame: the ask is a dictionary lookup per subdirectory, which is nothing on
+its own and a few thousand a second in a directory of repositories. The revision number changes
+exactly when the listing is rebuilt, which is exactly when the answer could differ.
+
+That is the fourth instance of the same shape in this file. The counter-move is now explicit:
+**after adding anything that reads state, look for what writes it.**
+
+Verified against real directories: `✓` on clean files, `·` plain on `dist` and `TestResults`, `+`
+red on `src`, and in `~/Projects`, `⌂` green on a local-only repository and `=` green on one in
+sync with its remote.
 
 ## What is left
 

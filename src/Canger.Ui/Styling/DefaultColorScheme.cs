@@ -172,6 +172,36 @@ public class DefaultColorScheme : ColorScheme
             }
         }
 
+        // The mark on a directory that is itself a repository, saying how it stands against its
+        // remote. A separate scale from the file one and coloured separately by ranger too
+        // (`colorschemes/default.py:173-184`): green means nothing to do, red means the remote is
+        // ahead of you, blue means you have something to push.
+        else if (context.Has(ContextKey.VcsRemote) && !context.Has(ContextKey.Selected))
+        {
+            attributes &= ~CellAttributes.Bold;
+
+            if (context.HasAny(ContextKey.VcsSync, ContextKey.VcsNone))
+            {
+                foreground = Color.Green;
+            }
+            else if (context.Has(ContextKey.VcsBehind))
+            {
+                foreground = Color.Red;
+            }
+            else if (context.Has(ContextKey.VcsAhead))
+            {
+                foreground = Color.Blue;
+            }
+            else if (context.Has(ContextKey.VcsDiverged))
+            {
+                foreground = Color.Magenta;
+            }
+            else if (context.Has(ContextKey.VcsUnknown))
+            {
+                foreground = Color.Red;
+            }
+        }
+
         if (context.HasAny(ContextKey.Cut, ContextKey.Copied) && !context.Has(ContextKey.Selected))
         {
             attributes |= CellAttributes.Bold;
