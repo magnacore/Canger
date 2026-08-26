@@ -129,4 +129,101 @@ public sealed class VcsMarkerPlacementTests : IDisposable
 
         Assert.True(mark > name, "the mark should follow the name: " + row);
     }
+
+    [Fact]
+    public void ARepositoryInAListingDoesNotShiftEveryOtherRowsSize()
+    {
+        // The reported defect: in a listing of project directories, the rows carrying a mark
+        // pushed their own count a column to the left, so the numbers stepped in and out down the
+        // listing. Ranger keeps two blank columns on every row once anything in the listing is a
+        // repository (browsercolumn.py:504-513), and the numbers hold one column.
+        Assert.SkipUnless(GitIsInstalled, "git is not installed");
+
+        // Fully resolved: the cache is keyed by the path string, so a `..` left in it would
+        // register the repository under a different name than the scan produces and nothing
+        // would match.
+        string parent = Path.GetFullPath(
+            Path.Join(Path.GetTempPath(), "canger-align-" + Path.GetRandomFileName()));
+        Directory.CreateDirectory(Path.Join(parent, "plain"));
+        Directory.CreateDirectory(Path.Join(parent, "repo"));
+
+        try
+        {
+            ProcessStartInfo init = new("git") { WorkingDirectory = Path.Join(parent, "repo") };
+            init.ArgumentList.Add("init");
+            init.ArgumentList.Add("-q");
+            using (Process? p = Process.Start(init))
+            {
+                p?.WaitForExit();
+            }
+
+            LocalFileSystem fs = new();
+            DirectoryNode directory =
+                new(fs, parent, fs.GetStatus(parent, followSymbolicLinks: true));
+            directory.Load(TestContext.Current.CancellationToken);
+
+            VcsService vcs = new();
+            vcs.RepositoryFor(Path.Join(parent, "repo"))?.Refresh();
+
+            BrowserColumn column = new(new DefaultColorScheme())
+            {
+                Directory = directory,
+                IsMainColumn = true,
+                ShowSize = true,
+                Vcs = vcs,
+            };
+            column.Layout(new Rect(0, 0, Width, 6));
+
+            ScreenBuffer screen = new(Width, 6);
+            column.Render(screen);
+
+            string plain = Row(screen, "plain");
+            string repo = Row(screen, "repo");
+
+            // Whatever the counts are, their right-hand edge has to be the same column: that is
+            // what "the numbers do not move" means. The marks live beyond it.
+            Assert.Equal(LastDigit(plain), LastDigit(repo));
+
+            // And the reservation itself: the row without marks keeps their columns blank.
+            Assert.EndsWith("  ", plain, StringComparison.Ordinal);
+            Assert.NotEqual(' ', repo[Width - 2]);
+        }
+        finally
+        {
+            try
+            {
+                foreach (string file in Directory.EnumerateFiles(parent, "*",
+                                                                 SearchOption.AllDirectories))
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                }
+
+                Directory.Delete(parent, recursive: true);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // Leftover temporary directories are not worth failing a test over.
+            }
+        }
+    }
+
+    /// <summary>Where the last digit of a row sits, which is the right edge of its count.</summary>
+    private static int LastDigit(string row)
+    {
+        for (int i = row.Length - 1; i >= 0; i--)
+        {
+            if (char.IsAsciiDigit(row[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The rendered row containing a name.</summary>
+    private static string Row(ScreenBuffer screen, string name) =>
+        Enumerable.Range(0, 6)
+            .Select(screen.TextAt)
+            .First(r => r.Contains(name, StringComparison.Ordinal));
 }
