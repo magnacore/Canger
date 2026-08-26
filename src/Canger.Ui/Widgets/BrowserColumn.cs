@@ -411,16 +411,17 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
     /// <returns>The character and its colour context, or <see langword="null"/> to show nothing.</returns>
     private (string Text, ContextKey Context)? VcsMarker(FsNode entry)
     {
-        // A repository root answers with its remote instead. Ranger splits the two the same way
-        // — a child that is a root sets `has_vcschild` and gets no `vcsstatus`, while a child
-        // inside a repository gets a status and no remote (`container/directory.py:430-437`) —
-        // so a project directory reads `⌂` rather than `⌂?`.
-        if (IsRepositoryRoot(entry))
-        {
-            return null;
-        }
+        // A repository shown as a row answers about *itself* — its own aggregate status, the
+        // worst thing anywhere inside it. Anything else answers to the repository the listing is
+        // in. Ranger keeps the same two sources: `container/directory.py:430-437` gives a child
+        // inside a repository its subpath status, while a child that is a root had its own set
+        // by `init_root`/`update_root` (`ext/vcs/vcs.py:246-268`), which is why a project
+        // directory reads `⌂?` — no remote, and something untracked inside.
+        VcsRepository? source = IsRepositoryRoot(entry)
+            ? Vcs?.RepositoryFor(entry.Path)
+            : Vcs?.RepositoryFor(Directory?.Path ?? entry.Path);
 
-        if (Vcs?.RepositoryFor(Directory?.Path ?? entry.Path) is not { IsLoaded: true } repository)
+        if (source is not { IsLoaded: true } repository)
         {
             return null;
         }

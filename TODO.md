@@ -3101,10 +3101,17 @@ has no mark, as long as the listing contains a repository at all —
 row that is not tracked (`gui/widgets/browsercolumn.py:504-513`). So every row in such a listing is
 the same width. Canger packed the group flush right and let each row claim only what it used.
 
-**A repository root has no file status.** Ranger sets one or the other, never both: a child that is
-a root sets `has_vcschild` and gets no `vcsstatus`, while a child inside a repository gets a status
-and no remote (`container/directory.py:430-437`). That is why ranger showed `7 ⌂` where Canger
-showed `7 ⌂?` — the `?` was Canger answering a question ranger does not ask of a repository.
+**A repository root does have a status, and I removed it by mistake.** From
+`container/directory.py:430-437` — where a root sets `has_vcschild` and only a non-root gets
+`item.vcsstatus` — I concluded that ranger shows a repository only its remote mark. It does not.
+A root's status is set from the other end, by `init_root`/`update_root`
+(`ext/vcs/vcs.py:246-268`), as `data_status_root()`: the aggregate over everything inside, by the
+same precedence Canger's `VcsStatuses.Combine` uses. So `⌂?` is right — no remote, and something
+untracked in there — and I had to put it back a few minutes after taking it away.
+
+The mistake is worth naming: **I read one call site and treated it as the whole answer.** The line
+I read says what that loop does not set; it says nothing about what is set elsewhere. Two greps
+would have found `self.obj.vcsstatus =` in the other file.
 
 `_hasRepositoryChild` is worked out once per render rather than per row, since it is a property of
 the listing.
