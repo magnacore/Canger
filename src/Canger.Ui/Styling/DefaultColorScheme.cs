@@ -141,6 +141,37 @@ public class DefaultColorScheme : ColorScheme
             attributes &= ~CellAttributes.Bold;
         }
 
+        // The version-control mark beside a name. Every one of these keys was already being set
+        // on the marker and no scheme read any of them, so all six statuses drew in whatever
+        // colour the row happened to have — which is half of why the glyphs had to carry so much.
+        // Ranger's own assignment (`colorschemes/default.py:156-171`), including leaving ignored
+        // at the default colour: the quiet mark stays quiet.
+        if (context.Has(ContextKey.VcsFile) && !context.Has(ContextKey.Selected))
+        {
+            attributes &= ~CellAttributes.Bold;
+
+            if (context.Has(ContextKey.VcsConflict))
+            {
+                foreground = Color.Magenta;
+            }
+            else if (context.Has(ContextKey.VcsUntracked))
+            {
+                foreground = Color.Cyan;
+            }
+            else if (context.HasAny(ContextKey.VcsChanged, ContextKey.VcsUnknown))
+            {
+                foreground = Color.Red;
+            }
+            else if (context.HasAny(ContextKey.VcsStaged, ContextKey.VcsSync))
+            {
+                foreground = Color.Green;
+            }
+            else if (context.Has(ContextKey.VcsIgnored))
+            {
+                foreground = Color.Default;
+            }
+        }
+
         if (context.HasAny(ContextKey.Cut, ContextKey.Copied) && !context.Has(ContextKey.Selected))
         {
             attributes |= CellAttributes.Bold;

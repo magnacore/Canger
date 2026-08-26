@@ -2986,6 +2986,52 @@ cursor), and a multi-character separator, which ranger's own help allows — "an
 
 Verified in a pty with the real binding: `efc` gives `:compress .tar.lz` with the caret on the dot.
 
+## Version-control marks now use ranger's characters
+
+Noticed from a listing: `dist/` and `TestResults/` wearing a `!`, which reads as a warning for the
+two directories in the tree that matter least.
+
+`!` was Canger's mark for *ignored*. In ranger `!` is *unknown* — so the same character told
+someone arriving from ranger the opposite of what it meant, and "unknown" is the one status worth
+looking closer at. Three of the seven differed and two of the three collided:
+
+| status | was | now, as ranger has it |
+|---|---|---|
+| conflict | `=` | `X` |
+| ignored | `!` | `·` |
+| unknown | `\|` | `!` |
+
+The middle dot is also the right weight. Ignored files are the least interesting thing in a listing
+and should not carry its loudest mark.
+
+### The half nobody could see
+
+Every marker was already being drawn with `ContextKey.VcsFile` plus a per-status key —
+`VcsConflict`, `VcsUntracked`, `VcsChanged`, `VcsIgnored`, `VcsUnknown` — and **no colour scheme
+read any of them**. All seven statuses drew in whatever colour the row happened to have, which is
+half the reason the glyphs were carrying the entire signal. Ranger's assignment
+(`colorschemes/default.py:156-171`) is now in the default scheme: conflict magenta, untracked cyan,
+changed and unknown red, staged green, and ignored deliberately left at the default colour — the
+quiet mark stays quiet.
+
+`Staged` was also borrowing `VcsChanged`, so a staged file came out red where ranger shows it
+green: the difference between "you have work to commit" and "you have work to lose".
+
+That makes three separate instances of the same shape in this file — the keys existed, the
+mechanism existed, and nothing joined them. It is worth a standing suspicion: **a context key that
+compiles is not a context key that is read.**
+
+### Deliberately not copied
+
+Ranger ticks every clean file with `✓`. In a source tree that is a tick on almost every row to say
+nothing is wrong, and a status column earns its width by being mostly blank. `VcsStatus.Sync` now
+maps to `null` explicitly rather than falling through the default, so the silence reads as a
+decision. Remote status stays in the title bar as `↑`/`↓` rather than ranger's per-row `>`/`<`/`Y`:
+being ahead is a property of the repository, not of each file.
+
+Verified against this repository, which has all three at once: `·` plain on `dist` and
+`TestResults`, `+` red on `src`, `?` cyan on `tests`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
