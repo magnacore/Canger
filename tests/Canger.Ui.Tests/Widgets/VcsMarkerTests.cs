@@ -31,13 +31,54 @@ public class VcsMarkerTests
     }
 
     [Fact]
-    public void Marker_ShowsNothingForAFileInSync()
+    public void Marker_TicksAFileInSync()
     {
-        // A deliberate divergence: ranger ticks every clean file, which in a source tree is a
-        // tick on almost every row to say nothing is wrong. The column earns its width by being
-        // mostly blank.
-        Assert.Null(BrowserColumn.MarkerFor(VcsStatus.Sync));
+        // Busy in a source tree, and kept anyway: someone arriving from ranger who scans for the
+        // tick and does not find it has to work out whether the file is clean or the file manager
+        // is broken, which costs more than the noise.
+        Assert.Equal("✓", BrowserColumn.MarkerFor(VcsStatus.Sync)?.Text);
+        Assert.Equal(Color.Green, ColourOf(VcsStatus.Sync));
+    }
+
+    [Fact]
+    public void Marker_ShowsNothingWhenThereIsNoStatusAtAll()
+    {
         Assert.Null(BrowserColumn.MarkerFor(VcsStatus.None));
+    }
+
+    [Theory]
+    [InlineData(VcsRemoteStatus.Diverged, "Y")]
+    [InlineData(VcsRemoteStatus.Ahead, ">")]
+    [InlineData(VcsRemoteStatus.Behind, "<")]
+    [InlineData(VcsRemoteStatus.Sync, "=")]
+    [InlineData(VcsRemoteStatus.None, "⌂")]
+    public void RemoteMarker_MatchesRangersCharacter(VcsRemoteStatus status, string expected)
+    {
+        // Drawn on a directory that is a repository, so a listing of projects says at a glance
+        // which of them have commits that are not pushed.
+        Assert.Equal(expected, BrowserColumn.RemoteMarkerFor(status)?.Text);
+    }
+
+    /// <summary>The colour a remote marker resolves to in the default scheme.</summary>
+    private static Color RemoteColourOf(VcsRemoteStatus status)
+    {
+        (string Text, ContextKey Context) marker = BrowserColumn.RemoteMarkerFor(status)!.Value;
+
+        return new DefaultColorScheme().Resolve(
+            StyleContext.Of(ContextKey.InBrowser, ContextKey.VcsRemote, marker.Context))
+            .Foreground;
+    }
+
+    [Fact]
+    public void RemoteMarker_IsColouredOnItsOwnScale()
+    {
+        // Not the file scale: green is "nothing to do", red is "the remote is ahead of you", blue
+        // is "you have something to push" (colorschemes/default.py:173-184).
+        Assert.Equal(Color.Green, RemoteColourOf(VcsRemoteStatus.Sync));
+        Assert.Equal(Color.Green, RemoteColourOf(VcsRemoteStatus.None));
+        Assert.Equal(Color.Red, RemoteColourOf(VcsRemoteStatus.Behind));
+        Assert.Equal(Color.Blue, RemoteColourOf(VcsRemoteStatus.Ahead));
+        Assert.Equal(Color.Magenta, RemoteColourOf(VcsRemoteStatus.Diverged));
     }
 
     [Theory]

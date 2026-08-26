@@ -2043,6 +2043,52 @@ public sealed class Browser : IFileManager, IDisposable
         _shownImage = wanted;
     }
 
+    /// <summary>Asks for the status of any repository shown as a row in the current listing.</summary>
+    /// <remarks>
+    /// <para>
+    /// Only the current directory's repository was ever refreshed, and a repository is only drawn
+    /// once it has been. So a listing of project directories — the one place a per-row remote
+    /// mark is worth anything — showed nothing at all: each repository was found, none was loaded,
+    /// and every marker came back empty.
+    /// </para>
+    /// <para>
+    /// Cheap after the first pass: <c>RepositoryFor</c> caches by directory, and <c>Request</c>
+    /// only queues a repository that has gone stale, on a worker. The first pass costs one walk
+    /// up the tree per subdirectory, which is what <c>vcs_aware</c> is asking for.
+    /// </para>
+    /// </remarks>
+    private void RequestVcsForListedRepositories()
+    {
+        if (Vcs is not { } vcs)
+        {
+            return;
+        }
+
+        // Once per listing, not once per frame. Asking is a dictionary lookup per subdirectory,
+        // which is nothing on its own and is a few thousand of them a second in a directory of
+        // repositories. The revision changes whenever the listing is rebuilt, which is exactly
+        // when the answer could differ.
+        DirectoryNode directory = CurrentTab.Current;
+
+        if (_vcsRequestedFor == (directory.Path, directory.Revision))
+        {
+            return;
+        }
+
+        _vcsRequestedFor = (directory.Path, directory.Revision);
+
+        foreach (FsNode entry in directory.Entries)
+        {
+            if (entry.IsDirectory)
+            {
+                vcs.Request(entry.Path);
+            }
+        }
+    }
+
+    /// <summary>The listing whose subdirectories have already been asked about.</summary>
+    private (string Path, int Revision)? _vcsRequestedFor;
+
     /// <summary>The region the columns occupy, between the two bars.</summary>
     /// <remarks>
     /// The screen less the title bar and whichever row the status bar has taken. With
@@ -2148,6 +2194,7 @@ public sealed class Browser : IFileManager, IDisposable
         _view.CollapsePreview = Settings.CollapsePreview;
         Directories.Frozen = Settings.FreezeFiles;
         Vcs?.Request(CurrentTab.Path);
+        RequestVcsForListedRepositories();
         Linemodes.BinaryPrefix = Settings.BinarySizePrefix;
         Linemodes.CountFiles = Settings.AutomaticallyCountFiles;
         Linemodes.ExactBytes = Settings.SizeInBytes;

@@ -205,6 +205,19 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             available -= 1;
         }
 
+        // A directory that is itself a repository says how it stands against its remote, in its
+        // own column before the file marker — which is the order ranger draws them in
+        // (`gui/widgets/browsercolumn.py:498-506`).
+        if (Vcs is not null && RemoteMarker(entry) is { } remote && available > 4)
+        {
+            screen.Write(left, row, remote.Text,
+                         colorScheme.Resolve(StyleContext.Of(ContextKey.InBrowser,
+                                                             ContextKey.VcsRemote, remote.Context)));
+
+            left += 1;
+            available -= 1;
+        }
+
         // The version-control marker sits between the number and the name, where the eye
         // scanning down a listing finds it without having to read across.
         if (Vcs is not null && VcsMarker(entry) is { } marker && available > 3)
@@ -327,15 +340,28 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             ? StyleContext.Of(ContextKey.InBrowser, ContextKey.LineNumber, ContextKey.Selected)
             : StyleContext.Of(ContextKey.InBrowser, ContextKey.LineNumber);
 
-    /// <summary>
-    /// The single character standing for an entry's version-control status.
-    /// </summary>
+    /// <summary>The remote mark for an entry, when the entry is a repository in its own right.</summary>
+    /// <param name="entry">The row being drawn.</param>
+    /// <returns>The mark, or nothing when the entry is not a repository root.</returns>
+    /// <remarks>
+    /// The root test is what keeps this to one row per repository. Without it every file inside a
+    /// repository would repeat the same answer, which is true and useless.
+    /// </remarks>
+    private (string Text, ContextKey Context)? RemoteMarker(FsNode entry)
+    {
+        if (!entry.IsDirectory ||
+            Vcs?.RepositoryFor(entry.Path) is not { IsLoaded: true } repository ||
+            !string.Equals(repository.Root, entry.Path, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return RemoteMarkerFor(repository.RemoteStatus);
+    }
+
+    /// <summary>The single character standing for an entry's version-control status.</summary>
     /// <param name="entry">The entry.</param>
     /// <returns>The character and its colour context, or <see langword="null"/> to show nothing.</returns>
-    /// <remarks>
-    /// A file in sync gets nothing at all. Marking every clean file would fill the column with
-    /// noise and hide the handful that actually differ, which is the only reason to look.
-    /// </remarks>
     private (string Text, ContextKey Context)? VcsMarker(FsNode entry)
     {
         if (Vcs?.RepositoryFor(Directory?.Path ?? entry.Path) is not { IsLoaded: true } repository)
@@ -345,6 +371,28 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
 
         return MarkerFor(repository.StatusOf(entry.Path, entry.IsDirectory));
     }
+
+    /// <summary>The mark and colour that stand for a repository's standing against its remote.</summary>
+    /// <param name="status">How the repository compares with the remote it tracks.</param>
+    /// <returns>The mark and its colour context, or nothing when there is none to show.</returns>
+    /// <remarks>
+    /// Ranger's table (<c>gui/widgets/__init__.py:32-45</c>). This is drawn on a directory that
+    /// <em>is</em> a repository, so a listing of projects says at a glance which of them have
+    /// commits that are not pushed. Canger also puts the current repository's standing in the
+    /// title bar; the two answer different questions and ranger shows both.
+    /// </remarks>
+    internal static (string Text, ContextKey Context)? RemoteMarkerFor(VcsRemoteStatus status) =>
+        status switch
+        {
+            VcsRemoteStatus.Diverged => ("Y", ContextKey.VcsDiverged),
+            VcsRemoteStatus.Ahead => (">", ContextKey.VcsAhead),
+            VcsRemoteStatus.Behind => ("<", ContextKey.VcsBehind),
+            VcsRemoteStatus.Sync => ("=", ContextKey.VcsSync),
+
+            // Ranger's `⌂` for a repository with no remote at all — a house, meaning local only.
+            VcsRemoteStatus.None => ("\u2302", ContextKey.VcsNone),
+            _ => null,
+        };
 
     /// <summary>The mark and colour that stand for a version-control status.</summary>
     /// <param name="status">What the repository says about the file.</param>
@@ -366,11 +414,10 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             VcsStatus.Ignored => ("\u00b7", ContextKey.VcsIgnored),
             VcsStatus.Unknown => ("!", ContextKey.VcsUnknown),
 
-            // Ranger ticks every clean file (`'sync': ('\u2713', ...)`). Deliberately not copied:
-            // in a source tree that is a tick on almost every row to say nothing is wrong, and a
-            // status column earns its width by being mostly blank. Written out rather than left
-            // to the default below, so it reads as a decision instead of an omission.
-            VcsStatus.Sync => null,
+            // A tick on every clean file. Quiet in isolation and busy in a source tree — but a
+            // ranger user scanning for it and not finding it has to work out whether the file is
+            // clean or the file manager is broken, and that costs more than the noise does.
+            VcsStatus.Sync => ("\u2713", ContextKey.VcsSync),
 
             _ => null,
         };
