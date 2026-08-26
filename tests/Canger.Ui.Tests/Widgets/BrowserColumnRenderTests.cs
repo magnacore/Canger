@@ -187,4 +187,72 @@ public class BrowserColumnRenderTests
 
         Assert.All(screen.Snapshot(), row => Assert.Equal("          ", row));
     }
+
+    /// <summary>Builds a column that shows sizes.</summary>
+    private static (BrowserColumn Column, ScreenBuffer Screen) WithSizes(
+        InMemoryFileSystem fs, int width = 30)
+    {
+        (BrowserColumn column, ScreenBuffer screen, _) = Build(fs, width);
+        column.ShowSize = true;
+        return (column, screen);
+    }
+
+    /// <summary>A 2 KiB file whose name cannot fit in a thirty-column listing.</summary>
+    private static InMemoryFileSystem LongNamed() =>
+        new InMemoryFileSystem().AddFileOfSize(
+            "/home/a-name-far-too-long-to-fit-in-this-column.txt", 2048, DateTimeOffset.UnixEpoch);
+
+    [Fact]
+    public void Draw_KeepsASpaceBetweenATruncatedNameAndItsSize()
+    {
+        // The reported defect: the size ran straight onto the ellipsis, `…-column~2.05 k`. A
+        // column was reserved for the gap and then spent at the far right of the row, past the
+        // size, where nothing needed it. Ranger carries the space in the string itself
+        // (`" " + infostringdata`, browsercolumn.py:410-411).
+        (BrowserColumn column, ScreenBuffer screen) = WithSizes(LongNamed());
+        column.Render(screen);
+
+        string row = screen.TextAt(0);
+
+        Assert.Contains("~", row, StringComparison.Ordinal);
+        Assert.Contains("~ 2.05 k", row, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Draw_PutsTheSizeAgainstTheRightEdge()
+    {
+        // The gap belongs between the name and the size, so the size itself ends at the last
+        // column. A trailing blank would be the same bug wearing the other shoe — which is
+        // exactly what it was.
+        (BrowserColumn column, ScreenBuffer screen) = WithSizes(LongNamed());
+        column.Render(screen);
+
+        Assert.Equal('k', (char)screen[29, 0].Rune.Value);
+        Assert.Equal(' ', (char)screen[23, 0].Rune.Value);
+        Assert.NotEqual(' ', (char)screen[22, 0].Rune.Value);
+    }
+
+    [Fact]
+    public void Draw_StillSeparatesThemWhenTheNameIsShort()
+    {
+        // Nothing is truncated here, so the gap is padding rather than the reserved column. It
+        // has to be there either way, and the size still ends at the edge.
+        InMemoryFileSystem fs = new InMemoryFileSystem()
+            .AddFileOfSize("/home/a.txt", 2048, DateTimeOffset.UnixEpoch);
+
+        (BrowserColumn column, ScreenBuffer screen) = WithSizes(fs);
+        column.Render(screen);
+
+        Assert.Equal(" a.txt                  2.05 k", screen.TextAt(0));
+    }
+
+    [Fact]
+    public void Draw_DropsTheSizeRatherThanCrushTheName()
+    {
+        // The guard that was already there: in a column too narrow for both, the name wins.
+        (BrowserColumn column, ScreenBuffer screen) = WithSizes(LongNamed(), width: 10);
+        column.Render(screen);
+
+        Assert.DoesNotContain("2.05 k", screen.TextAt(0), StringComparison.Ordinal);
+    }
 }
