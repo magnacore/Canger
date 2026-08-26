@@ -157,6 +157,10 @@ public sealed class VcsMarkerPlacementTests : IDisposable
                 p?.WaitForExit();
             }
 
+            // Something untracked inside it, so the repository has an aggregate status to report
+            // that is not "clean".
+            File.WriteAllText(Path.Join(parent, "repo", "loose.txt"), "not added\n");
+
             LocalFileSystem fs = new();
             DirectoryNode directory =
                 new(fs, parent, fs.GetStatus(parent, followSymbolicLinks: true));
@@ -187,6 +191,13 @@ public sealed class VcsMarkerPlacementTests : IDisposable
             // And the reservation itself: the row without marks keeps their columns blank.
             Assert.EndsWith("  ", plain, StringComparison.Ordinal);
             Assert.NotEqual(' ', repo[Width - 2]);
+
+            // A repository row reports its own aggregate status — the worst thing anywhere
+            // inside it — not the status of the directory the listing is in, which here is not a
+            // repository at all. Ranger sets it in `init_root`/`update_root` (ext/vcs/vcs.py:246-268)
+            // and Canger's `StatusOf` returns it for the root path. Suppressing it was wrong: a
+            // project directory should read `⌂?`, not `⌂`.
+            Assert.EndsWith("?", repo, StringComparison.Ordinal);
         }
         finally
         {
