@@ -2730,6 +2730,53 @@ without asking.
 `DirectoryCache.Trim` having no callers is left as a separate concern: memory growth over a long
 session, not correctness.
 
+## The directory cache grew for the whole session
+
+`DirectoryCache.Trim` existed and had no caller. It turned out to be a faithful port of ranger,
+where `garbage_collect` exists and the periodic call is commented out in the main loop
+(`core/fm.py:531-534`); the only live caller there is `reset`, which is Canger's `Ctrl+R` →
+`Directories.Clear()`. The dead constants came across too — `TIME_BEFORE_FILE_BECOMES_GARBAGE`
+is 1200 seconds and nothing reads it.
+
+Measured before deciding anything: about a kilobyte per cached entry, 88 MB → 143 MB over 100
+directories of 400 files. Then the measurement that decided the shape of the fix — pressing
+`Ctrl+R`, which drops every cached directory, moved RSS from 143 MB to 154.6 MB and left it there.
+**Eviction cannot return memory to the system**; .NET does not hand it back. So this was never
+about RSS going down, only about the heap not having to grow to hold listings nobody will look at
+again — and it was worth saying so before building rather than after.
+
+Which is why the unit is the *listing*, not the node. `Intern`'s promise is one object per path —
+it is what makes a size measured in one column visible in another — and evicting a node something
+still references would let the next lookup mint a second one, with its own cursor row, its own
+marks and no measured size. Dropping `_allEntries` frees effectively all of the memory and cannot
+break that: there is only ever one node. Nothing needed telling, either, because
+`DirectoryCache.GetLoaded` and `DirectoryNode.LoadIfOutdated` both scan when `IsLoaded` is false,
+so an unloaded directory refills the moment it is entered or drawn.
+
+`Browser.RetainedDirectories` protects every tab's columns rather than only the visible tab's.
+Unloading a background tab's directory would be safe, but it would put a scan in front of every tab
+switch to save a handful of directories out of hundreds. Ranger draws the line in the same place.
+
+One real trap, and the test for it was written before the code was: `Load` opens with
+`RememberMarks()`, which reads the entries. After an `Unload` there are none, so it concluded
+nothing was marked and wrote that over the marks `Unload` had just saved — a selection would have
+vanished while the user was in another directory. `Load` now only remembers marks when it is
+reloading over a listing that is actually there.
+
+Measured after, against a control with the sweep disabled and the thresholds shortened so it fires:
+
+| | first 100 directories | next 100 | final RSS |
+|---|---|---|---|
+| with the sweep | +38.0 MB | **+2.6 MB** | 131.7 MB |
+| without | +58.7 MB | +44.1 MB | 193.9 MB |
+
+The second hundred cost almost nothing because the first hundred's listings had been given back.
+Without it the climb is linear and never stops.
+
+Worth remembering: a method with no callers is a question, not a defect. The useful move was
+asking what upstream does with its equivalent — the answer was "nothing, deliberately or by
+neglect" — and then measuring, which said the obvious fix would not have worked.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

@@ -876,6 +876,76 @@ public sealed class Browser : IFileManager, IDisposable
         ApplySettingsToDirectory();
     }
 
+    /// <summary>The directories any tab is standing on, drawn or not.</summary>
+    /// <param name="tabs">Every open tab.</param>
+    /// <returns>Each directory once.</returns>
+    /// <remarks>
+    /// A superset of <see cref="VisibleDirectories"/>, and the right set to protect from the idle
+    /// sweep. Unloading is cheap to undo, so the background tabs could be swept too — but the
+    /// saving is in the hundreds of directories nobody is sitting on, not in the handful a tab is,
+    /// and sweeping those would put a scan in front of every tab switch for nothing. Ranger draws
+    /// the line in the same place: <c>any(value in tab.pathway for tab in self.tabs.values())</c>
+    /// (<c>core/fm.py:480-481</c>).
+    /// </remarks>
+    internal static IEnumerable<DirectoryNode> RetainedDirectories(
+        IReadOnlyDictionary<int, Tab> tabs)
+    {
+        ArgumentNullException.ThrowIfNull(tabs);
+
+        HashSet<DirectoryNode> seen = [];
+
+        foreach (Tab tab in tabs.Values)
+        {
+            foreach (DirectoryNode directory in tab.Pathway)
+            {
+                if (seen.Add(directory))
+                {
+                    yield return directory;
+                }
+            }
+
+            if (tab.SelectedDirectory is { } selected && seen.Add(selected))
+            {
+                yield return selected;
+            }
+        }
+    }
+
+    /// <summary>How long a listing goes untouched before the sweep may drop it.</summary>
+    /// <remarks>Ranger's <c>TIME_BEFORE_FILE_BECOMES_GARBAGE</c>, rather than a fresh guess.</remarks>
+    private static readonly TimeSpan IdleBeforeUnload = TimeSpan.FromSeconds(1200);
+
+    /// <summary>How often the sweep is worth running.</summary>
+    /// <remarks>
+    /// It walks every cached directory, so it is not something to do per frame. A minute is far
+    /// finer than the twenty it is looking for, and the walk itself is a comparison per entry.
+    /// </remarks>
+    private static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(1);
+
+    /// <summary>When the sweep last ran.</summary>
+    private DateTimeOffset _lastSweep = DateTimeOffset.UtcNow;
+
+    /// <summary>Lets go of listings for directories left alone long enough.</summary>
+    /// <remarks>
+    /// The cache holds every directory of the session, so without this a long session keeps
+    /// growing — roughly a kilobyte per entry ever scanned, forty megabytes for forty thousand.
+    /// It does not hand memory back to the system, which .NET will not do; it stops the heap
+    /// having to grow to hold listings nobody is going to look at again.
+    /// </remarks>
+    private void UnloadIdleDirectories()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        if (now - _lastSweep < SweepInterval)
+        {
+            return;
+        }
+
+        _lastSweep = now;
+        Directories.UnloadIdle(new HashSet<DirectoryNode>(RetainedDirectories(Tabs)),
+                               now - IdleBeforeUnload);
+    }
+
     /// <summary>The directories the current view is drawing.</summary>
     /// <param name="current">The tab whose columns are on screen.</param>
     /// <param name="tabs">Every open tab, for the view mode that shows them all at once.</param>
@@ -1308,6 +1378,12 @@ public sealed class Browser : IFileManager, IDisposable
                 _hadWork = false;
                 ReportFinishedWork();
                 ReloadVisibleDirectories();
+            }
+            else
+            {
+                // Nothing running and nothing just finished, so this is the moment to spend on
+                // housekeeping rather than in front of the user.
+                UnloadIdleDirectories();
             }
 
             Draw();

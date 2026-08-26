@@ -51,7 +51,7 @@ public class TabTests
     }
 
     [Fact]
-    public void Cache_Trim_KeepsWhatIsStillInUse()
+    public void Cache_UnloadIdle_KeepsTheListingsStillInUse()
     {
         (DirectoryCache cache, _) = Build();
         cache.GetLoaded("/home/user", TestContext.Current.CancellationToken);
@@ -61,12 +61,18 @@ public class TabTests
         // point of interning: a directory is one object however it is reached.
         Assert.Equal(3, cache.Count);
 
-        int dropped = cache.Trim(
-            keep: new HashSet<string>(StringComparer.Ordinal) { "/home/user" },
+        // The listings go; the nodes stay, because the cache promises one object per path and a
+        // second one would carry a different cursor, different marks and no measured size.
+        int unloaded = cache.UnloadIdle(
+            keep: new HashSet<DirectoryNode> { cache.Get("/home/user") },
             olderThan: DateTimeOffset.UtcNow.AddMinutes(1));
 
-        Assert.Equal(2, dropped);
-        Assert.Equal(1, cache.Count);
+        // One, not two: /home/user/docs was interned by the scan of its parent but never itself
+        // scanned, so it has no listing to give up and costs nothing to be holding.
+        Assert.Equal(1, unloaded);
+        Assert.Equal(3, cache.Count);
+        Assert.True(cache.Get("/home/user").IsLoaded, "the kept directory still has its listing");
+        Assert.False(cache.Get("/home/other").IsLoaded, "the idle one gave its listing up");
     }
 
     [Fact]
