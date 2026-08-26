@@ -2928,6 +2928,41 @@ None of the 1528 tests noticed, because the row's *contents* were all anyone had
 `StartsWith(" alpha.txt")` and the like. Where things sit was untested, so a layout bug had nowhere
 to fail. The new ones read specific cells.
 
+## The preview column flickered while a PDF preview was generated
+
+Reported as a twitch down the right of the screen while a PDF preview is produced, gone once it is
+cached.
+
+Previews are generated on a worker so the browser does not stop dead on every video thumbnail, and
+`Preview` returned `PreviewResult.None` for the frames in between. `None` is also what "there is
+nothing to preview here" looks like, and with `collapse_preview` on that is the answer that
+**removes the column**. So: land on a PDF, the column collapses because the answer has not arrived,
+the answer arrives a fifth of a second later, the column comes back. Two frames of a different
+layout, and the whole right-hand side shifts twice.
+
+"Nothing to show" and "not ready yet" are indistinguishable to a drawing routine and opposites to a
+layout one. `PreviewKind.Pending` now separates them, and `MillerView.CountsAsPreview` repeats the
+previous frame's decision when the answer is pending rather than making a new one. Ranger reaches
+the same place by a different route: `_collapse` consults the file's cache entry and returns
+`old_collapse` when there is not one yet (`gui/widgets/view_miller.py:196-201`).
+
+### Measuring it took three attempts, and the first two said "no bug"
+
+Sampling the reconstructed screen every 100 ms found one layout with the fix and one without —
+because the whole episode is about two frames inside a 200 ms window, and a poll that slow steps
+over it. Counting border rows in the raw stream found none at all, because rendering is
+differential and an unchanged border is never rewritten.
+
+What worked was forcing the issue: send `<C-l>` forty times through the generation window so every
+intermediate state is actually painted, then count distinct border rows in the output. With the
+fix, forty identical. Without it, thirty-eight identical and **two collapsed** — the preview column
+missing from both.
+
+Worth remembering: **"I could not reproduce it" is a statement about the instrument** until the
+instrument has been shown to be able to see the thing. Two measurements agreed the bug was absent
+and both were too coarse to see a two-frame event. The fix was written before any of them, from
+reading the code, and nearly got reverted as unvalidated.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
