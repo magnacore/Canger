@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.Previews;
 using Canger.Ui.Views;
 using Canger.Ui.Widgets;
 
@@ -169,5 +170,39 @@ public class MillerViewTests
 
         Assert.True(collapsed[^1].Right <= 100,
                     $"columns must not overrun the window: {collapsed[^1].Right}");
+    }
+
+    [Fact]
+    public void Collapse_KeepsTheColumnOpenWhileAPreviewIsBeingGenerated()
+    {
+        // The flicker: a preview that takes a fifth of a second to generate answered `None` for
+        // the frames in between, the column collapsed on that answer, and it came back the moment
+        // the image arrived. Two frames out of forty, and visible as a twitch down the right.
+        Assert.True(MillerView.CountsAsPreview(PreviewKind.Pending, collapsedLastFrame: false));
+    }
+
+    [Fact]
+    public void Collapse_LeavesACollapsedColumnCollapsedWhilePending()
+    {
+        // The same rule the other way up: pending repeats the last decision rather than making
+        // one, so a column that was closed does not open on a maybe.
+        Assert.False(MillerView.CountsAsPreview(PreviewKind.Pending, collapsedLastFrame: true));
+    }
+
+    [Fact]
+    public void Collapse_ClosesTheColumnWhenThereIsGenuinelyNothing()
+    {
+        // `None` is a real answer and must still collapse, whatever the previous frame decided.
+        Assert.False(MillerView.CountsAsPreview(PreviewKind.None, collapsedLastFrame: false));
+        Assert.False(MillerView.CountsAsPreview(PreviewKind.None, collapsedLastFrame: true));
+    }
+
+    [Theory]
+    [InlineData(PreviewKind.Text)]
+    [InlineData(PreviewKind.Image)]
+    [InlineData(PreviewKind.DirectImage)]
+    public void Collapse_OpensTheColumnForARealPreview(PreviewKind kind)
+    {
+        Assert.True(MillerView.CountsAsPreview(kind, collapsedLastFrame: true));
     }
 }

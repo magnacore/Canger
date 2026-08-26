@@ -7,6 +7,18 @@ public enum PreviewKind
     /// <summary>There is nothing to show.</summary>
     None,
 
+    /// <summary>
+    /// The answer is not known yet, because it is being prepared on a worker.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="None"/> on purpose. "Nothing to show" and "not yet" look the same
+    /// to a drawing routine and are opposites to a layout one: a column that collapses because the
+    /// answer has not arrived will expand again a moment later, which reads as a flicker. Ranger
+    /// keeps the distinction by whether the file has a cache entry at all, and reuses the previous
+    /// frame's decision when it does not (<c>gui/widgets/view_miller.py:196-201</c>).
+    /// </remarks>
+    Pending,
+
     /// <summary>Text, possibly with colour.</summary>
     Text,
 
@@ -54,6 +66,9 @@ public readonly record struct PreviewResult(
 {
     /// <summary>There is nothing to show.</summary>
     public static PreviewResult None => new(PreviewKind.None, PreviewFit.AnySize);
+
+    /// <summary>An answer that is still being prepared.</summary>
+    public static PreviewResult Pending => new(PreviewKind.Pending, PreviewFit.AnySize);
 
     /// <summary>Whether there is anything to show.</summary>
     public bool HasContent => Kind != PreviewKind.None;

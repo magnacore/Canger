@@ -85,7 +85,10 @@ public sealed class ScriptPreviewProvider(
         }
 
         Request(path, size);
-        return PreviewResult.None;
+
+        // Not `None`: the caller has to be able to tell "there is nothing here" from "ask again in
+        // a moment", because the preview column collapses on the first and must not on the second.
+        return PreviewResult.Pending;
     }
 
     private readonly Lock _pending = new();
