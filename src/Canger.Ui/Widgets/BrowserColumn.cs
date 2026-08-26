@@ -220,7 +220,13 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
         // The detail is laid out from the right, so the name gets whatever is left.
         (string title, string detail) = Render(entry);
         string right = ShowSize ? detail : string.Empty;
-        int detailWidth = right.Length == 0 ? 0 : new WideString(right).Width + 1;
+
+        // The width the detail claims, which is one more than it draws: the extra column is the
+        // gap that keeps the size off the end of a name long enough to be truncated. Ranger
+        // reserves it the same way, by carrying the space in the string itself —
+        // `infostring.append([" " + infostringdata, ...])` (browsercolumn.py:410-411).
+        int detailText = right.Length == 0 ? 0 : new WideString(right).Width;
+        int detailWidth = detailText == 0 ? 0 : detailText + 1;
 
         // A detail that would leave the name barely legible is dropped instead. The name is
         // what the row is for; a description squeezed in beside one truncated character helps
@@ -236,7 +242,11 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
 
         if (detailWidth > 0)
         {
-            screen.Write(Bounds.Right - detailWidth, row, right, style);
+            // Flush right, so the column reserved above falls between the name and the size
+            // rather than beyond the size. Anchoring on `detailWidth` instead put the gap at the
+            // end of the row, where nothing needed it, and ran `…-truncated~` straight into
+            // `2 k`.
+            screen.Write(Bounds.Right - detailText, row, right, style);
         }
     }
 

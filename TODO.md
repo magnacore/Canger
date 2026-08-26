@@ -2904,6 +2904,30 @@ The shape worth remembering: **a one-line channel cannot answer a question the u
 they type.** The status bar was the wrong instrument, not a badly used one — and the chain was
 built so that the answer's own successor destroyed it.
 
+## The size ran into the end of a truncated name
+
+Reported from a screenshot: `hi-trevor-my-read-after-the-call_2026-08-26_12-17~1.9 k`, with the
+size against the ellipsis and no space between them.
+
+`BrowserColumn` did reserve the gap — `detailWidth` is the size's width **plus one** — and then
+spent it in the wrong place. The size was written at `Bounds.Right - detailWidth`, one column left
+of the edge, so the spare column landed *after* the size, against the border, where nothing needed
+it. The name then filled every column up to the size. One character in the wrong expression, and
+the arithmetic that was supposed to produce the gap produced a trailing blank instead.
+
+Ranger avoids the question by carrying the space inside the string it lays out:
+`infostring.append([" " + infostringdata, ...])` (`browsercolumn.py:410-411`). The gap is part of
+the thing, so it cannot be reserved in one place and drawn in another.
+
+The size is now written at `Bounds.Right - detailText`, flush to the edge, and the reserved column
+falls where it was meant to. Four tests: the truncated case, the size ending at the last column,
+the untruncated case where the gap is padding rather than the reserved column, and the existing
+guard that drops the size entirely rather than crush the name.
+
+None of the 1528 tests noticed, because the row's *contents* were all anyone had ever asserted —
+`StartsWith(" alpha.txt")` and the like. Where things sit was untested, so a layout bug had nowhere
+to fail. The new ones read specific cells.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
