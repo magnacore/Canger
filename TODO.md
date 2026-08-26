@@ -2803,6 +2803,56 @@ The lesson for the suite: **a test that exercises one iteration of a sequence ca
 that is wrong about sequences.** Five tests covered this naming and all five stopped at the first
 collision.
 
+## `./build.sh dist` — tarballs to hand to somebody else
+
+Two, because there are two kinds of recipient: one who has .NET 10 and wants a small download, and
+one who has nothing and would rather take 61 MB than install a runtime first.
+
+| | tarball | needs |
+|---|---|---|
+| framework-dependent | 13 MB | .NET 10 runtime |
+| self-contained | 61 MB | nothing |
+
+The self-contained one was verified under `env -i` with no `dotnet` on `PATH`: it starts, and
+Roslyn still compiles `commands.cs` — 46 commands out of the real personal config, with no SDK
+anywhere. That was the part worth checking, since runtime plugin compilation is the one feature
+that could plausibly have needed an SDK.
+
+Both carry `config/`, and there is a check that they do. Without it Canger is not degraded, it is
+inert: `--config` reports `key bindings: browser 0, console 0, pager 0, taskview 0`. The shipped
+`cc.conf` *is* the keymap, and it is the one part of the payload that comes from content files
+rather than a project reference, so it is the one that can quietly go missing.
+
+Both also carry `LICENSE`, `README.md` and `doc/canger.1`. The licence is an obligation rather than
+a courtesy — Canger is GPL-3.0-or-later, being a port of ranger, so a binary handed to anyone
+obliges the corresponding source to be available to them.
+
+### The trap this turned up
+
+The first version built both variants through the same `obj/`, and **the framework-dependent
+tarball aborted on startup with no message at all** — exit 134, nothing on stdout or stderr, and
+`dotnet canger.dll` equally silent. It reproduces exactly: publish self-contained, then publish
+framework-dependent, and the second one is broken. The ReadyToRun images left in the intermediates
+by one configuration are compiled against a runtime the other does not have.
+
+Three things make it nasty. It is silent. It depends on what happened to be built last, so it comes
+and goes. And the artifact looks entirely normal — the earlier broken tarball was 3.8 MB against
+13 MB, which reads like the trimming working rather than ReadyToRun having been lost.
+
+So each variant now publishes through its own `--artifacts-path`, and every tarball is started
+before it is packaged — `./canger --version`, which touches the host, the runtime and managed
+startup, which is all that failure mode needs. A publish that emits a broken assembly still reports
+success, so running the thing is the only check worth having.
+
+Worth remembering: **a size that drops more than expected is a symptom, not a win.** The 3.8 MB was
+the bug announcing itself and it read as good news.
+
+### What `publish` leaves in that `dist` does not
+
+`-p:SatelliteResourceLanguages=en -p:DebugType=none -p:GenerateDocumentationFile=false` — thirteen
+Roslyn translation directories, the symbols and the API documentation, about 8 MB of a 37 MB tree.
+Nothing reads any of it at runtime.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
