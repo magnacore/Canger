@@ -198,6 +198,53 @@ public class DirectionTests
     }
 
     [Fact]
+    public void FromArguments_TakesWrapScrollAsTheDefaultForCycling()
+    {
+        // The only thing `wrap_scroll` does: ranger passes it as a default the binding may
+        // override (`core/actions.py:485`). Nothing passed it, so it never did anything and `j`
+        // at the bottom of a listing simply stopped.
+        Direction direction = Direction.FromArguments(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["down"] = "1" },
+            cycle: true);
+
+        Assert.True(direction.Cycle);
+    }
+
+    [Fact]
+    public void FromArguments_LetsTheBindingOverrideTheSetting()
+    {
+        Direction direction = Direction.FromArguments(
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["down"] = "1",
+                ["cycle"] = "False",
+            },
+            cycle: true);
+
+        Assert.False(direction.Cycle);
+    }
+
+    [Fact]
+    public void FromArguments_TakesOneIndexedAsADefaultToo()
+    {
+        Direction direction = Direction.FromArguments(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["to"] = "3" },
+            oneIndexed: true);
+
+        Assert.True(direction.OneIndexed);
+    }
+
+    [Fact]
+    public void FromArguments_DefaultsToNeitherWhenNothingIsPassed()
+    {
+        Direction direction = Direction.FromArguments(
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["down"] = "1" });
+
+        Assert.False(direction.Cycle);
+        Assert.False(direction.OneIndexed);
+    }
+
+    [Fact]
     public void FromArguments_ReadsAnAbsoluteDestination()
     {
         Direction direction = Direction.FromArguments(new Dictionary<string, string>

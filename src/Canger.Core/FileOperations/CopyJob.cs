@@ -161,8 +161,12 @@ public sealed class CopyJob : ILoadable
     /// </remarks>
     private string? Refuse(string source)
     {
-        string from = Path.GetFullPath(source);
-        string to = Path.GetFullPath(_destination);
+        // Resolved, not merely normalised. `Path.GetFullPath` expands `.` and `..` and leaves
+        // symbolic links alone, so a destination reaching the source by another name — `~/work`
+        // pointing at `/mnt/data/work` — compared as two unrelated paths and the recursion went
+        // ahead.
+        string from = _fileSystem.ResolvePath(source);
+        string to = _fileSystem.ResolvePath(_destination);
 
         if (string.Equals(from, to, StringComparison.Ordinal))
         {
@@ -170,9 +174,9 @@ public sealed class CopyJob : ILoadable
         }
 
         // Only a directory can contain the destination, and only then is the recursion a problem.
-        if (_fileSystem.GetStatus(from, followSymbolicLinks: false)
+        if (_fileSystem.GetStatus(source, followSymbolicLinks: false)
             is { IsDirectory: true, IsSymbolicLink: false }
-            && IsInside(to, from))
+            && PathRelation.IsInside(to, from))
         {
             return "cannot be pasted into a directory inside itself";
         }
@@ -185,16 +189,6 @@ public sealed class CopyJob : ILoadable
             : null;
     }
 
-    /// <summary>Whether one path lies within another.</summary>
-    private static bool IsInside(string candidate, string directory)
-    {
-        // The separator matters: without it "/a/bc" would count as inside "/a/b".
-        string prefix = directory.EndsWith(Path.DirectorySeparatorChar)
-            ? directory
-            : directory + Path.DirectorySeparatorChar;
-
-        return candidate.StartsWith(prefix, StringComparison.Ordinal);
-    }
 
     /// <summary>Adds up how much there is to transfer.</summary>
     private IEnumerable<long> Measure(string path)
@@ -344,6 +338,10 @@ public sealed class CopyJob : ILoadable
             yield break;
         }
 
+        // Taken before the children are transferred so that anything that fails beneath this
+        // directory — at any depth — is visible here afterwards. See the guard below.
+        int errorsBefore = _errors.Count;
+
         foreach (DirectoryEntry entry in entries)
         {
             foreach (Unit step in TransferAny(Join(source, entry.Name), Join(target, entry.Name)))
@@ -354,24 +352,67 @@ public sealed class CopyJob : ILoadable
 
         MetadataCopier.Copy(_fileSystem, source, target);
 
-        if (_kind == TransferKind.Move)
+        if (_kind != TransferKind.Move)
         {
-            TryDeleteDirectory(source);
+            yield break;
         }
+
+        // The source is removed only when everything under it arrived. Errors are deliberately
+        // collected rather than thrown — one unreadable file should not abandon the rest of the
+        // transfer — but a move that then deletes the source regardless destroys precisely the
+        // files that failed to copy. A destination that ran out of space, a name the filesystem
+        // will not accept, a file larger than FAT32 allows: any of them, and the originals were
+        // gone.
+        //
+        // Ranger reaches the same rule from the other direction: `copytree` raises when its own
+        // error list is non-empty, which puts `rmtree(src)` out of reach
+        // (`ext/shutil_generatorized.py:277-279` and `:318-321`). The port kept the collecting
+        // and dropped the consequence.
+        //
+        // Counting rather than flagging is what makes this propagate: a failure three levels
+        // down is still counted here, so every ancestor keeps its source too.
+        if (_errors.Count != errorsBefore)
+        {
+            _errors.Add($"{Path.GetFileName(source)}: kept, because not everything could be moved");
+            yield break;
+        }
+
+        TryDeleteDirectory(source);
     }
 
+    /// <summary>Names this job has already written to, so it cannot write to one twice.</summary>
+    private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
+
     /// <summary>Works out where something should land, avoiding a clash.</summary>
+    /// <param name="source">What is being transferred.</param>
+    /// <returns>Where to put it.</returns>
+    /// <remarks>
+    /// Overwriting is a policy about what is <em>already</em> at the destination, which is what
+    /// the user asked for by pressing <c>po</c>. It is not permission for one selected file to
+    /// destroy another: a flattened listing, or a copy buffer built up across directories, can
+    /// hold <c>sub1/a.txt</c> and <c>sub2/a.txt</c>, and both resolve here to the same name. The
+    /// second used to overwrite the first, and on a move then delete its own source — leaving one
+    /// of the two files nowhere at all.
+    ///
+    /// So a target this job has already used is made unique whatever the policy says. Ranger has
+    /// the same hole; that is a bug of its own rather than a behaviour to reproduce.
+    /// </remarks>
     private string ResolveTarget(string source)
     {
         string target = Join(_destination, Path.GetFileName(source));
 
-        return _clashPolicy switch
+        string resolved = _clashPolicy switch
         {
-            ClashPolicy.Overwrite => target,
+            ClashPolicy.Overwrite => _claimed.Contains(target)
+                ? SafePath.MakeUnique(_fileSystem, target)
+                : target,
             ClashPolicy.RenameKeepingExtension =>
                 SafePath.MakeUniqueKeepingExtension(_fileSystem, target),
             _ => SafePath.MakeUnique(_fileSystem, target),
         };
+
+        _claimed.Add(resolved);
+        return resolved;
     }
 
     /// <summary>Whether a move can be done by renaming, which requires one filesystem.</summary>

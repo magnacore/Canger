@@ -297,10 +297,36 @@ public sealed class InMemoryFileSystem : IFileSystem
             : throw new FileNotFoundException($"No such file: {path}", path);
     }
 
+    /// <summary>Paths whose writes fail, and what to say when they do.</summary>
+    private readonly Dictionary<string, string> _writeFailures = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Makes writes to a path fail, the way a real filesystem refuses one.
+    /// </summary>
+    /// <param name="path">The destination that cannot be written.</param>
+    /// <param name="because">
+    /// Why, in the words the filesystem would use — "No space left on device", "File name too
+    /// long", "Invalid argument" for a character exFAT will not take, "File too large" past
+    /// FAT32's four gigabytes. The reason does not change the behaviour; it makes the test say
+    /// which real situation it stands for.
+    /// </param>
+    /// <returns>This filesystem, so setup can be chained.</returns>
+    public InMemoryFileSystem FailWritesTo(string path, string because = "No space left on device")
+    {
+        _writeFailures[Normalize(path)] = because;
+        return this;
+    }
+
     /// <inheritdoc />
     public Stream OpenWrite(string path)
     {
         path = Normalize(path);
+
+        if (_writeFailures.TryGetValue(path, out string? because))
+        {
+            throw new IOException(because);
+        }
+
         AddDirectory(ParentOf(path));
         return new WritebackStream(this, path);
     }
@@ -369,6 +395,15 @@ public sealed class InMemoryFileSystem : IFileSystem
         sourcePath = Normalize(sourcePath);
         destinationPath = Normalize(destinationPath);
 
+        // A destination the filesystem will not accept refuses a rename onto it just as it
+        // refuses a write to it — an illegal character, a full disk, a name too long. Without
+        // this the fake would quietly rename where a real filesystem would fail, and a test that
+        // means to exercise a failed move would exercise a successful one.
+        if (_writeFailures.TryGetValue(destinationPath, out string? because))
+        {
+            throw new IOException(because);
+        }
+
         foreach (string key in _nodes.Keys
                      .Where(k => k == sourcePath ||
                                  k.StartsWith(sourcePath + "/", StringComparison.Ordinal))
@@ -378,6 +413,20 @@ public sealed class InMemoryFileSystem : IFileSystem
             _nodes.Remove(key);
             _nodes[destinationPath + key[sourcePath.Length..]] = node;
         }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The store holds a link as a node in its own right, so a name is taken whether or not what
+    /// it points at exists — which is the distinction this asks about.
+    /// </remarks>
+    public bool ExistsNoFollow(string path) => _nodes.ContainsKey(Normalize(path));
+
+    /// <inheritdoc />
+    public void Replace(string sourcePath, string destinationPath)
+    {
+        _nodes.Remove(Normalize(destinationPath));
+        Rename(sourcePath, destinationPath);
     }
 
     /// <inheritdoc />

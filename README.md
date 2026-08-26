@@ -81,22 +81,93 @@ code; `ffmpegthumbnailer` for video thumbnails; `atool` or `bsdtar` for archives
 Building
 --------
 
+You need the **.NET 10 SDK** (10.0.302 or newer — `global.json` rolls forward within the feature
+band) and a Linux machine. You build from a clone and run it there.
+
 ```
 git clone <this repository> canger
 cd canger
-./build.sh              # Debug
-./build.sh publish      # optimised, ReadyToRun, self-contained layout
-./test.sh
+
+./build.sh              # Debug — the development loop
+./build.sh Release      # optimised, still JITs itself on the way to the first frame
+./build.sh publish      # Release + ReadyToRun, framework-dependent — the one to actually use
+./build.sh dist         # tarballs to hand to somebody else
+./test.sh               # the whole suite
 ```
 
-`build.sh` and `test.sh` export `DOTNET_ROOT`, because the SDK is not always on the default search
-path; set `CANGER_DOTNET_ROOT` if yours is somewhere unusual. Two traps that have cost time:
+`publish` is the one that matters for speed. ReadyToRun precompiles the IL ahead of time and only
+applies at publish, so a plain build — in either configuration — still pays to compile itself on
+every launch. It stays framework-dependent (`--self-contained false`), so it uses the runtime
+that is already installed rather than bundling one.
+
+`dist` is for giving Canger to someone else. It writes two tarballs into `dist/`: a
+framework-dependent one for a machine that already has .NET 10, and a self-contained one that
+needs nothing installed at all. Both are ReadyToRun, both leave out the debug symbols, the API
+documentation and the Roslyn translations that `publish` keeps, and both carry `config/` — without
+which Canger starts with no key bindings whatsoever — along with `LICENSE`, this file and the man
+page. Each is started once before it is packaged, because a publish that emits a broken assembly
+still reports success.
+
+It publishes for `linux-x64`; set `CANGER_RID=linux-arm64` if that is what you are on.
+
+### Finding the SDK
+
+Every script sets `DOTNET_ROOT` before doing anything, because a .NET apphost cannot find a
+runtime without it and the error it gives when it cannot does not say so. They look in three
+places, in order: `CANGER_DOTNET_ROOT`, then the path the SDK happens to live at on the machine
+Canger was written on, then whatever `dotnet` is on your `PATH` — which is the one that will find
+it for you. Failing all three you get a sentence saying so rather than a missing-file error.
+
+If yours is somewhere none of those reach:
+
+```
+export CANGER_DOTNET_ROOT=/usr/share/dotnet
+```
+
+Two traps that have cost time here:
 
 * Without `DOTNET_ROOT`, test apphosts fail to launch and the only symptom is `Zero tests ran`.
 * Do **not** pass `--nologo` to `dotnet test`. Under Microsoft.Testing.Platform an unrecognised
   option is forwarded to the test application, which prints its help and runs nothing.
 
-To run without installing, use `./run.sh [path]`.
+
+Running it
+----------
+
+Three ways in, for three different purposes.
+
+```
+./run.sh [path]         # development: rebuilds Debug and runs it
+./canger.sh [path]      # normal use: runs the fastest build that exists
+src/Canger.App/bin/Release/net10.0/linux-x64/publish/canger [path]
+```
+
+**`run.sh`** is the edit-compile-run loop. It rebuilds quietly first and deliberately runs the
+**Debug** build, because a fast rebuild matters more there than a fast start. `CANGER_NO_BUILD=1`
+skips the build. Do not measure anything with it.
+
+**`canger.sh`** is the one to use day to day, and the one to put on your `PATH`. It picks the
+fastest build present — published, then Release, then Debug — and says so on stderr when it has
+had to fall back to Debug. It also sets the handful of variables Canger's own commands need
+(`PATH` including `~/.local/bin`, `VISUAL`, `EDITOR`, `TERMINFO`), which matters when Canger is
+started from a window-manager keybinding rather than a shell, where it would otherwise inherit
+almost nothing. `CANGER_BINARY` overrides which build it runs.
+
+To have `canger` as a command:
+
+```
+./build.sh publish
+mkdir -p ~/.local/bin
+ln -s "$PWD/canger.sh" ~/.local/bin/canger
+```
+
+The symlink is resolved before the build is looked for, so it finds the right one wherever the
+link lives.
+
+**Changing something and seeing it.** Editing Canger's own source means rebuilding — `./build.sh
+publish` — and the next launch has it. Editing your *configuration* (`cc.conf`, `commands.cs`,
+`rifle.conf`, `scope.sh`, `plugins/`) needs no build at all: `commands.cs` and `plugins/*.cs` are
+compiled by Canger at startup, so restarting is enough.
 
 
 Getting started
@@ -170,8 +241,17 @@ this repository if you are porting or verifying something:
 git clone https://github.com/ranger/ranger.git ranger-master
 ```
 
-Two tests read a real ranger `rc.conf` from `../ranger-settings/rc.conf` as a compatibility
-fixture and skip themselves when it is absent, so they will skip for you unless you put one there.
+A fresh clone tests green with **five skips**, all expected, for three reasons:
+
+* two tests parse a real user's `rc.conf` from `../ranger-settings/rc.conf` as a compatibility
+  fixture — put one there and they run;
+* one checks the settings catalogue against `../ranger-master/ranger/container/settings.py` — the
+  clone above enables it;
+* two exercise reflink copies and skip on a filesystem that has no `FICLONE`. They run on btrfs,
+  XFS and bcachefs; if your temporary directory is `tmpfs`, they will not.
+
+A skip predicated on a path is a test that deletes itself when the path moves, which has already
+happened once here — if you move a fixture, check the skip count.
 
 ### Conventions
 

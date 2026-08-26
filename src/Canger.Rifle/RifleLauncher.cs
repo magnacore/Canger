@@ -71,6 +71,24 @@ public sealed class RifleLauncher(RifleConfiguration configuration, IProcessRunn
     public RifleConfiguration Configuration => _configuration;
 
     /// <summary>
+    /// Rewrites a rule's command before the files are attached to it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Ranger's <c>hook_command_preprocessing</c> (<c>ext/rifle.py:207</c>), and it exists for
+    /// one purpose: handing an image viewer the whole directory rather than the one file, with
+    /// the viewer opened at the file that was chosen. That needs to know what is in the listing
+    /// and in what order, which rifle has no idea about — so the browser supplies it here.
+    /// </para>
+    /// <para>
+    /// A hook that rewrites the action to begin with its own <c>set --</c> replaces the file list
+    /// entirely, because the second assignment overrides the first. That is how ranger does it,
+    /// and it is why the hook sees the action rather than the finished command line.
+    /// </para>
+    /// </remarks>
+    public Func<string, string>? PreprocessAction { get; set; }
+
+    /// <summary>
     /// Lists the ways a file could be opened, most preferred first.
     /// </summary>
     /// <param name="path">The file.</param>
@@ -129,7 +147,11 @@ public sealed class RifleLauncher(RifleConfiguration configuration, IProcessRunn
             return new RifleResult(RifleOutcome.AskUser, Label: selected.Match.Label);
         }
 
-        string command = BuildCommand(paths, selected.Match.Command);
+        string action = PreprocessAction is { } rewrite
+            ? rewrite(selected.Match.Command)
+            : selected.Match.Command;
+
+        string command = BuildCommand(paths, action);
         ProcessFlags flags = new(selected.Match.Flags + extraFlags);
 
         ProcessResult result = _runner.Run(new ProcessRequest(

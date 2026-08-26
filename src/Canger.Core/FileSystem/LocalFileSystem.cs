@@ -26,7 +26,7 @@ public sealed class LocalFileSystem : IFileSystem
 
         // EnumerateFileSystemEntries surfaces names cheaply; the per-entry stat below is the
         // expensive part, and is what a caller parallelises when a directory is large.
-        var entries = new List<DirectoryEntry>();
+        List<DirectoryEntry> entries = [];
         foreach (string entryPath in Directory.EnumerateFileSystemEntries(path))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -231,6 +231,14 @@ public sealed class LocalFileSystem : IFileSystem
             File.Move(sourcePath, destinationPath, overwrite: false);
         }
     }
+
+    /// <inheritdoc />
+    public bool ExistsNoFollow(string path) =>
+        Stat(path, followSymbolicLinks: false) is not null;
+
+    /// <inheritdoc />
+    public void Replace(string sourcePath, string destinationPath) =>
+        File.Move(sourcePath, destinationPath, overwrite: true);
 
     /// <inheritdoc />
     public void CreateSymbolicLink(string linkPath, string target) =>

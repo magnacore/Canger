@@ -78,11 +78,34 @@ public sealed class CopyEngine(IFileSystem fileSystem)
 
         FileStatus? sourceStatus = _fileSystem.GetStatus(source, followSymbolicLinks: false);
 
+        // Whether the destination is ours to remove if this is abandoned part-way. Taken before
+        // anything is opened, because opening it for writing is what truncates it.
+        bool destinationIsOurs = !_fileSystem.Exists(destination);
+
         // A symbolic link is recreated rather than followed, so copying a tree of links does not
         // silently turn them into copies of whatever they pointed at.
         if (sourceStatus is { IsSymbolicLink: true })
         {
             return CopySymbolicLink(source, destination);
+        }
+
+        // Refusing before anything is opened, as ranger does
+        // (`ext/shutil_generatorized.py:133-136`). Reached only for a real file copy: a symbolic
+        // link source is recreated above and never reads its own target.
+        //
+        // On a stock runtime this is belt and braces — .NET takes an inode-scoped advisory lock,
+        // so opening the same file for reading and for truncating writing collides and the copy
+        // fails anyway. Measured: a self-copy, a copy onto a hard link, and a copy onto a symlink
+        // to the source all leave the file intact. But that protection is an implementation
+        // detail rather than a decision, it disappears if `System.IO.DisableFileLocking` is ever
+        // set, and the error it produces — "used by another process" — tells the user nothing
+        // true. A file manager should not rely on an accident for this.
+        if (IsSameFile(source, destination))
+        {
+            return new FileCopyResult(
+                CopyStrategy.None, 0,
+                $"'{Path.GetFileName(source)}' and '{Path.GetFileName(destination)}' "
+                + "are the same file");
         }
 
         // The fast paths need real file descriptors, which only a real filesystem has. Anything
@@ -122,11 +145,69 @@ public sealed class CopyEngine(IFileSystem fileSystem)
         }
         catch (OperationCanceledException)
         {
+            DiscardPartial(destination, destinationIsOurs);
             throw;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            DiscardPartial(destination, destinationIsOurs);
             return new FileCopyResult(CopyStrategy.None, 0, e.Message);
+        }
+    }
+
+    /// <summary>Whether two paths lead to the same bytes.</summary>
+    /// <param name="source">The file being read.</param>
+    /// <param name="destination">The file about to be written.</param>
+    /// <returns><see langword="true"/> when they are one file under two names.</returns>
+    /// <remarks>
+    /// By device and inode, not by path, because the interesting cases are the ones where the
+    /// paths differ: a hard link, a symbolic link to the source, or the same name in a different
+    /// case on a filesystem that does not distinguish them. Links are followed on both sides,
+    /// which is what <c>os.path.samefile</c> does and therefore what ranger's check does.
+    ///
+    /// A destination that does not exist yet has no status, and is not the source.
+    /// </remarks>
+    private bool IsSameFile(string source, string destination)
+    {
+        FileStatus? from = _fileSystem.GetStatus(source, followSymbolicLinks: true);
+        FileStatus? to = _fileSystem.GetStatus(destination, followSymbolicLinks: true);
+
+        return from is { } a && to is { } b && a.Device == b.Device && a.Inode == b.Inode;
+    }
+
+    /// <summary>Removes a half-written destination, when it was this copy that created it.</summary>
+    /// <param name="destination">The file being written.</param>
+    /// <param name="isOurs">Whether nothing was there before this copy started.</param>
+    /// <remarks>
+    /// <para>
+    /// A cancelled copy used to leave the bytes it had managed so far sitting at the destination,
+    /// under the right name, with nothing to say it was a fragment. <c>cp</c> does the same on
+    /// Ctrl-C, but a file manager with a cancel key in its task view is a different proposition:
+    /// the user pressed something that says stop, and is entitled to assume nothing was left.
+    /// </para>
+    /// <para>
+    /// Only when the destination did not exist beforehand. Overwriting one that did — which is
+    /// what <c>po</c> asks for — has already truncated it by the time any of this runs, and
+    /// deleting it as well would turn a damaged file into a missing one.
+    /// </para>
+    /// </remarks>
+    private void DiscardPartial(string destination, bool isOurs)
+    {
+        if (!isOurs)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_fileSystem.Exists(destination))
+            {
+                _fileSystem.Delete(destination);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Nothing useful to do about it, and the copy is already being abandoned.
         }
     }
 
@@ -257,6 +338,7 @@ public sealed class CopyEngine(IFileSystem fileSystem)
                                               Action<long>? onProgress,
                                               CancellationToken cancellationToken)
     {
+        bool isOurs = !_fileSystem.Exists(destination);
         byte[] buffer = ArrayPool<byte>.Shared.Rent(BlockSize);
 
         try
@@ -285,10 +367,12 @@ public sealed class CopyEngine(IFileSystem fileSystem)
         }
         catch (OperationCanceledException)
         {
+            DiscardPartial(destination, isOurs);
             throw;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            DiscardPartial(destination, isOurs);
             return new FileCopyResult(CopyStrategy.None, 0, e.Message);
         }
         finally
@@ -308,9 +392,26 @@ public sealed class CopyEngine(IFileSystem fileSystem)
                 return new FileCopyResult(CopyStrategy.None, 0, "could not read the link");
             }
 
-            if (_fileSystem.Exists(destination))
+            // Built beside and moved over, rather than deleted and recreated. The old shape had
+            // a moment with nothing at the destination at all: if creating the link then failed —
+            // a read-only directory, no inodes left — the user's file was gone and nothing
+            // replaced it.
+            //
+            // `ExistsNoFollow`, because a broken link occupies the name while `Exists` reports it
+            // absent; the old test skipped the delete and the create then failed with EEXIST.
+            if (_fileSystem.ExistsNoFollow(destination))
             {
-                _fileSystem.Delete(destination);
+                string temporary = destination + ".canger-new";
+
+                if (_fileSystem.ExistsNoFollow(temporary))
+                {
+                    _fileSystem.Delete(temporary);
+                }
+
+                _fileSystem.CreateSymbolicLink(temporary, target);
+                _fileSystem.Replace(temporary, destination);
+
+                return new FileCopyResult(CopyStrategy.Symlink, 0);
             }
 
             _fileSystem.CreateSymbolicLink(destination, target);

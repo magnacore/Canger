@@ -1827,6 +1827,423 @@ text and the active tab's background rather than the inputs — which is the cla
 getting through.
 
 
+## QA sweep — self-testing instead of being tested
+
+Run on `feature/qa-sweep`, driving Canger in a pty through the workflows a daily driver actually
+uses, plus a mechanical audit of every setting for the defect shape this port keeps producing:
+*the setting is defined, typed, parsed and readable, and nothing consumes it.*
+
+**Method.** For each of the 82 settings, resolve its `CangerSettings` property and count readers
+outside `CangerSettings.cs`. Seventeen are read by string key and all seventeen are wired.
+Twenty-one have a property nothing reads at all.
+
+**What was checked and found working**, so it is not re-investigated: navigation and the scroll
+clamp; all eight sort orders (`om` is mtime — `ot` is type, which cost a false alarm); `zh`;
+marking with `<Space>`, `v`, `uv`; search with wrap-around; bookmarks; `yy`/`pp`, `dd`/`pp`,
+`:mkdir`, `:touch`, `cw` rename; `dD` with and without the multiple-file confirmation; `:flat`;
+`zf` filtering and `:filter` clearing; the task view; `?` help and its pager; console completion
+for both commands and paths; console history; bookmark, tag and console-history persistence.
+
+### Found
+
+| | What | Impact |
+|---|---|---|
+| 1 | **Resizing the terminal does not redraw.** The screen keeps the old geometry — wrapped and garbled — until a key is pressed. `Terminal.Resized` sets neither redraw flag; measured 0 bytes emitted after `SIGWINCH`. | Blocks daily use in a tiled WM or tmux |
+| 2 | **`update_title`, `update_tmux_title`, `shorten_title` dead.** Canger never emits an OSC title sequence, so the window title never says where you are. | Visible every session |
+| 3 | **`wrap_scroll` dead.** `j` at the bottom never wraps to the top. | Visible |
+| 4 | **`save_tabs_on_exit` dead**, and so `filter_dead_tabs_on_startup` with it. No `tabs` file is written and tabs do not survive a restart. Bookmarks, tags and history all persist correctly; only tabs do not. | Visible |
+| 5 | **`status_bar_on_top` dead.** The bar stays at the bottom. | Layout |
+| 6 | **`collapse_preview` dead.** The preview column keeps its width with nothing to show. | Layout |
+| 7 | **`clear_filters_on_dir_change` dead.** A filter set in one directory follows you into the next. | Surprising |
+| 8 | **`cd_bookmarks` and `cd_tab_fuzzy` dead.** `:cd` completion offers neither bookmarks nor fuzzy matching. | Console |
+| 9 | **`freeze_files` dead.** No way to stop the listing reloading, and no `FROZEN` indicator. | Niche |
+| 10 | **`size_in_bytes` dead**, and **`binary_size_prefix` only half-wired** — it reaches the linemode but not `StatusBar` or `BrowserColumn`, so one screen shows two renderings of the same quantity. | Visible when on |
+| 11 | **`flushinput` dead.** Keys typed during a load are not discarded. | Niche |
+| 12 | **`open_all_images` dead.** Opening one image does not hand the whole directory to the viewer. | Visible for media |
+| 13 | **`xterm_alt_key` dead.** | Niche |
+| 14 | **`bidi_support` dead.** Right-to-left names are not reordered. | Niche |
+| 15 | **`w3m_delay`, `w3m_offset`, `iterm2_font_width`, `iterm2_font_height`, `sixel_dithering` dead** — but so are the backends they configure, so these follow the backends rather than lead them. | Blocked |
+| 16 | **`canger --clean` still loads a plugin** (`commands-c8234704: 2 commands`), though `--clean` is documented as ignoring all configuration and plugins. | Debugging |
+
+Two further findings came out of fixing the above rather than the sweep itself:
+
+| | What | Impact |
+|---|---|---|
+| 17 | **A page of movement was a constant sixteen rows** — `scroll_offset * 2` — on every terminal, where ranger uses the browser's own height (`core/actions.py:522`). Page-down on a tall window moved a third of the way down it. | Visible |
+| 18 | **`canger a b c` opened only `a`.** Ranger builds one tab per start path (`core/fm.py:127`); Canger read `Paths[0]` and dropped the rest, despite the usage line saying `[path ...]`. | Visible |
+
+### Fixed
+
+1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19 — see the commits on `feature/qa-sweep`
+and `feature/qa-sweep-2`. Fifteen of nineteen.
+
+**Not a bug after all: the window title.** Ranger only writes one when the terminal advertises a
+status line (`curses.tigetflag('hs')`, `gui/ui.py:131`). `xterm-256color` does not have it, so
+ranger sets no title there either — implementing this would change nothing on the terminal it was
+reported against. It remains a genuine gap on `tmux-256color` and `alacritty`, which do advertise
+one, and `update_tmux_title` is a separate mechanism that would work anywhere. Both left.
+
+### Second pass
+
+A nineteenth finding came out of implementing the eighth: **`:cd` completed only against names in
+the current directory**, so `:cd /usr/lo` and `:cd ~/Doc` did nothing at all — most of the typing
+a `:cd` saves. Fixed with 6, 8, 9, 11 and 12.
+
+One trap worth remembering from that: `UserPath.Expand` falls back to the *process's* working
+directory, which is wherever Canger was started from rather than where the user is now. Relative
+completion worked in a pty and failed in a test for exactly that reason.
+
+### Still open
+
+`cd_tab_fuzzy` — a recursive multi-token directory matcher, and off by default in ranger, so it
+is opt-in rather than missing. `xterm_alt_key` (13), `bidi_support` (14), the title family (2),
+and the settings that follow the unimplemented image backends (15).
+
+### Regression sweep after the fixes
+
+Twenty-three workflows re-driven in a pty and all correct: the listing, `G`, `zh`, marking, `uv`,
+search, `yy`/`pp`, `:mkdir`, `cw`, `dD`, `:flat`, `zf`, the task view, `?`, tabs, `q` closing a
+tab, `:cd` completion, bookmarks, and paging. One apparent failure was the test's own fault — it
+asserted a 24-row page in a twelve-entry directory, where clamping at the end is right.
+
+### The copy engine, tested against `cp` — and `pc`/`pm`/`pb` removed
+
+Three bindings ran an outside program to do what `pp` does: `pb` was
+`cp -rv --reflink=auto --preserve=timestamps %c %d`, and `pc`/`pm` called personal scripts whose
+own headers say they exist to give ranger *"a progress bar"*. All three were workarounds for
+things ranger lacks and Canger has.
+
+Before removing them, Canger's paste was compared against `cp -rv --reflink=auto
+--preserve=timestamps` on btrfs over a directory built to be awkward: a 100 MB sparse file, two
+hard links to one inode, a symlink, a nested tree, and files with non-default modes and a 2020
+mtime.
+
+| | result |
+|---|---|
+| sparse file | 100 M apparent, **0 allocated** both sides — the reflink preserves the holes |
+| hard links | become two separate inodes — **the same as `cp -rv`**, which needs `-a` or `--preserve=links` to do otherwise |
+| symlink | recreated as a link, not followed |
+| modes | `700` and `755` preserved |
+| mtimes | preserved to the nanosecond |
+| recursion, contents | identical |
+
+`diff -r --no-dereference` between Canger's result and `cp`'s reports **no difference at all**.
+
+**One real gap, found and fixed.** A cancelled copy left the bytes it had managed at the
+destination, under the right name, with nothing to say it was a fragment. `cp` does the same on
+Ctrl-C, but a file manager with a cancel key in its task view is a different proposition: the user
+pressed something that says stop. `CopyEngine` now removes a partial destination on cancellation
+*and* on an I/O error — but only when the copy created it, since overwriting one that already
+existed has truncated it already and deleting it too would turn a damaged file into a missing one.
+
+Testing that needed care. On this machine a same-filesystem copy is reflinked and a 700 MB
+cross-filesystem copy finishes in 0.3 s, so racing it with a timer proves nothing; the test
+cancels from inside the progress callback, with reflink and kernel copy disabled so there is a
+mid-file moment to cancel at. `tests/Canger.Core.Tests/FileOperations/CancelledCopyTests.cs`, 4
+tests, checked against a reverted fix.
+
+**And `shell -q`.** The removed bindings were worse in Canger for a reason that outlives them: a
+`shell` command takes the terminal for its whole duration, so a long conversion blanks the screen
+with no sign anything is happening. `-q` — Canger's own flag, ranger has nowhere to run a shell
+command but the foreground — puts it on the task queue instead: spinner, task view, cancellable,
+browser still usable. Verified with `:shell -q sleep 4`, moving the cursor while it ran.
+
+Their other long-running `shell` bindings are candidates for `-q`, but that is their config to
+change rather than mine.
+
+### Control characters were written straight to the terminal
+
+Reported as "the popup menu is not cleanly formatted": the hint window had fragments of other
+rows scattered through it at odd columns.
+
+The cause is not the hint window. Their bindings are written with a trailing tab and a comment —
+`map ecc shell -d clipboard-clear<TAB><TAB><TAB># Clear clipboard` — and ranger keeps that in the
+command, since `source` skips only lines that *start* with `#` (`core/actions.py:378-381`). So
+Canger stores it too, correctly. What Canger then did was write the tab out verbatim.
+
+The buffer's contract is one cell per column, and a tab breaks it: the terminal moves to the next
+tab stop without clearing what it passes over, so the row keeps whatever the listing had drawn
+there and everything after lands in the wrong column. Exactly the corruption reported.
+
+**The same hole was a good deal worse than untidy.** Nothing between a filename and the terminal
+was checking, so a file named with an escape sequence had that sequence written out — enough to
+recolour the screen, clear it, or move the cursor, chosen by whoever named the file rather than
+by whoever is reading it. Verified before the fix: a file called `colour<ESC>[31mred.txt` put a
+raw `ESC [ 3 1 m` into the output stream. Ranger has the same gap and says so
+(`gui/widgets/titlebar.py:92`, *"TODO: Properly escape non-printable chars"*), so this is a
+deliberate divergence.
+
+Fixed at `ScreenBuffer.Set`, the one place every widget's text passes through. A tab becomes a
+space — which is what it was standing in for, and makes those trailing comments read as the
+descriptions they are — and everything else `Rune.IsControl` accepts becomes `?`, visible rather
+than silent, because a name with something odd in it should look odd.
+
+| | before | after |
+|---|---|---|
+| `ec` hint row | `shell -d clipboard-clear` then listing text bleeding through | `shell -d clipboard-clear   # Clear clipboard` |
+| `tabbed<TAB>name.txt` | row corrupted from the tab onward | `tabbed name.txt` |
+| `colour<ESC>[31mred.txt` | raw escape reaches the terminal | `colour?[31mred.txt`, nothing reaches it |
+
+`tests/Canger.Tui.Tests/ScreenBufferControlCharacterTests.cs`, 12 tests.
+
+### A visual selection did not say it was still open
+
+Reported as a bug: two files selected, a third created between them, and the new one joined the
+selection.
+
+It is not a bug in the marking. Marks survive a reload by *path* — verified at the model level
+and through three routes a file can appear — and plain `<Space>` marks never picked the new file
+up. It happens only while visual mode is still on, and then it is the range doing what a range
+does: ranger recomputes `targets` from the live listing on every move
+(`core/actions.py:524-558`), so anything between the two ends is in the selection, exactly as
+vim's visual mode works.
+
+What was missing is any sign that the range was still open. Ranger shows none either — its status
+bar knows about the filter, the marks, the position and frozen files, but never the mode — which
+is why a selection quietly absorbing a new file reads as a defect. The status bar now says `VIS`
+beside `Mrk`, and `UNVIS` for the range `uV` starts, following the `u`-means-undo convention the
+bindings already use.
+
+Considered and rejected: remembering the range as a set of files rather than a span of positions.
+It would stop moving back over your own path from deselecting, which is what visual mode is for —
+a rare surprise traded for a constant one. Also rejected: ending the mode when the listing changes
+underneath, which would drop a selection at unpredictable moments.
+
+| state | status bar |
+|---|---|
+| two plain marks | `0/2  Mrk` |
+| `V` | `0/1  Mrk  VIS` |
+| `V` `j` | `0/2  Mrk  VIS` |
+| `V` `j` `V` | `0/2  Mrk` |
+| `uV` `j` | `2/4  33%  UNVIS` |
+| range open, a file appears between the ends | `0/3  Mrk  VIS` |
+
+### Path-scoped settings were never consulted
+
+`setinregex`, `setinpath` and `setintag` were parsed, validated, stored and reported without
+error — and read by nothing. A rule saying "sort this one directory by date" did nothing at all,
+silently, which is the worst way for a configuration directive to fail.
+
+`SettingsStore.Get` resolves a path scope only when it is *given* a path, and `CangerSettings` —
+the typed facade every reader in the codebase goes through — never passed one. All 66 accessors
+asked for the global value. Ranger falls back to `fm.thisdir.path` inside its own lookup
+(`container/settings.py:222-235`); `CangerSettings.CurrentPath` is that, as a function rather than
+a value because settings are read between frames as well as during them and the answer has to be
+current at the moment of the read.
+
+This had been suspected earlier in the session — *"the eight `setinregex sort mtime` rules appear
+to be inert"* — and recorded rather than chased. It was worth chasing.
+
+Verified in a pty on the reported directory, comparing the same listing with and without the
+rule: the order changes, and the `~/...` form and the absolute form produce the same order, so
+the tilde is expanded correctly. A controlled directory of three files with known timestamps
+gives exactly the expected order for `sort mtime` + `sort_reverse true`, and a neighbouring
+directory with no rule stays alphabetical.
+
+Cost: resolving a scope walks the rules with a compiled regex per read. With their sixteen rules
+in a thousand-entry directory, key latency measures 1.3 ms median and 6.1 ms worst — no change
+worth reporting. With no scoped rules the list is empty and the loop costs nothing.
+
+`tests/Canger.Core.Tests/Settings/PathScopedSettingsTests.cs`, 8 tests.
+
+### Status-bar messages never went away
+
+A message sat on the status bar until the next keystroke. If the keystroke that produced it was
+the last one for a while — `,` marking a set of files, then reading the screen — it stayed there
+indefinitely, hiding the line about the file under the cursor.
+
+Ranger does both things: `ui.press` clears the message on any key (`gui/ui.py:209`), *and* it
+expires on its own after four seconds (`fm.notify`'s `duration=4`, `core/actions.py:165`). Canger
+had only the first half.
+
+Two details worth keeping:
+
+- The expiry runs at the top of the frame, not inside the status bar's own branch. The loop now
+  shortens its input wait while a message is showing, so a message that could never expire —
+  with the console open over it, say — would leave the loop spinning on a zero timeout. Measured
+  at 0.8% CPU with the console open over a message, against a spin if the check sat in the
+  branch, which is where I first put it.
+- The wait is capped at the time remaining. Otherwise the loop sleeps for the whole `idle_delay`
+  and the message lingers up to two seconds past its four, which is half again as long as it was
+  meant to be there.
+
+Verified in a pty: shown at 0.5s, 2.0s and 3.5s; gone by 4.5s; cleared immediately by a keypress.
+
+### Tab completion picked one match and stopped, and `:shell` offered none
+
+Two separate faults behind the same report.
+
+**The cycle was defeated from outside.** `CycleCompletions` is written correctly — it seeds a list
+with the typed line and the candidates, then walks it. But the caller recomputes the candidates
+from the console's *current* text on every Tab, and after the first Tab that text is no longer
+`f` but `fd_next ` — which contains a space, so `CompletionsForCurrentLine` takes the
+argument-completion branch and comes back empty. The empty list hit an early return placed
+*before* the "a cycle is already running" check, so the second Tab did nothing.
+
+The check for candidates now applies only when starting a cycle. A running one needs no
+candidates: it already holds the list.
+
+**`:shell` had no completion at all**, where ranger completes against `get_executables()`. `s` is
+bound to `console shell%space`, so the whole program name had to be typed. `Executables` gains a
+PATH walk, cached, and `ShellCommand.Complete` offers matching programs — keeping any flags
+already typed, and offering nothing once the program is named, since past that the user is writing
+a command line and every binary on the machine would be noise.
+
+Verified in a pty against the real configuration: `:f` then Tab walks `fd_next`, `fd_prev`,
+`fd_search`, `file_convert_text`, `file_copy_similar`, and Shift-Tab walks back; `s lsb` offers
+`lsb_release` then `lsblk`; `:shell -w gz` offers `gzexe` then `gzip` with the `-w` intact.
+
+Eleven tests; three fail against the old behaviour and four cover a path that had none.
+
+### Every binding with a tab before its comment was dead
+
+Reported: `edn`, `eft`, `cer`, `cvr`, `ctr` do nothing. Thirty-six bindings in the real
+configuration were affected.
+
+They are written `map edn directories_number_highlight<TAB><TAB><TAB># Number Highlighted
+Directory`, and ranger keeps a trailing comment in the command — `source` skips only lines that
+*start* with `#` (`core/actions.py:378-381`). Ranger then splits with `str.split()`, which treats
+a tab as a separator, so the name comes out clean and the comment is harmless.
+
+`CommandLine` split on `' '` alone. The tabs and the comment stayed inside the first word, so the
+name was `directories_number_highlight\t\t\t#` and no such command existed. `Rest` had the same
+assumption, so flags and arguments were mis-parsed for the same lines.
+
+The `shell …` ones *appeared* to work, which is why this went unnoticed: the whole line after
+`shell` is passed to `sh`, and `sh` ignores the comment itself.
+
+**The diagnostic had been taught to agree with the bug.** `--config`'s binding check does this:
+
+```csharp
+// Split on any whitespace, not just a space: a `map` line may separate the command from a
+// trailing comment with tabs, and taking "cmd\t\t#" as the name reported a great many
+// perfectly good bindings as broken.
+string name = line.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries) ...
+```
+
+So the problem *was* seen — in the report — and fixed there, in the one place that only describes
+behaviour, rather than in `CommandLine`, which produces it. The check was made to agree with what
+the user expected while the runtime went on disagreeing, and the thirty-six dead bindings became
+invisible. Worth remembering: when a diagnostic and the code disagree, the diagnostic is the one
+that must not be adjusted first.
+
+Now split on any whitespace in both `Words` and `Rest`, matching ranger. Verified in a pty against
+the real configuration: `edn` reports "Numbering directories.", and `eft`, `cer`, `cvr` and `ctr`
+no longer produce `unknown command`, which is what a genuinely missing one still says.
+
+Seven tests; five fail against the old behaviour.
+
+### The three left over from the audit
+
+All three fixed, on the principle that behaviour should be correct even where ranger's is not.
+
+**A filename could substitute another file's name.** Seven copies of a shell quoter had grown up
+across `src/` and the plugins, disagreeing about one thing: quoting is not enough when the result
+goes into a line that `Execute` then expands, because the whole line is expanded — including the
+part just quoted. A per cent is read as the start of a macro, and the substituted value's own
+opening quote closes the quoting around the name, leaving the rest bare. `My%20Docs` was enough to
+break such a command; `x%sy.txt` beside `;id;.txt` was enough to make it run something.
+
+The pair is now named and provided once: `MacroExpander.ShellQuote` for a command going straight
+to a runner, `QuoteForCommandLine` for a line going to `Execute`. `RenameAppendCommand` had been
+doubling the per cent by hand with a comment explaining why — the trap was known and still easy to
+fall into. Checked which callers actually need it rather than doubling everywhere: archives and
+zoxide go through `Runner.Run` and must not, nor must rifle or the terminal runner.
+
+**One selected file could overwrite another.** `po` is a policy about what is already at the
+destination, not permission for two of the user's own files to collide — but a flattened listing
+holding `sub1/a.txt` and `sub2/a.txt` resolved both to one target, and on a move the second
+overwrote the first and then deleted its own source. `CopyJob` now remembers the targets it has
+written and makes a repeat unique whatever the policy says; an existing file is still replaced,
+which is what `po` was asked to do.
+
+**A newline in a path corrupted the tag and bookmark files.** Both use ranger's line-per-entry
+format so the files can be shared, and such a path cannot be represented: a tag became two lines
+and came back as two tags on paths that do not exist. Refused rather than escaped — escaping would
+fix the round trip and make the file unreadable to ranger, a poor trade when what is lost is the
+tag rather than the file. The refusal is narrow, and a test pins that spaces, quotes, colons and
+per cents still work.
+
+Thirteen tests; seven fail against the old behaviour.
+
+## Data-loss audit
+
+A file manager that destroys data it should not is worse than no file manager. Three sweeps over
+every path that removes, renames or writes over user data — destructive operations, overwrite
+paths, state files and shell quoting — each finding then re-read against the source and against
+ranger. Seventeen findings; ten fixed, and one of them was destroying data in ordinary use.
+
+### The one that mattered
+
+**A failed move deleted the source anyway.** `TransferDirectory` collects per-entry errors and
+carries on — deliberately, so one unreadable file does not abandon a transfer — then ran
+`DeleteRecursive(source)` without consulting them. A destination out of space, a name the
+filesystem will not take, a file past FAT32's four gigabytes: the original was gone, with a line
+in the task view to say so.
+
+Ranger reaches the opposite outcome from the other side: `copytree` raises when its error list is
+non-empty, which puts `rmtree(src)` out of reach (`ext/shutil_generatorized.py:277-279`,
+`:318-321`). The port kept the collecting and dropped the consequence.
+
+Counting errors per subtree rather than flagging is what makes the fix propagate: a failure three
+levels down is counted at every ancestor, so none of them delete. The resulting semantics beat
+ranger's — because Canger moves file by file, each file ends in exactly one place, where ranger
+leaves the whole source plus a partial copy.
+
+Verified end to end on btrfs: moving a tree containing an unreadable file to tmpfs leaves that
+file at the source, moves the rest, and reports two problems.
+
+### "Could not read" is not "empty"
+
+The same mistake in three separate classes, each losing everything accumulated, each silently:
+
+- `Tags.Reload` cleared before the `try`, so a read failure emptied the set and the next save
+  wrote the emptiness over every tag.
+- `Bookmarks.ReadFile` returned an empty dictionary on failure; the three-way merge re-adds only
+  keys *changed this session*, so every untouched bookmark was dropped and the result written.
+- `FileMetadata.Read` caught everything and returned empty, so one `:meta` on an unparseable
+  database replaced hundreds of annotations with a single entry.
+
+The trigger is ordinary — a state file left root-owned by one `sudo` run, any EACCES or EIO. The
+directory stays writable, so the rename succeeds and nothing is reported. Ranger guards all three.
+`FileMetadata` was also the last writer truncating in place, and it lives among the user's own
+files; it now writes beside and replaces, which needed `IFileSystem.Replace` — an explicitly
+overwriting rename, kept separate from `Rename`, which refuses an existing destination and is what
+stops `:rename` and `:bulkrename` destroying a file.
+
+### Reported honestly rather than claimed
+
+The audit called the missing same-file guard a data-loss bug. **It is not, and I measured before
+writing the fix.** .NET's advisory lock on Linux is inode-scoped, so opening one file for reading
+and for truncating writing collides: a self-copy, a copy onto a hard link, and a copy onto a
+symlink to the source all left the file intact. The guard went in anyway — that protection is an
+implementation detail rather than a decision, it disappears if `System.IO.DisableFileLocking` is
+set, and the error it produced ("used by another process") told the user nothing true. It is
+hardening and a better message, not a save.
+
+### The rest
+
+`:edit` built `{editor} {quoted}` with no `--`, so a file called `+!rm -rf ~/Documents` was read
+by vim as a command to run and `E` was enough — Canger's own `rifle.conf` carries the `--`; the
+command bypassed rifle and dropped it. The containment guard lived inside `CopyJob`, so the three
+linking pastes had none, and it compared paths as typed, missing a destination that reaches the
+source through a symlink; both now use `PathRelation`, which resolves first. `:delete` and
+`:trash` silently discarded an argument and acted on the selection instead — they refuse now,
+rather than gaining a shell-splitter inside the one command that cannot be undone. `SafePath`
+asked `Exists`, which follows links, so a *broken* link read as a free name and the write landed
+wherever it pointed; `ExistsNoFollow` is the `lstat` to that `stat`. `CopySymbolicLink` deleted
+before creating. Saving state through a symlink broke the link. `--clean` pointed tags at
+`/dev/null` and relied on a rename failing, which as root it does not.
+
+### Deliberately not done
+
+Two findings are ranger parity and were left: `po` with two selected files sharing a basename
+(overwrite invites it), and a newline in a tagged path corrupting the line-per-entry format. The
+`%`-in-a-filename hazard in the personal `commands.cs` is out of scope by agreement, and recorded
+in the plan with its one-line fix.
+
+Twenty-nine tests across five files, every one checked against the unfixed code.
+
 ### File sizes were rounded to one decimal place instead of three significant figures
 
 `19.9 M` showed as `20 M` and `7.59 M` as `7.6 M`. Ranger uses `%.3g` — three *significant
@@ -2069,6 +2486,373 @@ bindings and renders with borders, counts, line numbers and a tilde-abbreviated 
 
 ---
 
+## PDF previews never appeared
+
+Reported as "pdf preview cannot be seen". Images worked everywhere else, which is what made it
+findable: the fault was not in the image pipeline but in the *name* Canger asked the script to
+write to.
+
+`ScopeScriptRunner.CachePathFor` returned a bare SHA-256 hex digest with no extension. Ranger's
+equivalent is `'{0}.jpg'.format(sha512(...).hexdigest())` (`actions.py:1048-1054`) — the
+extension is load-bearing, not decoration. Scope scripts come in two spellings:
+
+- **write straight to `"${IMAGE_CACHE_PATH}"`** — 14 of the rules in the shipped script. These
+  worked with either name, which is why every other image preview was fine.
+- **strip the extension and hand the stem to a tool that appends its own** —
+  `pdftoppm ... "${IMAGE_CACHE_PATH%.*}"` with `-singlefile -jpeg`. Given `<hash>.jpg` this
+  round-trips exactly back; given a bare `<hash>` there is no dot to strip, so pdftoppm wrote
+  `<hash>.jpg` while Canger went on to look at `<hash>`, found nothing, and returned
+  `PreviewResult.None`. Silent — no error anywhere, because from the runner's point of view the
+  script merely declined to produce an image.
+
+PDF was the only rule genuinely broken by this. The font rule also uses `%.*`, but only to build
+a `/tmp` scratch name, so it was unaffected.
+
+Fix: `CachePathFor` appends `.jpg`, matching ranger exactly, which makes both spellings land on
+the path the runner checks. Two regression tests, one per spelling — the strip-and-restore one
+fails without the fix and the direct-write one guards against fixing PDFs by breaking the other 14.
+Verified end to end against the real `~/.config/canger/scope.sh` and `~/.cache/canger`: exit 6,
+and a JPEG at exactly the path Canger asks for.
+
+Worth remembering as a shape: **a convention borrowed from another program can have a load-bearing
+detail that looks cosmetic.** The hash was reimplemented thoughtfully — different algorithm, full
+path, a comment explaining collision-avoidance — and the one part that was pure formatting turned
+out to be the part the scripts depended on.
+
+## The marked-size figure was highlighted along with the indicator
+
+Reported from a screenshot: with files marked, the whole right-hand side of the status bar became
+one solid block — `27.5 M/2  Mrk  VIS` — where ranger colours only the indicator.
+
+`DrawRight` assembled its pieces with `string.Join` and wrote the result in a single style, built
+as `InStatusbar + Scroll` plus `Marked` when anything was marked. The colour scheme gives
+`in_statusbar + marked` `Bold | Reverse` with bright yellow — a deliberate block, because it has
+one short word to draw attention to — and applying it to the joined line painted the byte count
+and the free-space figure with it.
+
+Ranger builds the same line as separately-tagged fragments (`gui/widgets/statusbar.py:253-327`),
+each added with its own contexts and recoloured between by `_print_result`. What is worth noticing
+is which fragments get *nothing*: the sizes. `right.add(human_readable(sumsize, separator=''))`
+takes no context at all, and neither does `... + " sum"` or the free-space figure. Only the
+indicators are flagged — `right.add('Mrk', base, 'marked')`, `'All'`/`'Top'`/`'Bot'`/percentage
+with `base` plus their own key, `FROZEN` with `base, 'frozen'`. The numbers stay quiet so the flag
+beside them can be loud.
+
+`DrawRight` now carries a list of `(text, context)` and writes each piece with its own resolved
+style, separators included — those were part of the block too, which is why it read as continuous.
+`ScrollIndicator` returns its context alongside its word, so `All`/`Top`/`Bot`/`%` are tagged
+individually as ranger tags them; the default scheme gives those four no colour, but a scheme is
+free to, and that is the point of tagging them.
+
+`VIS`/`UNVIS` has no ranger counterpart — ranger shows the mode on the left, in place of the
+permission string — so it borrows `marked`, being the same kind of statement about the same set of
+files. Verified in a pty: `Mrk` and `VIS` carry SGR `1;7;93`, the separator between them carries
+none, and `50 k/2` beside them is unstyled.
+
+The general shape, again: **a style that is correct for one word is wrong for the line it sits
+in.** Joining first and colouring once is the convenient order and it silently widens every
+highlight to the whole row.
+
+## A visual selection absorbed files created inside it
+
+Reported: with `A` and `C` selected by `Shift+V` and a command then writing `B` between them, `B`
+joined the selection. Space-marking the same two files did not have the problem.
+
+That difference is the whole diagnosis. Space marking sets `IsMarked` on a file and never revisits
+it, and a reload carries marks across by path (`DirectoryNode.RestoreMarks`), so the two survive
+untouched. Visual mode instead *re-derived* the range: `UpdateVisualSelection` ran after every
+command and marked everything currently lying between the anchor row and the cursor row. A file
+written into that gap was between them by the time the next command ran, so it got swept in.
+
+Ranger cannot do this, and the reason is placement rather than logic. Its sweep lives inside
+`move` itself (`core/actions.py:522-559`) — nothing else calls it. A listing that gains a file
+while the cursor sits still is never re-swept. Canger had lifted the sweep out to a single place
+after command dispatch, which reads as tidier and is how the behaviour was lost: "after any
+command" is a much larger set of moments than "when the user moved".
+
+An earlier comment on `StatusBar.IsVisualMode` asserted that absorbing new files *was* ranger's
+behaviour and therefore correct. It was wrong, and it is corrected in place — a wrong citation is
+worse than none, because the next reader stops looking.
+
+Two fixes, one cause — a row number is not a stable name for a file when the listing can change
+underneath:
+
+- The sweep now runs only when the cursor is on a different file than before the command. Compared
+  by path, not by reference: a reload rebuilds the entries, so reference equality would read every
+  reload as a movement and defeat the guard.
+- The anchor is remembered as a path and its row found at sweep time. Otherwise a file arriving
+  *above* the anchor shifts every row below it and the next real movement sweeps a range the user
+  never chose. Ranger keeps only the number and clamps it (`core/actions.py:525`); that clamp is
+  kept as the fallback for when the anchor's own file has been deleted.
+
+The arithmetic moved to `VisualRange` so it can be tested without a terminal — six tests, plus a
+pty run of the reported sequence. Measured both ways: without the fix the status bar goes from
+`8 B/2` to `12 B/3` when `b.txt` appears; with it, it stays at `8 B/2`.
+
+## Cut and copied files were not dimmed
+
+Reported: in ranger, `dd` and `yy` grey out what is on the clipboard, the marking survives leaving
+the directory and coming back, and `uy` restores the colour. Canger showed nothing at all.
+
+The whole clipboard worked — `CopyBuffer`, `IsCutPending`, `SetCopyBuffer`, `uncut` on `ud`/`uy`,
+paste. Both stock colour schemes had carried the rule from the start:
+`HasAny(Cut, Copied) && !Has(Selected)` → bold on bright black, which is ranger's
+`colorschemes/default.py:70-77` line for line. Nothing anywhere produced the two keys.
+`BrowserColumn.ContextFor` set fourteen of them and not these, so every row resolved as though the
+clipboard were empty.
+
+This is the same shape as the dead-settings audit and the tag marker before it: the mechanism, the
+storage and the styling all present and correct, with no line joining the last two. Worth
+remembering that a colour scheme handling a key proves nothing about whether the key is ever set —
+it reads like evidence and is not.
+
+Now `ContextFor` sets `Cut` or `Copied` from a set of paths handed down through the views the same
+way `Tags` is. By path rather than by node, because the buffer outlives the listing it was filled
+from — returning to a directory rebuilds every entry, and ranger recomputes
+`[f.path for f in self.fm.copy_buffer]` on each draw for the same reason
+(`gui/widgets/browsercolumn.py:294`). Kept as a `HashSet` maintained in `SetCopyBuffer` instead of
+rebuilt per frame, which ranger can afford and a redraw loop should not pay for.
+
+Ranger's `not context.selected` is honoured: the cursor row is already reverse video and dimming it
+too would make it unreadable.
+
+`jungle` inherits from the default scheme and so gets this; `snow` does not define the rule — and
+neither does ranger's own `snow.py`, so that is a match rather than a gap.
+
+Five tests, four of which fail without the two lines. Verified in a pty: `a.txt` renders SGR
+`0;1;90` after `dd`, still `0;1;90` after leaving the directory and returning, and bare after `uy`.
+
+## The help dumps could not be searched
+
+Reported: `?` opens the key bindings, but `/` does nothing there, unlike ranger.
+
+Canger sent all three dumps to its own pager, which scrolls and nothing else. Ranger's pager is
+just as bare — there is no `/` in its `pmap` block either — but ranger never shows the dumps in it.
+`dump_keybindings` writes a temporary file and calls `_run_pager`, which is one line
+(`core/actions.py:1483-1484`):
+
+    self.run(shlex.split(os.environ.get('PAGER', ranger.DEFAULT_PAGER)) + [path])
+
+The search comes from `less`, not from ranger. Which is the interesting part: the feature was never
+implemented by either program, and reimplementing it would have been the wrong answer to the
+report — the right one was to notice that ranger delegates, and delegate the same way. Whoever
+reads this next: check whether the upstream feature is *implemented* or *delegated* before building
+it.
+
+`ShowInExternalPager` now writes the text to a temporary file and runs `$PAGER` on it, defaulting
+to `less` as ranger does. Previews and command output stay in the built-in pager, exactly as
+upstream. Two divergences, both deliberate: the file is created with `FileMode.CreateNew` and
+`0600` before anything is written to it, and a missing `$PAGER` falls back to the built-in pager
+rather than showing nothing.
+
+Verified in a pty: `?` then `k` puts `less` on a `canger-*` temporary file, and
+`/--- taskview ---` scrolls to that section. Four tests, two of which fail without the routing.
+
+## `:shell` would not complete a filename
+
+Reported: `:shell some-program FIL<Tab>` did nothing. Completing the *program* name had been added
+earlier in this same session, which is what makes this worth writing down — the fix at the time
+read ranger's `shell.tab` far enough to find `get_executables()` and stopped there. The method has
+three branches (`config/commands.py:320-342`), keyed on where the cursor is:
+
+| where | ranger offers |
+|---|---|
+| no space yet | the programs on `$PATH` |
+| just after a space | the selection — one file by name, several as `%s` |
+| part-way through a word | the files here whose names begin with it |
+
+Only the first was implemented; the other two returned an empty list. A command line was the one
+place left in Canger where a filename had to be typed out in full — and the earlier fix had made
+that *less* obvious, because Tab now visibly worked on the first word.
+
+Two divergences from ranger, both forced by Canger quoting differently:
+
+- **Matching is against the plain name, not the escaped one.** Ranger compares
+  `file.shell_escaped_basename.startswith(start_of_word)`, which works there because its
+  `shell_escape` leaves an ordinary name untouched. `MacroExpander.ShellQuote` wraps
+  unconditionally, so `'FILE.txt'` would stop matching `FIL` the moment anything needed quoting.
+- **Names are quoted only when they need it.** Not cosmetic: the completed word goes back into the
+  console, and a name that returned wrapped in quotes would no longer match itself if the user
+  carried on typing, so cycling would lose it.
+
+Quoting goes through `QuoteForCommandLine`, not `ShellQuote` — the completed line is expanded again
+when it runs, so `x%sy.txt` would otherwise carry a macro into a command line. That is the same
+trap `ShellWord.Quote` fell into in the personal config.
+
+The old `OffersNothingOnceTheProgramIsNamed` test asserted the missing behaviour and passed only
+because the fixture directory was empty. Worth remembering: a test that pins an absence proves
+nothing when the fixture cannot produce a presence.
+
+Verified in a pty: `FIL<Tab>` gives `FILE_ONE.txt`, again gives `FILE_TWO.txt`, and `two<Tab>`
+gives `'two words.txt'`.
+
+## Permission changes did not show until `Ctrl+R`
+
+The report was "I change permissions and do not see them until reset". The first three things I
+tried all worked — `:shell chmod` on a file in the current directory, on a directory in the current
+listing, and creating a file in the previewed one — which nearly had me answer "works here".
+
+What actually reproduces it is the workflow the user's tool implies. `directory-file-permission-set-tui`
+takes a *folder* and recurses into it, so it is run from the parent with the cursor on the folder,
+and the folder is then entered to check. That sequence:
+
+| | before | after |
+|---|---|---|
+| inside `sub` | `-rw-------` | `-rw-------` |
+| back to the parent, chmod the file, enter `sub` again | `-rw-------` (stale) | `-rwxrwxrwx` |
+
+Two things had to line up. `sub` was already loaded, so entering it reuses the interned node rather
+than scanning; and `chmod` changes a file's **ctime**, not the containing directory's **mtime**,
+which is the only thing staleness is judged on (`DirectoryNode.Load`, and ranger's
+`container/directory.py:700` — the same test, so ranger has the same blind spot). Nothing between
+those two points ever marks the listing out of date, and `Ctrl+R` only worked because `reset`
+throws the whole cache away.
+
+`RunProgram` reloaded only the current directory. It now reloads every directory on screen — the
+pathway, the preview column, and in multipane every tab's directory. The finished-background-work
+path in the main loop uses it too, which is the same event and covers a paste landing in the column
+to the right.
+
+Deliberately *visible* rather than *loaded*. `DirectoryCache.Trim` exists and has no callers, so
+the cache holds every directory of the session; re-scanning all of them synchronously would stall
+the interface at around 5 ms per two thousand entries, and would reach paths on media since
+unplugged or on a mount that has stopped answering, with no key to press to escape it. What is on
+screen is a handful of columns, and they are by definition the ones being looked at.
+
+`Browser.VisibleDirectories` is static and takes what it needs, so the rule is unit-testable
+without a terminal — six tests. It is the same set `ApplySettingsToDirectory` already walked, which
+is not a coincidence: both answer "what is the user looking at".
+
+Still not fixed, and deliberately: a `chmod` from another terminal. No directory-mtime poll can see
+it, so that needs re-statting visible rows on a timer — a real divergence from ranger, not taken on
+without asking.
+
+`DirectoryCache.Trim` having no callers is left as a separate concern: memory growth over a long
+session, not correctness.
+
+## The directory cache grew for the whole session
+
+`DirectoryCache.Trim` existed and had no caller. It turned out to be a faithful port of ranger,
+where `garbage_collect` exists and the periodic call is commented out in the main loop
+(`core/fm.py:531-534`); the only live caller there is `reset`, which is Canger's `Ctrl+R` →
+`Directories.Clear()`. The dead constants came across too — `TIME_BEFORE_FILE_BECOMES_GARBAGE`
+is 1200 seconds and nothing reads it.
+
+Measured before deciding anything: about a kilobyte per cached entry, 88 MB → 143 MB over 100
+directories of 400 files. Then the measurement that decided the shape of the fix — pressing
+`Ctrl+R`, which drops every cached directory, moved RSS from 143 MB to 154.6 MB and left it there.
+**Eviction cannot return memory to the system**; .NET does not hand it back. So this was never
+about RSS going down, only about the heap not having to grow to hold listings nobody will look at
+again — and it was worth saying so before building rather than after.
+
+Which is why the unit is the *listing*, not the node. `Intern`'s promise is one object per path —
+it is what makes a size measured in one column visible in another — and evicting a node something
+still references would let the next lookup mint a second one, with its own cursor row, its own
+marks and no measured size. Dropping `_allEntries` frees effectively all of the memory and cannot
+break that: there is only ever one node. Nothing needed telling, either, because
+`DirectoryCache.GetLoaded` and `DirectoryNode.LoadIfOutdated` both scan when `IsLoaded` is false,
+so an unloaded directory refills the moment it is entered or drawn.
+
+`Browser.RetainedDirectories` protects every tab's columns rather than only the visible tab's.
+Unloading a background tab's directory would be safe, but it would put a scan in front of every tab
+switch to save a handful of directories out of hundreds. Ranger draws the line in the same place.
+
+One real trap, and the test for it was written before the code was: `Load` opens with
+`RememberMarks()`, which reads the entries. After an `Unload` there are none, so it concluded
+nothing was marked and wrote that over the marks `Unload` had just saved — a selection would have
+vanished while the user was in another directory. `Load` now only remembers marks when it is
+reloading over a listing that is actually there.
+
+Measured after, against a control with the sweep disabled and the thresholds shortened so it fires:
+
+| | first 100 directories | next 100 | final RSS |
+|---|---|---|---|
+| with the sweep | +38.0 MB | **+2.6 MB** | 131.7 MB |
+| without | +58.7 MB | +44.1 MB | 193.9 MB |
+
+The second hundred cost almost nothing because the first hundred's listings had been given back.
+Without it the climb is linear and never stops.
+
+Worth remembering: a method with no callers is a question, not a defect. The useful move was
+asking what upstream does with its equivalent — the answer was "nothing, deliberately or by
+neglect" — and then measuring, which said the obvious fix would not have worked.
+
+## Copy-clash names counted from the second copy
+
+Pasting `notes.md` into its own directory four times gave `notes_.md`, `notes_0.md`,
+`notes_1.md`, `notes_2.md`.
+
+That is ranger's rule (`ext/safe_path.py:13-21`): try a bare underscore, and only start counting
+once that is taken. Canger already diverged from it in one respect — the suffix goes before the
+extension, so a copy still opens in the right program — but kept the two-stage shape.
+
+The report is right, and the reason it took four copies to notice is the interesting part: with
+one clash the scheme looks fine, and every test covering it used exactly one clash. Over a run it
+falls apart — three of the four are numbered, the odd one out is the oldest, and nothing in the set
+says which came first. Both variants now count from zero, so the rule is one sentence and the
+copies sort by the number that names them.
+
+Left alone deliberately: a `notes_.md` from before this change is simply a different name.
+Numbering starts at zero beside it rather than adopting it as the zeroth copy, which would mean
+guessing at a file the user may have named themselves. There is a test for that.
+
+Verified in a pty against the real config: `yy` then `pp` four times gives `notes_0.md` through
+`notes_3.md`.
+
+The lesson for the suite: **a test that exercises one iteration of a sequence cannot see a rule
+that is wrong about sequences.** Five tests covered this naming and all five stopped at the first
+collision.
+
+## `./build.sh dist` — tarballs to hand to somebody else
+
+Two, because there are two kinds of recipient: one who has .NET 10 and wants a small download, and
+one who has nothing and would rather take 61 MB than install a runtime first.
+
+| | tarball | needs |
+|---|---|---|
+| framework-dependent | 13 MB | .NET 10 runtime |
+| self-contained | 61 MB | nothing |
+
+The self-contained one was verified under `env -i` with no `dotnet` on `PATH`: it starts, and
+Roslyn still compiles `commands.cs` — 46 commands out of the real personal config, with no SDK
+anywhere. That was the part worth checking, since runtime plugin compilation is the one feature
+that could plausibly have needed an SDK.
+
+Both carry `config/`, and there is a check that they do. Without it Canger is not degraded, it is
+inert: `--config` reports `key bindings: browser 0, console 0, pager 0, taskview 0`. The shipped
+`cc.conf` *is* the keymap, and it is the one part of the payload that comes from content files
+rather than a project reference, so it is the one that can quietly go missing.
+
+Both also carry `LICENSE`, `README.md` and `doc/canger.1`. The licence is an obligation rather than
+a courtesy — Canger is GPL-3.0-or-later, being a port of ranger, so a binary handed to anyone
+obliges the corresponding source to be available to them.
+
+### The trap this turned up
+
+The first version built both variants through the same `obj/`, and **the framework-dependent
+tarball aborted on startup with no message at all** — exit 134, nothing on stdout or stderr, and
+`dotnet canger.dll` equally silent. It reproduces exactly: publish self-contained, then publish
+framework-dependent, and the second one is broken. The ReadyToRun images left in the intermediates
+by one configuration are compiled against a runtime the other does not have.
+
+Three things make it nasty. It is silent. It depends on what happened to be built last, so it comes
+and goes. And the artifact looks entirely normal — the earlier broken tarball was 3.8 MB against
+13 MB, which reads like the trimming working rather than ReadyToRun having been lost.
+
+So each variant now publishes through its own `--artifacts-path`, and every tarball is started
+before it is packaged — `./canger --version`, which touches the host, the runtime and managed
+startup, which is all that failure mode needs. A publish that emits a broken assembly still reports
+success, so running the thing is the only check worth having.
+
+Worth remembering: **a size that drops more than expected is a symptom, not a win.** The 3.8 MB was
+the bug announcing itself and it read as good news.
+
+### What `publish` leaves in that `dist` does not
+
+`-p:SatelliteResourceLanguages=en -p:DebugType=none -p:GenerateDocumentationFile=false` — thirteen
+Roslyn translation directories, the symbols and the API documentation, about 8 MB of a 37 MB tree.
+Nothing reads any of it at runtime.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
@@ -2077,16 +2861,44 @@ Nothing from ranger. Possible directions from here:
   ueberzug have been exercised against real terminals.
 - **`--profile` and `--logfile`**, which ranger has and Canger does not. Neither affects
   behaviour; both are debugging aids.
-- **Packaging** — a `canger.desktop`, a man page install path, and a build that produces a
-  self-contained tarball. Note that Roslyn rules out NativeAOT, so Canger ships
-  framework-dependent.
+- **A `canger.desktop` and a man page install path.** `./build.sh dist` produces the tarballs; what
+  is missing is the desktop entry and somewhere for `doc/canger.1` to land so `?` → `m` works
+  without the tarball's own directory.
+- **Noticing a `chmod` made in another terminal.** Both Canger and ranger judge staleness by the
+  directory's mtime, which a `chmod` does not touch, so neither sees it. Fixing it means
+  re-statting the visible rows on a timer — bounded, but a real divergence from ranger, and not
+  worth doing unasked.
 - **Performance work on very large directories.** Nothing is known to be slow; nothing has been
   measured either.
 
-Verification note: the pty harness in the scratchpad
-(`drive_browser.py <binary> <path> [keys...]`, `drive_args.py <binary> <args...> --keys ...`,
-`probe_raw.py`) reconstructs the screen by replaying the escape stream and has found every defect
-the unit tests missed. Two things to know when using it: it must set the window size explicitly
-(without that the pty reports 0x0 and nothing lays out), and the status bar writes text in
-separately-positioned chunks, so searching the raw stream for a multi-word phrase gives false
-negatives — match single tokens.
+### Watch these in daily use
+
+Everything below landed on the same day and has had no living-with. They are not suspected of
+being wrong — each is tested and was verified in a pty — but they are the least-exercised things
+in the tree, and two of them touch something that matters:
+
+- **`unload-idle-directories`** only fires after twenty minutes idle, so at its real threshold it
+  has effectively never run. It was verified by shortening the interval to seconds, which is not
+  the same as living with it. It drops listings silently; the sign of it going wrong would be a
+  selection or a cursor row lost on returning to a directory left alone for a while.
+- **`numbered-clash-suffixes`** changes what a pasted file is named. Well tested, but the kind of
+  change where being wrong touches files rather than pixels.
+- **`reload-visible-directories`** now re-reads every column after a command rather than one, and
+  after background work finishes.
+
+### Verifying by driving the real binary
+
+Several defects in this file were found only by running the published binary under a pty and
+reconstructing the screen from the escape stream — the unit tests could not see them. There is no
+committed harness; the scripts were written per-investigation in a scratch directory and are gone.
+What is worth knowing before writing the next one:
+
+- The window size must be set explicitly with `TIOCSWINSZ`. Without it the pty reports 0x0 and
+  nothing lays out.
+- The status bar writes text in separately positioned chunks, so searching the raw stream for a
+  multi-word phrase gives false negatives. Match single tokens.
+- A naive replayer that does not implement scrolling will show the first screenful and pile
+  everything after it onto the last row — which reads exactly like a program that has stopped
+  responding. `less` searching correctly was misdiagnosed twice this way.
+- Reading per-cell SGR state is what proves a colour question. `1;7;93` on one word and nothing on
+  the next is the difference between a fix and a plausible-looking one.

@@ -46,15 +46,15 @@ public sealed class HelpCommand : CangerCommand
                 break;
 
             case 'k':
-                FileManager.ShowInPager(DescribeBindings());
+                FileManager.ShowInExternalPager(DescribeBindings());
                 break;
 
             case 'c':
-                FileManager.ShowInPager(DescribeCommands());
+                FileManager.ShowInExternalPager(DescribeCommands());
                 break;
 
             case 's':
-                FileManager.ShowInPager(DescribeSettings());
+                FileManager.ShowInExternalPager(DescribeSettings());
                 break;
 
             default:
@@ -618,7 +618,10 @@ public sealed class BulkRenameCommand : CangerCommand
                             ?? Environment.GetEnvironmentVariable("EDITOR")
                             ?? "vi";
 
-            FileManager.RunProgram($"{editor} {MacroExpander.ShellQuote(listFile)}");
+            // `--` for the same reason as `:edit`, though the path here is one Canger generated
+            // and so is not attacker-controlled. Consistency is worth more than the argument
+            // that this particular call is safe.
+            FileManager.RunProgram($"{editor} -- {MacroExpander.ShellQuote(listFile)}");
 
             string[] after = File.ReadAllLines(listFile);
 
@@ -811,6 +814,17 @@ internal static class LinkPaster
 
         foreach (FsNode node in buffer)
         {
+            // The same refusal `CopyJob` makes, which these had none of. Linking a directory
+            // into itself walks the tree it is creating: `Recurse` lists the source while adding
+            // directories underneath it, and descends until the path length or the disk runs
+            // out. Nothing existing is destroyed, but a filled disk is its own kind of loss.
+            if (PathRelation.IsSameOrInside(fileManager.FileSystem, destination, node.Path))
+            {
+                fileManager.Notify($"paste {what} {node.Basename}: cannot be pasted into itself",
+                                   isError: true);
+                continue;
+            }
+
             string target = Path.Join(destination, node.Basename);
 
             if (makeUnique)

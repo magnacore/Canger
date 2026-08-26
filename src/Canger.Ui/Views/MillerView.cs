@@ -39,6 +39,16 @@ public sealed class MillerView(IColorScheme colorScheme)
     /// <summary>Whether to leave a column of padding on the right when there is no preview.</summary>
     public bool PaddingRight { get; set; } = true;
 
+    /// <summary>Whether the preview column gives up its width when it has nothing to show.</summary>
+    /// <remarks>
+    /// The <c>collapse_preview</c> setting, on by default. Without it the listing stays squeezed
+    /// into half the window while the other half shows nothing at all.
+    /// </remarks>
+    public bool CollapsePreview { get; set; } = true;
+
+    /// <summary>Whether the last frame found something to put in the preview column.</summary>
+    private bool _hadPreview;
+
     /// <summary>How many rows to keep visible above and below the cursor.</summary>
     public int ScrollOffset { get; set; } = 8;
 
@@ -59,6 +69,12 @@ public sealed class MillerView(IColorScheme colorScheme)
 
     /// <summary>The tag store, passed to every column for the marker at the left of each row.</summary>
     public Tags? Tags { get; set; }
+
+    /// <inheritdoc cref="BrowserColumn.CopyBuffer"/>
+    public IReadOnlySet<string>? CopyBuffer { get; set; }
+
+    /// <inheritdoc cref="BrowserColumn.CopyBufferIsCut"/>
+    public bool CopyBufferIsCut { get; set; }
 
     /// <summary>Whether columns other than the main one show tag markers.</summary>
     public bool DisplayTagsInAllColumns { get; set; } = true;
@@ -103,7 +119,14 @@ public sealed class MillerView(IColorScheme colorScheme)
                        Math.Max(bounds.Width - 2, 1), Math.Max(bounds.Height - 2, 1))
             : bounds;
 
-        IReadOnlyList<Rect> regions = ComputeColumns(inner, ColumnRatios, PaddingRight);
+        // Whether the preview column is worth its width, decided from what the last frame found
+        // there. Ranger keeps the same one-frame-old answer, and for the same reason: knowing
+        // whether there is a preview means asking the provider, and the provider needs to be told
+        // how much room it has (`gui/widgets/view_miller.py:190-206`, `old_collapse`).
+        bool collapse = CollapsePreview && !_hadPreview;
+
+        IReadOnlyList<Rect> regions = ComputeColumns(inner, ColumnRatios, PaddingRight, collapse);
+        _hadPreview = false;
         EnsureColumnCount(regions.Count);
 
         // The last region is the preview; the one before it shows the current directory, and the
@@ -128,6 +151,8 @@ public sealed class MillerView(IColorScheme colorScheme)
             column.RelativeCurrentZero = RelativeCurrentZero;
             column.Vcs = Vcs;
             column.Tags = Tags;
+            column.CopyBuffer = CopyBuffer;
+            column.CopyBufferIsCut = CopyBufferIsCut;
             column.DisplayTagsInAllColumns = DisplayTagsInAllColumns;
 
             DirectoryNode? directory = DirectoryFor(tab, depthFromMain);
@@ -151,6 +176,13 @@ public sealed class MillerView(IColorScheme colorScheme)
 
             column.Directory = directory;
             column.Render(screen);
+
+            // A directory shown in the rightmost column is as much a preview as a file's text is,
+            // and collapsing away from one would make entering it jump the whole layout.
+            if (depthFromMain > 0)
+            {
+                _hadPreview = true;
+            }
         }
 
         if (outline || separators)
@@ -246,6 +278,8 @@ public sealed class MillerView(IColorScheme colorScheme)
         PreviewResult preview = provider.Preview(
             selected.Path, new PreviewSize(bounds.Width, bounds.Height));
 
+        _hadPreview = preview.Kind != PreviewKind.None;
+
         switch (preview.Kind)
         {
             case PreviewKind.Text:
@@ -323,9 +357,14 @@ public sealed class MillerView(IColorScheme colorScheme)
     /// <param name="bounds">The region to divide.</param>
     /// <param name="ratios">The relative widths.</param>
     /// <param name="paddingRight">Whether to leave a padding column on the right.</param>
+    /// <param name="collapse">
+    /// Whether the preview column gives up its width to the one before it, because there
+    /// is nothing to show in it.
+    /// </param>
     /// <returns>One region per column, left to right.</returns>
     public static IReadOnlyList<Rect> ComputeColumns(Rect bounds, IReadOnlyList<int> ratios,
-                                                     bool paddingRight = true)
+                                                     bool paddingRight = true,
+                                                     bool collapse = false)
     {
         ArgumentNullException.ThrowIfNull(ratios);
 
@@ -340,17 +379,34 @@ public sealed class MillerView(IColorScheme colorScheme)
             return [];
         }
 
+        double[] shares = [.. ratios.Select(r => (double)r / total)];
+
+        // Collapsed, the column before the preview swallows almost all of its width and the
+        // preview keeps a sliver as padding — a tenth of what it had, or nothing at all when no
+        // padding was asked for. Ranger's `stretch_ratios`
+        // (`gui/widgets/view_miller.py:60-65`), which is why the main column widens rather than
+        // every column growing a little.
+        if (collapse && shares.Length >= 2)
+        {
+            double keep = paddingRight ? 0.1 : 0.0;
+
+            shares[^2] += shares[^1] * (1 - keep);
+            shares[^1] *= keep;
+        }
+
         List<Rect> regions = [];
         int left = bounds.X;
 
         for (int i = 0; i < ratios.Count; i++)
         {
             bool isLast = i == ratios.Count - 1;
-            int share = (int)((double)ratios[i] / total * bounds.Width);
+            int share = (int)(shares[i] * bounds.Width);
 
             // The final column takes the remainder, so rounding never leaves a gap.
             int width = isLast
-                ? Math.Max(bounds.Right - left - (paddingRight ? 1 : 0), 0)
+                ? Math.Max(collapse
+                    ? share
+                    : bounds.Right - left - (paddingRight ? 1 : 0), 0)
                 : Math.Max(share - 1, 0);
 
             regions.Add(new Rect(left, bounds.Y, width, bounds.Height));

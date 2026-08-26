@@ -183,8 +183,9 @@ public sealed class RenameAppendCommand : CangerCommand
             return;
         }
 
-        // A per cent in a name would otherwise be read as the start of a macro when the line is
-        // eventually run, so it is doubled to mean itself.
+        // Doubled so a per cent in the name is not read as the start of a macro when the line is
+        // expanded again on its way to running. This is unquoted on purpose — the name goes into
+        // the console for the user to edit, not to a shell — so only the doubling applies.
         string name = file.RelativePath.Replace("%", "%%", StringComparison.Ordinal);
         string line = Prefix + name;
 
@@ -233,7 +234,12 @@ public sealed class EditCommand : CangerCommand
                         ?? Environment.GetEnvironmentVariable("EDITOR")
                         ?? "vi";
 
-        FileManager.RunProgram($"{editor} {MacroExpander.ShellQuote(target)}");
+        // `--` because quoting stops the shell, not the program. Without it a file called
+        // `+!rm -rf ~/Documents` is read by vim as a command to run at startup, and pressing `E`
+        // on it is enough. Canger's own shipped rifle.conf has the `--` on its editor rules;
+        // this command bypasses rifle and had dropped it, where ranger routes `:edit` through
+        // rifle precisely so as not to.
+        FileManager.RunProgram($"{editor} -- {MacroExpander.ShellQuote(target)}");
     }
 
     /// <inheritdoc />

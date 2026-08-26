@@ -2,6 +2,8 @@
 using Canger.Core.Model;
 using Canger.Core.Settings;
 
+using Canger.Core.Processes;
+
 namespace Canger.Core.Commands.Builtin;
 
 /// <summary>Leaves Canger.</summary>
@@ -292,6 +294,115 @@ public sealed class ShellCommand : CangerCommand
             return;
         }
 
+        // `-q` puts it on the task queue rather than in front of the interface: the browser stays
+        // usable, the job shows in the task view with the spinner, and it can be cancelled from
+        // there. Canger's own flag — ranger has nowhere to run a shell command except the
+        // foreground, which is why a long conversion there blanks the screen until it is done.
+        if (new ProcessFlags(flags).Queued)
+        {
+            FileManager.RunInBackground(Describe(command), command,
+                                        finished: _ => FileManager.ReloadCurrentDirectory());
+            return;
+        }
+
         FileManager.RunProgram(command, flags);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// Three answers, depending on where the cursor is, which is how ranger's <c>shell</c> does it
+    /// (<c>config/commands.py:320-342</c>):
+    /// </para>
+    /// <list type="bullet">
+    /// <item>still naming the program — the programs on the <c>PATH</c>;</item>
+    /// <item>just after a space — the selection, so the command gets what is marked;</item>
+    /// <item>part-way through a word — the files here whose names begin with it.</item>
+    /// </list>
+    /// <para>
+    /// Only the first was implemented, and the other two returned nothing, so a command line was
+    /// the one place in Canger where a filename had to be typed out in full.
+    /// </para>
+    /// </remarks>
+    public override IReadOnlyList<string> Complete(int direction)
+    {
+        (string flags, string command) = Line.ParseFlags();
+
+        // No space yet means the program itself is still being named.
+        if (!command.Any(char.IsWhiteSpace))
+        {
+            string prefix = Line.Word(0) + (flags.Length > 0 ? " -" + flags : string.Empty) + " ";
+
+            return [.. Executables.Matching(command).Select(program => prefix + program)];
+        }
+
+        // A trailing space is an empty argument waiting to be filled, and what the user almost
+        // always wants there is what they have marked. One file goes in by name; several become
+        // `%s`, which expands to all of them when the line runs.
+        if (char.IsWhiteSpace(command[^1]))
+        {
+            IReadOnlyList<FsNode> selection = FileManager.Selection;
+
+            return selection.Count == 1
+                ? [Line.Line + Escape(selection[0].RelativePath) + " "]
+                : [Line.Line + "%s "];
+        }
+
+        int lastSpace = Line.Line.LastIndexOf(' ');
+        string before = Line.Line[..(lastSpace + 1)];
+        string typed = Line.Line[(lastSpace + 1)..];
+
+        // Matched against the plain name rather than the escaped one. Ranger compares the escaped
+        // form (`config/commands.py:342`), which works there because its escaping leaves an
+        // ordinary name alone; Canger quotes unconditionally when it quotes at all, so comparing
+        // the escaped form would mean nothing matched the moment a name needed quoting.
+        return
+        [
+            .. FileManager.CurrentDirectory.Entries
+                .Select(e => e.RelativePath)
+                .Where(name => name.StartsWith(typed, StringComparison.OrdinalIgnoreCase))
+                .Order(StringComparer.Ordinal)
+                .Select(name => before + Escape(name)),
+        ];
+    }
+
+    /// <summary>Makes a filename safe to drop into a command line.</summary>
+    /// <param name="name">The name as it appears in the listing.</param>
+    /// <returns>The name, quoted if it needs it.</returns>
+    /// <remarks>
+    /// <para>
+    /// Left alone when every character is one the shell has no opinion about, so the common case
+    /// stays readable and can be typed over. Ranger's <c>shell_escape</c> makes the same
+    /// distinction (<c>ext/shell_escape.py</c>), and it matters for more than looks: the completed
+    /// word goes back into the console, and a name that came back wrapped in quotes would no
+    /// longer match itself if the user carried on typing.
+    /// </para>
+    /// <para>
+    /// Quoting goes through <see cref="MacroExpander.QuoteForCommandLine"/> rather than
+    /// <see cref="MacroExpander.ShellQuote"/>, because this line will be expanded again when it
+    /// runs — a file called <c>x%sy.txt</c> would otherwise bring its own macro along.
+    /// </para>
+    /// </remarks>
+    private static string Escape(string name) =>
+        name.All(c => char.IsAsciiLetterOrDigit(c) || SafeInAWord.Contains(c))
+            ? name
+            : MacroExpander.QuoteForCommandLine(name);
+
+    /// <summary>Punctuation a shell leaves alone in an unquoted word.</summary>
+    private const string SafeInAWord = "._-+,:@/=";
+
+    /// <summary>Names a queued command for the task view.</summary>
+    /// <param name="command">The command line.</param>
+    /// <returns>Something short enough to read in a list.</returns>
+    /// <remarks>
+    /// The first word and no more. A command line carrying a selection can run to hundreds of
+    /// characters, and the task view has one row for it.
+    /// </remarks>
+    private static string Describe(string command)
+    {
+        string trimmed = command.TrimStart();
+        int space = trimmed.IndexOf(' ', StringComparison.Ordinal);
+
+        return space < 0 ? trimmed : trimmed[..space];
     }
 }

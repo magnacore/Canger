@@ -23,4 +23,10 @@
     <Content Include="../../config/**" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The saved-tabs file format is a contract with the last session and the next one, so it
+         is tested directly rather than only through a whole launch. -->
+    <InternalsVisibleTo Include="Canger.App.Tests" />
+  </ItemGroup>
+
 </Project>

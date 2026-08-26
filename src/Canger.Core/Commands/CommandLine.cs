@@ -22,7 +22,19 @@ public sealed class CommandLine
         ArgumentNullException.ThrowIfNull(line);
 
         Line = line;
-        _words = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        // Any whitespace separates, not just a space. A configuration that lines its comments up
+        // with tabs — `map edn directories_number_highlight<TAB><TAB># Number` — otherwise
+        // leaves the tabs and the comment inside the first word, so the command name is
+        // `directories_number_highlight\t\t\t#` and no such command exists. Thirty-six bindings
+        // in one real configuration were dead that way, silently.
+        //
+        // Ranger splits with `str.split()`, which is whitespace-general, and keeps the trailing
+        // comment in the line — `source` skips only lines that *start* with `#`
+        // (`core/actions.py:378-381`). Keeping it is right: for a `shell` binding the comment
+        // reaches `sh`, which ignores it, and for everything else it is documentation the hint
+        // window can show.
+        _words = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
     }
 
     /// <summary>The line as typed.</summary>
@@ -62,7 +74,7 @@ public sealed class CommandLine
 
         for (int word = 0; word < index; word++)
         {
-            while (position < Line.Length && Line[position] == ' ')
+            while (position < Line.Length && char.IsWhiteSpace(Line[position]))
             {
                 position++;
             }
@@ -72,14 +84,14 @@ public sealed class CommandLine
                 return string.Empty;
             }
 
-            while (position < Line.Length && Line[position] != ' ')
+            while (position < Line.Length && !char.IsWhiteSpace(Line[position]))
             {
                 position++;
             }
         }
 
         // Skip the separator before the remainder, but keep the spacing inside it.
-        while (position < Line.Length && Line[position] == ' ')
+        while (position < Line.Length && char.IsWhiteSpace(Line[position]))
         {
             position++;
         }

@@ -69,6 +69,24 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
     /// </remarks>
     public Tags? Tags { get; set; }
 
+    /// <summary>The paths waiting to be copied or moved, dimmed until the paste happens.</summary>
+    /// <remarks>
+    /// By path rather than by node, because the buffer outlives the listing it was filled from:
+    /// leaving the directory and coming back rebuilds every entry, and ranger keeps the marking
+    /// visible across that too (<c>gui/widgets/browsercolumn.py:294</c> recomputes
+    /// <c>[f.path for f in self.fm.copy_buffer]</c> on each draw). A set rather than ranger's
+    /// list, so a large clipboard does not cost a scan per row.
+    /// </remarks>
+    public IReadOnlySet<string>? CopyBuffer { get; set; }
+
+    /// <summary>Whether <see cref="CopyBuffer"/> is waiting to move rather than to copy.</summary>
+    /// <remarks>
+    /// Chooses between the two contexts. The stock schemes dim both the same way, but they are
+    /// distinct keys in ranger (<c>browsercolumn.py:544-545</c>) and a scheme is free to tell a
+    /// pending move from a pending copy.
+    /// </remarks>
+    public bool CopyBufferIsCut { get; set; }
+
     /// <summary>
     /// Whether this column shows tag markers even when it is not the main column.
     /// </summary>
@@ -354,11 +372,18 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             return "->?";
         }
 
+        // Read from the selector rather than assumed: this path was hard-coded to decimal
+        // prefixes and exact-off, so `binary_size_prefix` gave two renderings of the same
+        // quantity on one screen and `size_in_bytes` did nothing here at all.
         bool countFiles = Linemodes?.CountFiles ?? true;
+        bool binary = Linemodes?.BinaryPrefix ?? false;
+        bool exact = Linemodes?.ExactBytes ?? false;
 
         return entry.IsDirectory
-            ? LinemodeText.Size(entry, binaryPrefix: false, countFiles)
-            : entry.Size is { } size ? HumanReadable.Format(size) : string.Empty;
+            ? LinemodeText.Size(entry, binary, countFiles, exact)
+            : entry.Size is { } size
+                ? HumanReadable.Format(size, binary, exact: exact)
+                : string.Empty;
     }
 
     /// <summary>Works out which contexts apply to an entry.</summary>
@@ -366,12 +391,21 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
     {
         FileKind kind = entry.Status?.Kind ?? FileKind.Unknown;
 
+        // Asked once per row, not twice: the two keys are exclusive and share the lookup.
+        bool pending = CopyBuffer?.Contains(entry.Path) ?? false;
+
         return StyleContext.Of(ContextKey.InBrowser)
             .With(IsMainColumn, ContextKey.MainColumn)
             .With(!IsActivePane, ContextKey.InactivePane)
             .With(isCursor, ContextKey.Selected)
             .With(entry.IsMarked, ContextKey.Marked)
             .With(Tags?.Contains(entry.RealPath) ?? false, ContextKey.Tagged)
+
+            // Both schemes have dimmed these all along and nothing ever set them, so `dd` and
+            // `yy` left the listing looking untouched and there was no way to see what was on
+            // the clipboard — the one thing the keys exist to tell you.
+            .With(pending && CopyBufferIsCut, ContextKey.Cut)
+            .With(pending && !CopyBufferIsCut, ContextKey.Copied)
             .With(entry.IsDirectory, ContextKey.Directory)
             .With(!entry.IsDirectory, ContextKey.File)
             .With(entry.IsExecutable, ContextKey.Executable)

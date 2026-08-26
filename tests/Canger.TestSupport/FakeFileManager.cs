@@ -234,6 +234,10 @@ public sealed class FakeFileManager : IFileManager
     public bool Execute(string line, int? quantifier = null, IReadOnlyList<int>? wildcards = null) =>
         Dispatcher.Execute(line, quantifier, wildcards);
 
+    /// <summary>How many rows the browser is pretending to occupy.</summary>
+    /// <remarks>Twenty-four rows less the title and status bars, a plausible terminal.</remarks>
+    public int BrowserHeight { get; set; } = 22;
+
     /// <inheritdoc />
     public void ReloadCurrentDirectory()
     {
@@ -252,6 +256,12 @@ public sealed class FakeFileManager : IFileManager
 
     /// <inheritdoc />
     public void ShowInPager(string text) => PagerText.Add(text);
+
+    /// <summary>What was handed to the user's own pager.</summary>
+    public List<string> ExternalPagerText { get; } = [];
+
+    /// <inheritdoc />
+    public void ShowInExternalPager(string text) => ExternalPagerText.Add(text);
 
     /// <inheritdoc />
     public void ClosePager() => PagerText.Clear();

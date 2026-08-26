@@ -113,7 +113,7 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
 
         if (ShowSize && !entry.IsDirectory)
         {
-            x += screen.Write(x, Bounds.Y, " " + HumanReadable.Format(status.Size), baseStyle);
+            x += screen.Write(x, Bounds.Y, " " + Size(status.Size), baseStyle);
         }
 
         x += screen.Write(x, Bounds.Y,
@@ -172,52 +172,138 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             return 0;
         }
 
-        List<string> parts = [];
+        // Each piece carries its own colour, which is the whole point: ranger's `right.add(text,
+        // *contexts)` tags every fragment separately and `_print_result` recolours between them
+        // (`gui/widgets/statusbar.py:253-327`). Writing the joined line in one style instead
+        // spreads whichever flag is set across everything beside it — and `marked` is
+        // `bold | reverse`, so a single mark turned the entire right-hand side into a solid block.
+        List<(string Text, StyleContext Context)> parts = [];
 
         // Read once. `MarkedEntries` walks the whole filtered listing and builds a new list on
         // every access, and this method used to ask for it four times.
         IReadOnlyList<FsNode> marked = directory.MarkedEntries;
 
+        // Sizes are plain text in ranger — `right.add(...)` with no contexts at all. Only the
+        // indicators beside them are flagged, so the eye goes to the flag and not the arithmetic.
+        StyleContext plain = StyleContext.Of(ContextKey.InStatusbar);
+        StyleContext scroll = plain.With(ContextKey.Scroll);
+
         if (marked.Count > 0)
         {
-            parts.Add($"{HumanReadable.Format(MarkedSize(directory, marked))}/" +
-                      marked.Count.ToString(CultureInfo.InvariantCulture));
+            parts.Add(($"{Size(MarkedSize(directory, marked))}/" +
+                       marked.Count.ToString(CultureInfo.InvariantCulture), plain));
 
             // Where the position indicator would be. Marks are easy to scroll away from and then
             // forget about, and this is the reminder that some are set (ranger's comment at
             // `gui/widgets/statusbar.py:305-306` says exactly that).
-            parts.Add("Mrk");
+            parts.Add(("Mrk", scroll.With(ContextKey.Marked)));
         }
         else
         {
-            string sum = $"{HumanReadable.Format(directory.DiskUsage)} sum";
+            string sum = $"{Size(directory.DiskUsage)} sum";
 
-            parts.Add(ShowFreeSpace && FreeBytes is { } free
-                ? $"{sum}, {HumanReadable.Format(free)} free"
-                : sum);
+            parts.Add((ShowFreeSpace && FreeBytes is { } free
+                ? $"{sum}, {Size(free)} free"
+                : sum, plain));
 
-            parts.Add(directory.Count == 0
+            parts.Add((directory.Count == 0
                 ? "0/0"
                 : $"{(directory.Cursor.Index + 1).ToString(CultureInfo.InvariantCulture)}/" +
-                  $"{directory.Count.ToString(CultureInfo.InvariantCulture)}");
+                  $"{directory.Count.ToString(CultureInfo.InvariantCulture)}", scroll));
 
-            parts.Add(ScrollIndicator(directory));
+            (string Text, ContextKey Key) indicator = ScrollIndicator(directory);
+            parts.Add((indicator.Text, scroll.With(indicator.Key)));
         }
 
-        string text = string.Join("  ", parts) + " ";
-        int width = CellWidth.Of(text);
+        // Beside the mark count, because that is what it governs: while this is showing, the
+        // selection is a live range and anything appearing between its ends joins it. Ranger has
+        // no counterpart — it shows the mode on the left, in place of the permissions — so it
+        // borrows `marked`, being the same kind of statement about the same set of files.
+        if (IsVisualMode)
+        {
+            parts.Add((IsVisualReverse ? "UNVIS" : "VIS", scroll.With(ContextKey.Marked)));
+        }
+
+        // Said plainly, because a listing that has stopped updating is indistinguishable from a
+        // broken one. Ranger puts it in the same place (`gui/widgets/statusbar.py:322-325`).
+        if (Frozen)
+        {
+            parts.Add(("FROZEN", scroll.With(ContextKey.Frozen)));
+        }
+
+        // Measured before anything is drawn: a right-aligned line has to know its full width to
+        // find its own starting column, and a partial one would be worse than none.
+        const string Separator = "  ";
+        int width = CellWidth.Of(Separator) * (parts.Count - 1) + 1;
+        foreach ((string text, StyleContext _) in parts)
+        {
+            width += CellWidth.Of(text);
+        }
+
         if (width >= Bounds.Width)
         {
             return 0;
         }
 
-        CellStyle style = colorScheme.Resolve(
-            StyleContext.Of(ContextKey.InStatusbar, ContextKey.Scroll)
-                        .With(marked.Count > 0, ContextKey.Marked));
+        int x = Bounds.Right - width;
+        for (int i = 0; i < parts.Count; i++)
+        {
+            if (i > 0)
+            {
+                x += screen.Write(x, Bounds.Y, Separator, baseStyle);
+            }
 
-        screen.Write(Bounds.Right - width, Bounds.Y, text, style);
+            x += screen.Write(x, Bounds.Y, parts[i].Text, colorScheme.Resolve(parts[i].Context));
+        }
+
+        // The margin that keeps the last indicator off the right edge. Unstyled, so a mark does
+        // not trail a stripe of colour past the word it belongs to.
+        screen.Write(x, Bounds.Y, " ", baseStyle);
         return width;
     }
+
+    /// <summary>
+    /// Whether a visual selection is open, which the bar says out loud.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Visual mode marks a <em>range</em> — everything between the anchor and the cursor — swept
+    /// afresh each time the cursor moves. It is not swept at any other time: a file appearing
+    /// between the two ends while the cursor sits still does not join the selection. This comment
+    /// once claimed the opposite was ranger's behaviour and therefore right; it is not. Ranger
+    /// sweeps from inside <c>move</c> (<c>core/actions.py:522-559</c>) and nowhere else, so a
+    /// listing that changes on its own never re-marks anything.
+    /// </para>
+    /// <para>
+    /// Ranger shows no sign that the mode is open — its status bar knows about the filter, the
+    /// marks, the position and frozen files, but never the mode. Worth a word of width here all
+    /// the same: with a range still live, the next movement extends it, and a later <c>dD</c>
+    /// acts on everything it has swept rather than on what was chosen deliberately.
+    /// </para>
+    /// </remarks>
+    public bool IsVisualMode { get; set; }
+
+    /// <summary>Whether that selection unmarks as it moves, which <c>uV</c> starts.</summary>
+    /// <remarks>
+    /// Shown as <c>UNVIS</c>, following the <c>u</c>-means-undo convention the bindings already
+    /// use — <c>uv</c> unmarks everything, <c>uV</c> starts a range that unmarks.
+    /// </remarks>
+    public bool IsVisualReverse { get; set; }
+
+    /// <summary>Whether listings are frozen, which the bar says out loud.</summary>
+    public bool Frozen { get; set; }
+
+    /// <summary>Whether to divide by 1024 and use binary prefixes.</summary>
+    /// <remarks>The <c>binary_size_prefix</c> setting, which reached the row but not this bar.</remarks>
+    public bool BinaryPrefix { get; set; }
+
+    /// <summary>Whether byte counts are written out in full, per <c>size_in_bytes</c>.</summary>
+    public bool ExactBytes { get; set; }
+
+    /// <summary>Formats a byte count the way the rest of the interface is formatting them.</summary>
+    /// <param name="bytes">The count.</param>
+    /// <returns>The rendered size.</returns>
+    private string Size(long bytes) => HumanReadable.Format(bytes, BinaryPrefix, exact: ExactBytes);
 
     /// <summary>The total size of what is marked.</summary>
     /// <param name="directory">The listing the marks are in.</param>
@@ -262,25 +348,31 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     }
 
     /// <summary>Whether the whole listing is visible, or how far down it the cursor is.</summary>
-    private static string ScrollIndicator(DirectoryNode directory)
+    /// <param name="directory">The listing being described.</param>
+    /// <returns>
+    /// The word to show and the context that colours it. They travel together because a scheme is
+    /// free to give each of the four its own colour — ranger's own does not, but
+    /// <c>gui/widgets/statusbar.py:311-318</c> still tags them separately so one can.
+    /// </returns>
+    private static (string Text, ContextKey Key) ScrollIndicator(DirectoryNode directory)
     {
         if (directory.Count == 0)
         {
-            return "All";
+            return ("All", ContextKey.All);
         }
 
         if (directory.Cursor.Index == 0)
         {
-            return "Top";
+            return ("Top", ContextKey.Top);
         }
 
         if (directory.Cursor.Index >= directory.Count - 1)
         {
-            return "Bot";
+            return ("Bot", ContextKey.Bot);
         }
 
         int percent = directory.Cursor.Index * 100 / Math.Max(directory.Count - 1, 1);
-        return percent.ToString(CultureInfo.InvariantCulture) + "%";
+        return (percent.ToString(CultureInfo.InvariantCulture) + "%", ContextKey.Percentage);
     }
 
     /// <summary>Tints the left of the bar in proportion to outstanding work.</summary>

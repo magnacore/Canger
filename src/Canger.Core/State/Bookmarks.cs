@@ -82,6 +82,16 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
             return;
         }
 
+        // The format is one bookmark per line, so a path containing a newline cannot be written
+        // faithfully: it comes back truncated at the break, and the bookmark then points at a
+        // directory that is not the one that was bookmarked. Refused rather than escaped, which
+        // would make the file unreadable to ranger for a case this rare.
+        if (directory.Contains('\n', StringComparison.Ordinal) ||
+            directory.Contains('\r', StringComparison.Ordinal))
+        {
+            return;
+        }
+
         _entries[Normalize(key)] = directory;
 
         if (AutoSave)
@@ -138,10 +148,16 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
     /// <summary>Reads the bookmarks from disk, replacing whatever is held.</summary>
     public void Load()
     {
-        _entries.Clear();
-        _asLoaded = ReadFile();
+        // A read that failed leaves nothing loaded, which is safe here: `Save` reads again and
+        // refuses when that read fails too, so an unreadable file is never written over. Should
+        // it become readable in between, the merge sees the real contents and this instance —
+        // having recorded no bookmarks as loaded — deletes none of them.
+        Dictionary<char, string> read = ReadFile() ?? [];
 
-        foreach ((char key, string value) in _asLoaded)
+        _entries.Clear();
+        _asLoaded = read;
+
+        foreach ((char key, string value) in read)
         {
             _entries[key] = value;
         }
@@ -163,7 +179,17 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
     /// </remarks>
     public void Save()
     {
-        Dictionary<char, string> onDisk = ReadFile();
+        // A read that failed is not an empty file, and the difference decides whether the user
+        // keeps their bookmarks. The merge below re-adds only the keys *this instance changed*,
+        // so merging onto an empty dictionary silently drops every bookmark the user did not
+        // happen to touch this session — and then writes the result. Ranger guards the same way:
+        // `_load_dict` returns None on failure and `update()` returns without writing
+        // (`container/bookmarks.py:222-245`).
+        if (ReadFile() is not { } onDisk)
+        {
+            return;
+        }
+
         Dictionary<char, string> merged = new(onDisk);
 
         // Keys this instance changed or added.
@@ -191,7 +217,12 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
         _asLoaded = merged;
     }
 
-    private Dictionary<char, string> ReadFile()
+    /// <summary>Reads the file, or reports that it could not be read.</summary>
+    /// <returns>
+    /// The bookmarks on disk, or <see langword="null"/> when the file exists and could not be
+    /// read — which is not the same as its being empty, and must not be treated as if it were.
+    /// </returns>
+    private Dictionary<char, string>? ReadFile()
     {
         Dictionary<char, string> entries = [];
 
@@ -214,7 +245,9 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // An unreadable bookmarks file should not stop Canger starting.
+            // An unreadable bookmarks file should not stop Canger starting — but it must stop
+            // Canger saving, or the next save is what destroys it.
+            return null;
         }
 
         return entries;
@@ -239,11 +272,34 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
                 temporary,
                 entries.OrderBy(e => e.Key).Select(e => $"{e.Key}:{e.Value}"));
 
-            File.Move(temporary, Path, overwrite: true);
+            File.Move(temporary, RealPath(Path), overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Losing bookmarks is unfortunate; failing to exit because of it would be worse.
         }
     }
+    /// <summary>Where a state file really lives, following a link if it is one.</summary>
+    /// <param name="path">The configured path.</param>
+    /// <returns>The path to rename over.</returns>
+    /// <remarks>
+    /// <c>rename(2)</c> replaces a symbolic link rather than what it points at, so replacing the
+    /// file in place would break the link and leave later changes accumulating in an untracked
+    /// regular file — until the next re-install of the dotfiles put the stale copy back and took
+    /// everything since with it. Keeping this file as a link into a dotfiles repository is a
+    /// common enough arrangement that ranger has the same branch
+    /// (<c>container/bookmarks.py:200-204</c>).
+    /// </remarks>
+    private static string RealPath(string path)
+    {
+        try
+        {
+            return File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return path;
+        }
+    }
+
 }

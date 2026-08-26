@@ -15,11 +15,21 @@ namespace Canger.Core.FileOperations;
 public static class SafePath
 {
     /// <summary>
-    /// Appends underscores and then numbers until the name is free.
+    /// Appends <c>_0</c>, <c>_1</c> and so on until the name is free.
     /// </summary>
     /// <remarks>
-    /// The first attempt is a bare underscore, so a single clash produces <c>notes_</c> rather
-    /// than <c>notes_0</c>, which reads better and matches ranger.
+    /// <para>
+    /// Ranger tries a bare underscore first and only then starts counting
+    /// (<c>ext/safe_path.py:13-21</c>), so four copies of <c>notes.md</c> come out as
+    /// <c>notes.md_</c>, <c>notes.md_0</c>, <c>notes.md_1</c>, <c>notes.md_2</c>. The first one
+    /// reads well on its own and the rest do not: three of the four are numbered, the odd one
+    /// out is the oldest, and nothing about the set says which came first.
+    /// </para>
+    /// <para>
+    /// Counting from the start instead makes the rule sayable in one sentence and the copies
+    /// sortable by the number that names them. A deliberate divergence, and the only one in
+    /// this file beyond keeping extensions.
+    /// </para>
     /// </remarks>
     /// <param name="fileSystem">Used to test what exists.</param>
     /// <param name="path">The desired path.</param>
@@ -29,21 +39,15 @@ public static class SafePath
         ArgumentNullException.ThrowIfNull(fileSystem);
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        if (!fileSystem.Exists(path))
+        if (!fileSystem.ExistsNoFollow(path))
         {
             return path;
         }
 
-        string candidate = path + "_";
-        if (!fileSystem.Exists(candidate))
-        {
-            return candidate;
-        }
-
         for (int index = 0; index < int.MaxValue; index++)
         {
-            candidate = path + "_" + index.ToString(CultureInfo.InvariantCulture);
-            if (!fileSystem.Exists(candidate))
+            string candidate = path + "_" + index.ToString(CultureInfo.InvariantCulture);
+            if (!fileSystem.ExistsNoFollow(candidate))
             {
                 return candidate;
             }
@@ -56,8 +60,9 @@ public static class SafePath
     /// Makes a name unique while keeping the extension on the end.
     /// </summary>
     /// <remarks>
-    /// <c>report_.pdf</c> rather than <c>report.pdf_</c>, so the copy still opens in the right
-    /// program and still sorts with its siblings. This is what <c>:paste_ext</c> uses.
+    /// <c>report_0.pdf</c> rather than <c>report.pdf_</c>, so the copy still opens in the right
+    /// program and still sorts with its siblings. This is what <c>:paste_ext</c> uses, and it
+    /// counts from zero for the reason given on <see cref="MakeUnique"/>.
     /// </remarks>
     /// <param name="fileSystem">Used to test what exists.</param>
     /// <param name="path">The desired path.</param>
@@ -67,7 +72,7 @@ public static class SafePath
         ArgumentNullException.ThrowIfNull(fileSystem);
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        if (!fileSystem.Exists(path))
+        if (!fileSystem.ExistsNoFollow(path))
         {
             return path;
         }
@@ -80,19 +85,13 @@ public static class SafePath
         string stem = dot <= 0 ? name : name[..dot];
         string extension = dot <= 0 ? string.Empty : name[dot..];
 
-        string candidate = Path.Join(directory, stem + "_" + extension);
-        if (!fileSystem.Exists(candidate))
-        {
-            return candidate;
-        }
-
         for (int index = 0; index < int.MaxValue; index++)
         {
-            candidate = Path.Join(
+            string candidate = Path.Join(
                 directory,
                 stem + "_" + index.ToString(CultureInfo.InvariantCulture) + extension);
 
-            if (!fileSystem.Exists(candidate))
+            if (!fileSystem.ExistsNoFollow(candidate))
             {
                 return candidate;
             }

@@ -23,6 +23,15 @@ public sealed class Cursor
     /// <summary>What the cursor was last on, used to restore the position after a change.</summary>
     public FsNode? Current { get; private set; }
 
+    /// <summary>Lets go of the entry under the cursor, keeping the row it was on.</summary>
+    /// <remarks>
+    /// For a listing that has been unloaded. <see cref="Current"/> has to go, because it is what
+    /// <c>DirectoryNode.Selected</c> returns and a caller would otherwise be handed a file that is
+    /// no longer in the listing. <see cref="Index"/> stays, so coming back lands on the same row
+    /// rather than at the top.
+    /// </remarks>
+    public void Forget() => Current = null;
+
     /// <summary>Moves to an index, clamping it into the list.</summary>
     /// <param name="index">The desired index.</param>
     /// <param name="items">The list being moved over.</param>

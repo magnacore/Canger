@@ -188,18 +188,33 @@ public sealed class ScopeScriptRunner(string scriptPath, string cacheDirectory)
     }
 
     /// <summary>
+    /// The extension every image cache name ends in.
+    /// </summary>
+    /// <remarks>
+    /// Not cosmetic. Scripts written for ranger assume the cache path ends in an extension and
+    /// strip it before handing the stem to a tool that appends its own — the PDF rule is
+    /// <c>pdftoppm ... "${IMAGE_CACHE_PATH%.*}"</c>, and <c>-singlefile -jpeg</c> puts
+    /// <c>.jpg</c> back. Given an extensionless path there is nothing to strip, so the tool
+    /// writes beside the file we go on to look for and the preview silently never appears.
+    /// Ranger's own name is <c>'{0}.jpg'.format(sha512(...).hexdigest())</c>, so matching it
+    /// makes both spellings of the rule — strip-and-restore, and write-in-place — land here.
+    /// </remarks>
+    private const string ImageCacheExtension = ".jpg";
+
+    /// <summary>
     /// Where the script should write an image for a file.
     /// </summary>
     /// <remarks>
     /// Named from a hash of the path so that two files with the same name in different
     /// directories do not collide, and so the name is safe whatever the original contained.
+    /// The name always ends in <see cref="ImageCacheExtension"/>; see there for why.
     /// </remarks>
     public string CachePathFor(string path)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
 
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(path)));
-        return Path.Join(cacheDirectory, Convert.ToHexStringLower(hash));
+        return Path.Join(cacheDirectory, Convert.ToHexStringLower(hash) + ImageCacheExtension);
     }
 
     /// <summary>Whether a file exists and has something in it.</summary>

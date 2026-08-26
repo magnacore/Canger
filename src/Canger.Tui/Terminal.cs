@@ -177,6 +177,28 @@ public sealed class Terminal : IDisposable
         return ready > 0 && (descriptors[0].ReturnedEvents & PollDescriptor.Readable) != 0;
     }
 
+    /// <summary>Throws away anything typed but not yet handled.</summary>
+    /// <remarks>
+    /// The <c>flushinput</c> setting. It exists for the moment a keystroke turns out to be slow —
+    /// entering a directory of twenty thousand files, say — and the keys pressed meanwhile would
+    /// otherwise all arrive at once and run somewhere unintended. Ranger calls
+    /// <c>curses.flushinp()</c> after each key for the same reason (<c>gui/ui.py:260-266</c>).
+    /// </remarks>
+    public static void DiscardPendingInput()
+    {
+        Span<byte> discard = stackalloc byte[256];
+
+        // Bounded, so a terminal delivering input faster than it is read cannot hold the loop
+        // here indefinitely.
+        for (int i = 0; i < 64 && WaitForInput(0); i++)
+        {
+            if (Termios.Read(StandardInput, discard, (nuint)discard.Length) <= 0)
+            {
+                return;
+            }
+        }
+    }
+
     private static int _wakeRead = -1;
     private static int _wakeWrite = -1;
 

@@ -60,6 +60,20 @@ public sealed class Browser : IFileManager, IDisposable
     private Action<char>? _questionCallback;
     private string? _message;
     private bool _messageIsError;
+
+    /// <summary>When the message stops being shown, as a tick count.</summary>
+    private long _messageExpiresAt;
+
+    /// <summary>
+    /// How long a message stays on the status bar.
+    /// </summary>
+    /// <remarks>
+    /// Ranger's default duration for <c>fm.notify</c> (<c>core/actions.py:165</c>). Canger had no
+    /// expiry at all, so a message sat there until the next keystroke — which, if the keystroke
+    /// that produced it was the last one for a while, meant forever, with the file under the
+    /// cursor hidden behind it the whole time.
+    /// </remarks>
+    private const int MessageMilliseconds = 4000;
     private bool _running = true;
     private bool _hadWork;
 
@@ -84,7 +98,10 @@ public sealed class Browser : IFileManager, IDisposable
     /// <remarks>
     /// The screen buffer diffs against what it last wrote. After another program has drawn over
     /// the terminal that record is fiction, so an ordinary diffed frame writes almost nothing and
-    /// leaves the display blank.
+    /// leaves the display blank. A resize is the same situation arrived at differently: the
+    /// terminal reflows what it is holding, and nothing the buffer believes about it is true.
+    ///
+    /// Written from the signal thread as well as the drawing thread, hence <see cref="Volatile"/>.
     /// </remarks>
     private bool _needsFullRepaint;
 
@@ -169,7 +186,7 @@ public sealed class Browser : IFileManager, IDisposable
 
         Runner.Resumed += (_, _) =>
         {
-            _needsFullRepaint = true;
+            Volatile.Write(ref _needsFullRepaint, true);
 
             // The image was cleared on the way out and the helper has been told nothing since,
             // so it has to be sent again rather than assumed to still be there.
@@ -178,6 +195,7 @@ public sealed class Browser : IFileManager, IDisposable
         Opener = opener ?? throw new ArgumentNullException(nameof(opener));
         _terminal = terminal ?? throw new ArgumentNullException(nameof(terminal));
         Settings = settings ?? throw new ArgumentNullException(nameof(settings));
+
         KeyMaps = keyMaps ?? throw new ArgumentNullException(nameof(keyMaps));
         Commands = commands ?? throw new ArgumentNullException(nameof(commands));
         Directories = cache ?? throw new ArgumentNullException(nameof(cache));
@@ -211,6 +229,13 @@ public sealed class Browser : IFileManager, IDisposable
             [1] = new Tab(cache, startPath, settings.MaxHistorySize ?? 20),
         };
 
+        // What makes `setinregex`, `setinpath` and `setintag` mean anything: without a path to
+        // resolve against, every read is the global value and a rule scoped to a directory is
+        // stored and never consulted. Read through a function so the answer is current at the
+        // moment of the read, since settings are read between frames as well as during them.
+        Settings.CurrentPath = () =>
+            _tabs.TryGetValue(CurrentTabNumber, out Tab? tab) ? tab.Path : null;
+
         ApplySettingsToDirectory();
 
         foreach (Tab tab in _tabs.Values)
@@ -218,7 +243,20 @@ public sealed class Browser : IFileManager, IDisposable
             tab.Left += (_, from) => Bookmarks.RememberPrevious(from);
         }
 
-        _terminal.Resized += (_, size) => _screen.Resize(size.Width, size.Height);
+        _terminal.Resized += (_, size) =>
+        {
+            _screen.Resize(size.Width, size.Height);
+
+            // Resizing the buffer is not enough on its own, and both halves of this were
+            // missing. The signal arrives on the runtime's signal thread while the main loop is
+            // blocked in `WaitForInput` for up to the whole idle delay, so the flag alone would
+            // change nothing until the next keystroke — which is what the user saw: a wrapped,
+            // garbled screen that came right only when they pressed something. And a diffed
+            // flush would repaint only the cells the new layout happens to differ in, over a
+            // terminal that has already reflowed everything, so the frame has to be forced.
+            Volatile.Write(ref _needsFullRepaint, true);
+            RequestRedraw();
+        };
     }
 
     // ---- IFileManager ----------------------------------------------------------------
@@ -451,6 +489,14 @@ public sealed class Browser : IFileManager, IDisposable
     /// <inheritdoc />
     public IReadOnlyList<FsNode> CopyBuffer { get; private set; } = [];
 
+    /// <summary>The same buffer as a set of paths, for the listing to dim as it draws.</summary>
+    /// <remarks>
+    /// Kept in step with <see cref="CopyBuffer"/> rather than rebuilt per frame. Ranger rebuilds
+    /// its list on every draw (<c>gui/widgets/browsercolumn.py:294</c>), which it can afford at
+    /// its refresh rate; this is the same answer without paying for it sixty times a second.
+    /// </remarks>
+    private readonly HashSet<string> _copyBufferPaths = new(StringComparer.Ordinal);
+
     /// <inheritdoc />
     public bool IsCutPending { get; private set; }
 
@@ -459,6 +505,7 @@ public sealed class Browser : IFileManager, IDisposable
     {
         _message = message;
         _messageIsError = isError;
+        _messageExpiresAt = Environment.TickCount64 + MessageMilliseconds;
 
         // Kept so `:display_log` can show what scrolled past. Bounded, because a session left
         // open all week should not accumulate messages without limit; the oldest are the least
@@ -488,6 +535,14 @@ public sealed class Browser : IFileManager, IDisposable
 
     /// <summary>Where the cursor was when visual mode began.</summary>
     private int? _visualStart;
+
+    /// <summary>The file the cursor was on when visual mode began.</summary>
+    /// <remarks>
+    /// The anchor's real identity. <see cref="_visualStart"/> is only where it was standing, and
+    /// rows move when a listing changes underneath a selection — see
+    /// <see cref="VisualRange.AnchorIndex"/>.
+    /// </remarks>
+    private string? _visualStartPath;
 
     /// <summary>The directory visual mode began in, and the tab it was shown in.</summary>
     /// <remarks>
@@ -523,6 +578,7 @@ public sealed class Browser : IFileManager, IDisposable
         {
             case "visual" when _visualStart is null:
                 _visualStart = CurrentTab.Current.Cursor.Index;
+                _visualStartPath = CurrentTab.Selected?.Path;
                 _visualDirectory = CurrentTab.Current;
                 _visualTab = CurrentTabNumber;
                 _visualReverse = reverse;
@@ -540,6 +596,7 @@ public sealed class Browser : IFileManager, IDisposable
 
             case "normal" when _visualStart is not null:
                 _visualStart = null;
+                _visualStartPath = null;
                 _visualDirectory = null;
                 _selectionBeforeVisual = null;
                 break;
@@ -555,34 +612,46 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>
     /// Extends a visual selection to wherever the cursor has just moved.
     /// </summary>
+    /// <param name="cursorPathBefore">The file the cursor was on before the command ran.</param>
     /// <remarks>
+    /// <para>
     /// Marks everything between the anchor and the cursor and unmarks everything outside it,
     /// except what was already marked before the mode began — so moving back over your own path
     /// deselects, but an unrelated earlier mark survives.
+    /// </para>
+    /// <para>
+    /// Only when the cursor actually moved, which is the whole reason for
+    /// <paramref name="cursorPathBefore"/>. Ranger sweeps from inside <c>move</c> itself
+    /// (<c>core/actions.py:522-559</c>), so a listing that gains a file while the cursor sits
+    /// still is never re-swept and the new file stays unmarked. Sweeping after every command
+    /// instead meant re-deriving the range from whatever now lay between the two ends: a file
+    /// written into the middle of a selection — the usual way being a command that generates one —
+    /// joined it by itself.
+    /// </para>
+    /// <para>
+    /// Compared by path rather than by reference: a reload rebuilds the listing and carries marks
+    /// across by path (<c>DirectoryNode.RestoreMarks</c>), so the same file is not the same
+    /// object afterwards and reference equality would read every reload as a movement.
+    /// </para>
     /// </remarks>
-    private void UpdateVisualSelection()
+    private void UpdateVisualSelection(string? cursorPathBefore)
     {
         LeaveVisualModeIfMoved();
 
-        if (_visualStart is not { } anchor)
+        if (_visualStart is not { } fallback)
         {
             return;
         }
 
-        int cursor = CurrentTab.Current.Cursor.Index;
-        (int low, int high) = anchor <= cursor ? (anchor, cursor) : (cursor, anchor);
+        if (string.Equals(CurrentTab.Selected?.Path, cursorPathBefore, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         IReadOnlyList<FsNode> entries = CurrentTab.Current.Entries;
 
-        // Ranger expresses this as set arithmetic (core/actions.py:549-558); written out per
-        // entry it is simply: inside the range takes the mode's value, outside it reverts to
-        // whatever the entry had before the mode began. Either way, moving back over your own
-        // path undoes it while an unrelated earlier mark survives.
-        for (int i = 0; i < entries.Count; i++)
-        {
-            bool previously = _selectionBeforeVisual?.Contains(entries[i].Path) ?? false;
-
-            entries[i].IsMarked = i >= low && i <= high ? !_visualReverse : previously;
-        }
+        VisualRange.Apply(entries, VisualRange.AnchorIndex(entries, _visualStartPath, fallback),
+                          CurrentTab.Current.Cursor.Index, _visualReverse, _selectionBeforeVisual);
     }
 
     /// <summary>Ends visual mode once the cursor has left the listing it started in.</summary>
@@ -746,6 +815,12 @@ public sealed class Browser : IFileManager, IDisposable
     {
         CopyBuffer = [.. files];
         IsCutPending = cut;
+
+        _copyBufferPaths.Clear();
+        foreach (FsNode file in CopyBuffer)
+        {
+            _copyBufferPaths.Add(file.Path);
+        }
     }
 
     /// <inheritdoc />
@@ -757,10 +832,164 @@ public sealed class Browser : IFileManager, IDisposable
     public void RememberPreviousDirectory(string from) => Bookmarks.RememberPrevious(from);
 
     /// <inheritdoc />
+    /// <remarks>
+    /// The screen less the title bar and the status bar, which is ranger's <c>browser.hei</c>
+    /// — the container's height rather than a column's, so borders do not change it.
+    /// </remarks>
+    public int BrowserHeight => Math.Max(_screen.Height - 2, 1);
+
+    /// <inheritdoc />
     public void ReloadCurrentDirectory()
     {
         CurrentTab.Current.Load();
         ApplySettingsToDirectory();
+    }
+
+    /// <summary>Re-reads every directory the user can currently see.</summary>
+    /// <remarks>
+    /// <para>
+    /// A command that changes files is not confined to the directory the cursor happens to be in.
+    /// A tool that walks a tree, or one given a path in another column, leaves the rest of the
+    /// screen showing what was true before it ran — and because staleness is judged by the
+    /// directory's own modification time, nothing later notices: <c>chmod</c> changes a file's
+    /// ctime and leaves the directory's mtime alone, so the listing never looks out of date.
+    /// Ranger has the same blind spot for the same reason
+    /// (<c>container/directory.py:700</c>).
+    /// </para>
+    /// <para>
+    /// Deliberately what is <em>visible</em> rather than what is loaded. The cache never evicts,
+    /// so after a long session "everything loaded" is hundreds of directories — a synchronous
+    /// re-scan of all of them would stall the interface, and it would reach paths on media that
+    /// has since been unplugged or on a mount that has stopped answering, with nothing the user
+    /// could press to get out of it. The columns on screen are few, and they are by definition
+    /// the ones being looked at.
+    /// </para>
+    /// </remarks>
+    public void ReloadVisibleDirectories()
+    {
+        foreach (DirectoryNode directory in
+                 VisibleDirectories(CurrentTab, Tabs, Settings.Viewmode))
+        {
+            directory.Load();
+        }
+
+        ApplySettingsToDirectory();
+    }
+
+    /// <summary>The directories any tab is standing on, drawn or not.</summary>
+    /// <param name="tabs">Every open tab.</param>
+    /// <returns>Each directory once.</returns>
+    /// <remarks>
+    /// A superset of <see cref="VisibleDirectories"/>, and the right set to protect from the idle
+    /// sweep. Unloading is cheap to undo, so the background tabs could be swept too — but the
+    /// saving is in the hundreds of directories nobody is sitting on, not in the handful a tab is,
+    /// and sweeping those would put a scan in front of every tab switch for nothing. Ranger draws
+    /// the line in the same place: <c>any(value in tab.pathway for tab in self.tabs.values())</c>
+    /// (<c>core/fm.py:480-481</c>).
+    /// </remarks>
+    internal static IEnumerable<DirectoryNode> RetainedDirectories(
+        IReadOnlyDictionary<int, Tab> tabs)
+    {
+        ArgumentNullException.ThrowIfNull(tabs);
+
+        HashSet<DirectoryNode> seen = [];
+
+        foreach (Tab tab in tabs.Values)
+        {
+            foreach (DirectoryNode directory in tab.Pathway)
+            {
+                if (seen.Add(directory))
+                {
+                    yield return directory;
+                }
+            }
+
+            if (tab.SelectedDirectory is { } selected && seen.Add(selected))
+            {
+                yield return selected;
+            }
+        }
+    }
+
+    /// <summary>How long a listing goes untouched before the sweep may drop it.</summary>
+    /// <remarks>Ranger's <c>TIME_BEFORE_FILE_BECOMES_GARBAGE</c>, rather than a fresh guess.</remarks>
+    private static readonly TimeSpan IdleBeforeUnload = TimeSpan.FromSeconds(1200);
+
+    /// <summary>How often the sweep is worth running.</summary>
+    /// <remarks>
+    /// It walks every cached directory, so it is not something to do per frame. A minute is far
+    /// finer than the twenty it is looking for, and the walk itself is a comparison per entry.
+    /// </remarks>
+    private static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(1);
+
+    /// <summary>When the sweep last ran.</summary>
+    private DateTimeOffset _lastSweep = DateTimeOffset.UtcNow;
+
+    /// <summary>Lets go of listings for directories left alone long enough.</summary>
+    /// <remarks>
+    /// The cache holds every directory of the session, so without this a long session keeps
+    /// growing — roughly a kilobyte per entry ever scanned, forty megabytes for forty thousand.
+    /// It does not hand memory back to the system, which .NET will not do; it stops the heap
+    /// having to grow to hold listings nobody is going to look at again.
+    /// </remarks>
+    private void UnloadIdleDirectories()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        if (now - _lastSweep < SweepInterval)
+        {
+            return;
+        }
+
+        _lastSweep = now;
+        Directories.UnloadIdle(new HashSet<DirectoryNode>(RetainedDirectories(Tabs)),
+                               now - IdleBeforeUnload);
+    }
+
+    /// <summary>The directories the current view is drawing.</summary>
+    /// <param name="current">The tab whose columns are on screen.</param>
+    /// <param name="tabs">Every open tab, for the view mode that shows them all at once.</param>
+    /// <param name="viewmode">The <c>viewmode</c> setting.</param>
+    /// <returns>Each directory once, however many columns happen to show it.</returns>
+    /// <remarks>
+    /// Static, and given everything it needs, so the rule can be checked without standing up a
+    /// terminal. It is the same set <see cref="ApplySettingsToDirectory"/> walks, which is not a
+    /// coincidence: both answer "what is the user looking at".
+    /// </remarks>
+    internal static IEnumerable<DirectoryNode> VisibleDirectories(
+        Tab current, IReadOnlyDictionary<int, Tab> tabs, string? viewmode)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(tabs);
+
+        HashSet<DirectoryNode> seen = [];
+
+        // The ancestry columns and the current directory; `Pathway` ends with the one the cursor
+        // is in. Then the preview column, which is a directory only when the cursor is on one.
+        foreach (DirectoryNode directory in current.Pathway)
+        {
+            if (seen.Add(directory))
+            {
+                yield return directory;
+            }
+        }
+
+        if (current.SelectedDirectory is { } selected && seen.Add(selected))
+        {
+            yield return selected;
+        }
+
+        // In multipane every tab is a column, so every tab's directory is on screen.
+        if (viewmode is "multipane")
+        {
+            foreach (Tab tab in tabs.Values)
+            {
+                if (seen.Add(tab.Current))
+                {
+                    yield return tab.Current;
+                }
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -825,6 +1054,66 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void ShowInExternalPager(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        // `$PAGER` may carry arguments — `less -R` is common — so only its first word names the
+        // program to look for. Ranger's default is the same (`ranger/__init__.py:53`).
+        string configured = Environment.GetEnvironmentVariable("PAGER") is { Length: > 0 } set
+            ? set
+            : DefaultPager;
+        string program = configured.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                                   .FirstOrDefault() ?? DefaultPager;
+
+        // Ranger runs `$PAGER` unconditionally and shows nothing when it is missing. Falling back
+        // means help still opens on a system without one — worse than `less`, better than silence.
+        if (!Executables.Exists(program))
+        {
+            ShowInPager(text);
+            return;
+        }
+
+        string path = Path.Join(Path.GetTempPath(), "canger-" + Path.GetRandomFileName());
+
+        try
+        {
+            // CreateNew rather than Create: it fails rather than following a symbolic link
+            // somebody left at the name we picked. The mode is set before anything is written,
+            // so the contents are never briefly world-readable.
+            using (FileStream file = new(path, FileMode.CreateNew, FileAccess.Write,
+                                         FileShare.None))
+            {
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+                using StreamWriter writer = new(file);
+                writer.Write(text);
+            }
+
+            RunProgram($"{configured} {MacroExpander.ShellQuote(path)}");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Nowhere to write means no external pager, not no help.
+            ShowInPager(text);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // A file left in the temporary directory is not worth reporting.
+            }
+        }
+    }
+
+    /// <summary>The pager used when <c>$PAGER</c> says nothing, as in ranger.</summary>
+    private const string DefaultPager = "less";
+
+    /// <inheritdoc />
     public void RunProgram(string command, string flags = "")
     {
         ProcessResult result = Runner.Run(new ProcessRequest(
@@ -849,8 +1138,9 @@ public sealed class Browser : IFileManager, IDisposable
         }
 
         // The program may have written over the screen, so nothing less than a full repaint is
-        // safe. The directory may also have changed under it.
-        ReloadCurrentDirectory();
+        // safe. The directories may also have changed under it — every one on show, not just the
+        // one the cursor is in, since a program is free to touch anything it was pointed at.
+        ReloadVisibleDirectories();
         Redraw();
     }
 
@@ -1036,6 +1326,16 @@ public sealed class Browser : IFileManager, IDisposable
                 : Tasks.HasWork ? (int)Tasks.IdleDelay.TotalMilliseconds
                 : Settings.IdleDelay;
 
+            // A message showing has to be taken down on time, and the loop is otherwise asleep
+            // for the whole idle delay. Without this it would linger for up to `idle_delay`
+            // longer than it should — two seconds by default, which is half again as long as it
+            // was meant to be there.
+            if (_message is not null)
+            {
+                long remaining = _messageExpiresAt - Environment.TickCount64;
+                timeout = (int)Math.Clamp(remaining, 0, timeout);
+            }
+
             // Something answered from a background thread, so this pass draws rather than
             // waiting out the idle delay with a stale row on screen.
             Volatile.Write(ref _needsRedraw, false);
@@ -1049,6 +1349,14 @@ public sealed class Browser : IFileManager, IDisposable
                 }
 
                 Handle(_decoder.Feed(input.Span));
+
+                // Whatever was typed while that key was being handled is thrown away, so a slow
+                // command does not end with a burst of keystrokes running somewhere unintended.
+                // Not while the console is open: there the keys are text the user meant to type.
+                if (Settings.Flushinput && !_console.IsOpen && !_decoder.HasPendingInput)
+                {
+                    Terminal.DiscardPendingInput();
+                }
             }
             else if (_decoder.HasPendingInput)
             {
@@ -1063,10 +1371,19 @@ public sealed class Browser : IFileManager, IDisposable
             else if (_hadWork)
             {
                 // Work has just finished. Whatever it did — a copy, a move — most likely changed
-                // the directory being shown, so the listing is re-read once rather than polled.
+                // a directory being shown, so the listings are re-read once rather than polled.
+                // Every visible one, because a paste lands in a directory the cursor is not in
+                // nearly as often as in one it is, and the destination is frequently the column
+                // to the right.
                 _hadWork = false;
                 ReportFinishedWork();
-                ReloadCurrentDirectory();
+                ReloadVisibleDirectories();
+            }
+            else
+            {
+                // Nothing running and nothing just finished, so this is the moment to spend on
+                // housekeeping rather than in front of the user.
+                UnloadIdleDirectories();
             }
 
             Draw();
@@ -1190,12 +1507,17 @@ public sealed class Browser : IFileManager, IDisposable
 
             if (command is not null)
             {
+                // Noted before the command runs, so afterwards the selection can tell a movement
+                // from a listing that changed on its own. Ranger gets that distinction for free by
+                // sweeping inside `move`; this is the price of doing it in one place instead.
+                string? cursorBefore = CurrentTab.Selected?.Path;
+
                 _dispatcher.Execute(command, quantifier, wildcards);
 
                 // Ranger extends the selection inside `move` itself; doing it after whatever the
                 // key did covers the same ground without every movement command having to know
                 // about the mode. Cheap: it is a no-op unless visual mode is on.
-                UpdateVisualSelection();
+                UpdateVisualSelection(cursorBefore);
                 AnnounceDirectory();
             }
 
@@ -1653,7 +1975,15 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <summary>The region the columns occupy, between the two bars.</summary>
-    private Rect BrowserBounds() => new(0, 1, _screen.Width, Math.Max(_screen.Height - 2, 0));
+    /// <remarks>
+    /// The screen less the title bar and whichever row the status bar has taken. With
+    /// <c>status_bar_on_top</c> the browser starts a row lower rather than losing a row from the
+    /// bottom, so the console still has the last row to itself — which is how ranger arranges it
+    /// (<c>gui/ui.py:360-362</c>): the status bar moves, the console does not.
+    /// </remarks>
+    private Rect BrowserBounds() =>
+        new(0, Settings.StatusBarOnTop ? 2 : 1,
+            _screen.Width, Math.Max(_screen.Height - (Settings.StatusBarOnTop ? 3 : 2), 0));
 
     /// <summary>Passes the settings the two views share on to the multipane one.</summary>
     /// <remarks>
@@ -1671,12 +2001,22 @@ public sealed class Browser : IFileManager, IDisposable
         _multipaneView.RelativeCurrentZero = Settings.RelativeCurrentZero;
         _multipaneView.Vcs = Vcs;
         _multipaneView.Tags = Tags;
+        _multipaneView.CopyBuffer = _copyBufferPaths;
+        _multipaneView.CopyBufferIsCut = IsCutPending;
         _multipaneView.DisplayTagsInAllColumns = Settings.DisplayTagsInAllColumns;
         _multipaneView.DrawBorders = Settings.DrawBordersMultipane ?? Settings.DrawBorders;
     }
 
     private void Draw()
     {
+        // Before anything is configured, and not inside the status bar's own branch: the loop
+        // shortens its wait while a message is showing, so a message that never expired — with
+        // the console open, say — would leave it spinning on a zero timeout.
+        if (_message is not null && Environment.TickCount64 >= _messageExpiresAt)
+        {
+            _message = null;
+        }
+
         // Settings can change under a running session, so the view is configured each frame
         // rather than once. It is a handful of property reads.
         ApplySettingsToDirectory();
@@ -1698,6 +2038,14 @@ public sealed class Browser : IFileManager, IDisposable
                                 .Select(t => new TabHeading(t.Key, t.Value.Path, t.Value.Label))];
         _titleBar.ActiveTabNumber = CurrentTabNumber;
         _titleBar.DirnameInTabs = Settings.DirnameInTabs;
+
+        // Pushed onto every tab, not just the current one: a background tab's filter should go
+        // the same way when it is next left.
+        foreach (Tab tab in _tabs.Values)
+        {
+            tab.ClearFilterOnLeave = Settings.ClearFiltersOnDirChange;
+        }
+
         _titleBar.Ellipsis = Settings.UnicodeEllipsis ? "…" : "~";
 
         // Read from whatever the last refresh produced; nothing here waits on the repository.
@@ -1725,10 +2073,15 @@ public sealed class Browser : IFileManager, IDisposable
         // exactly the trade that keeps a slow repository from stalling the listing.
         _view.Vcs = Vcs;
         _view.Tags = Tags;
+        _view.CopyBuffer = _copyBufferPaths;
+        _view.CopyBufferIsCut = IsCutPending;
         _view.DisplayTagsInAllColumns = Settings.DisplayTagsInAllColumns;
+        _view.CollapsePreview = Settings.CollapsePreview;
+        Directories.Frozen = Settings.FreezeFiles;
         Vcs?.Request(CurrentTab.Path);
         Linemodes.BinaryPrefix = Settings.BinarySizePrefix;
         Linemodes.CountFiles = Settings.AutomaticallyCountFiles;
+        Linemodes.ExactBytes = Settings.SizeInBytes;
 
         // A changed colourscheme repaints everything, since every cached style is now wrong.
         //
@@ -1811,22 +2164,30 @@ public sealed class Browser : IFileManager, IDisposable
             }
         }
 
-        // The console and the status bar share the bottom row; whichever is active owns it.
+        // The console owns the bottom row. The status bar shares it, unless it has been asked
+        // to sit under the title bar instead — in which case both are on screen at once.
         Rect bottom = new(0, _screen.Height - 1, _screen.Width, 1);
+        bool statusOnTop = Settings.StatusBarOnTop;
 
         if (_console.IsOpen)
         {
             _console.Layout(bottom);
             _console.Render(_screen);
         }
-        else
+
+        if (!_console.IsOpen || statusOnTop)
         {
-            _statusBar.Layout(bottom);
+            _statusBar.Layout(statusOnTop ? new Rect(0, 1, _screen.Width, 1) : bottom);
             _statusBar.Tab = CurrentTab;
             _statusBar.Message = _message;
             _statusBar.MessageIsError = _messageIsError;
             _statusBar.ShowFreeSpace = Settings.DisplayFreeSpaceInStatusBar;
             _statusBar.ShowSize = Settings.DisplaySizeInStatusBar;
+            _statusBar.BinaryPrefix = Settings.BinarySizePrefix;
+            _statusBar.Frozen = Settings.FreezeFiles;
+            _statusBar.IsVisualMode = IsVisualMode;
+            _statusBar.IsVisualReverse = _visualReverse;
+            _statusBar.ExactBytes = Settings.SizeInBytes;
             _statusBar.Head = repository is { IsLoaded: true } ? repository.Head : null;
             _statusBar.VcsMessageLength = Math.Max(Settings.VcsMessageLength, 1);
             _statusBar.ShowProgressBar = Settings.DrawProgressBarInStatusBar;
@@ -1840,10 +2201,11 @@ public sealed class Browser : IFileManager, IDisposable
 
         StringBuilder output = new();
 
-        // A frame after another program had the terminal is written in full: the buffer's record
-        // of what is on screen is fiction until it has been rewritten once.
-        _screen.Flush(output, force: _needsFullRepaint);
-        _needsFullRepaint = false;
+        // A frame after another program had the terminal — or after a resize — is written in
+        // full: the buffer's record of what is on screen is fiction until it has been rewritten
+        // once.
+        _screen.Flush(output, force: Volatile.Read(ref _needsFullRepaint));
+        Volatile.Write(ref _needsFullRepaint, false);
 
         _terminal.Write(output.ToString());
 

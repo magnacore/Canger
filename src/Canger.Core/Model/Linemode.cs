@@ -15,6 +15,10 @@ namespace Canger.Core.Model;
 /// <param name="BinaryPrefix">
 /// Whether sizes divide by 1024 and use binary prefixes, as <c>binary_size_prefix</c> asks.
 /// </param>
+/// <param name="ExactBytes">
+/// Whether byte counts are written out in full rather than with a prefix, per
+/// <c>size_in_bytes</c>.
+/// </param>
 /// <param name="CountFiles">
 /// Whether a directory that has not been opened should be read to count its entries, as
 /// <c>automatically_count_files</c> asks. One shallow read per visible row, cached.
@@ -22,7 +26,8 @@ namespace Canger.Core.Model;
 public readonly record struct LinemodeContext(
     DateTimeOffset Now,
     bool BinaryPrefix = false,
-    bool CountFiles = true);
+    bool CountFiles = true,
+    bool ExactBytes = false);
 
 /// <summary>
 /// Decides what a row shows.
@@ -162,6 +167,7 @@ public static class LinemodeText
     /// </summary>
     /// <param name="node">The entry.</param>
     /// <param name="binaryPrefix">Whether to use binary prefixes.</param>
+    /// <param name="exactBytes">Whether to write byte counts out in full, per <c>size_in_bytes</c>.</param>
     /// <param name="countFiles">Whether to read unopened directories to count them.</param>
     /// <returns>The text, or an empty string when there is no size to show.</returns>
     /// <remarks>
@@ -169,7 +175,8 @@ public static class LinemodeText
     /// just to print a count would make entering a large tree crawl. An unknown count shows as
     /// nothing rather than a placeholder, which also keeps the column quiet.
     /// </remarks>
-    public static string Size(FsNode node, bool binaryPrefix = false, bool countFiles = true)
+    public static string Size(FsNode node, bool binaryPrefix = false, bool countFiles = true,
+                             bool exactBytes = false)
     {
         ArgumentNullException.ThrowIfNull(node);
 
@@ -186,7 +193,7 @@ public static class LinemodeText
                 // formatter a different separator (`container/directory.py:385`).
                 return (node.IsSymbolicLink ? "-> " : string.Empty)
                      + HumanReadable.Format(measured, binaryPrefix,
-                                            node.CumulativeSizeStale ? "? " : " ");
+                                            node.CumulativeSizeStale ? "? " : " ", exactBytes);
             }
 
             if (node is not DirectoryNode directory)
@@ -207,7 +214,9 @@ public static class LinemodeText
                 : string.Empty;
         }
 
-        return node.Size is { } size ? HumanReadable.Format(size, binaryPrefix) : string.Empty;
+        return node.Size is { } size
+            ? HumanReadable.Format(size, binaryPrefix, exact: exactBytes)
+            : string.Empty;
     }
 
     /// <summary>Renders the mode bits the way <c>ls -l</c> does.</summary>
@@ -432,7 +441,7 @@ public sealed class SizeAndModificationTimeLinemode : ILinemode
         ArgumentNullException.ThrowIfNull(node);
 
         return node.Status is { } status
-            ? $"{LinemodeText.Size(node, context.BinaryPrefix, context.CountFiles)} {LinemodeText.ModifyTime(status)}"
+            ? $"{LinemodeText.Size(node, context.BinaryPrefix, context.CountFiles, context.ExactBytes)} {LinemodeText.ModifyTime(status)}"
             : LinemodeText.Unknown;
     }
 }
@@ -462,7 +471,7 @@ public sealed class SizeAndHumanReadableTimeLinemode : ILinemode
 
         // The time is right-padded so the times line up down the column even as sizes vary.
         string time = HumanReadable.FormatTime(status.ModifyTime.ToLocalTime(), context.Now);
-        return $"{LinemodeText.Size(node, context.BinaryPrefix, context.CountFiles)} {time,11}";
+        return $"{LinemodeText.Size(node, context.BinaryPrefix, context.CountFiles, context.ExactBytes)} {time,11}";
     }
 }
 

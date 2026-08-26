@@ -193,6 +193,41 @@ public sealed class ScriptPreviewProviderTests : IDisposable
     }
 
     [Fact]
+    public void Runner_FindsTheImageWhenTheScriptStripsTheExtensionAndTheToolPutsItBack()
+    {
+        // The shape of every ranger PDF rule: the script hands "${IMAGE_CACHE_PATH%.*}" to a
+        // tool that appends its own extension. That only round-trips back to the path we then
+        // look at if the name we gave out had an extension to strip in the first place — with a
+        // bare hash the image lands one name over and the preview silently never appears.
+        string script = Path.Join(_scratch, "pdfish.sh");
+        File.WriteAllText(script, "#!/bin/sh\nprintf x > \"${4%.*}.jpg\"\nexit 6\n");
+        File.SetUnixFileMode(script,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        ScopeScriptRunner runner = new(script, _scratch) { ImagesEnabled = true };
+        PreviewResult result = runner.Run("/x/paper.pdf", new PreviewSize(40, 20), TestContext.Current.CancellationToken);
+
+        Assert.Equal(PreviewKind.Image, result.Kind);
+        Assert.Equal(runner.CachePathFor("/x/paper.pdf"), result.ImagePath);
+    }
+
+    [Fact]
+    public void Runner_FindsTheImageWhenTheScriptWritesStraightToTheCachePath()
+    {
+        // The other spelling, used by most of scope.sh's rules. Adding the extension for the
+        // strip-and-restore rules must not break these.
+        string script = Path.Join(_scratch, "direct.sh");
+        File.WriteAllText(script, "#!/bin/sh\nprintf x > \"$4\"\nexit 6\n");
+        File.SetUnixFileMode(script,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        ScopeScriptRunner runner = new(script, _scratch) { ImagesEnabled = true };
+        PreviewResult result = runner.Run("/x/photo.svg", new PreviewSize(40, 20), TestContext.Current.CancellationToken);
+
+        Assert.Equal(PreviewKind.Image, result.Kind);
+    }
+
+    [Fact]
     public void Runner_UsesARealScriptAndItsExitCode()
     {
         // The exit code is the whole protocol, so it is worth checking against a real script.

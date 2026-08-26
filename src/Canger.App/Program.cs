@@ -66,6 +66,11 @@ internal static class Program
             ? Path.GetFullPath(options.Paths[0])
             : Directory.GetCurrentDirectory();
 
+        // Everything after the first opens a tab of its own. Ranger builds one tab per start
+        // path (`core/fm.py:127`); Canger read `Paths[0]` and dropped the rest, so `canger a b c`
+        // silently opened only `a` despite the usage line saying `[path ...]`.
+        List<string> startPaths = [.. options.Paths.Skip(1).Select(Path.GetFullPath)];
+
         IFileSystem fileSystem = LocalFileSystem.Instance;
 
         if (!fileSystem.DirectoryExists(path))
@@ -99,14 +104,18 @@ internal static class Program
         ScriptCompiler compiler = new(paths.Cache("plugins"));
         PluginHost pluginHost = new(commands, linemodes, compiler);
 
-        // The shipped commands.cs is loaded before the user's, exactly as cc.conf is and exactly
-        // as ranger loads its own commands.py before a personal one. Without this the file Canger
-        // ships is never loaded at all — it is only a thing to copy, which is not what the rest
-        // of the configuration does.
-        pluginHost.LoadFrom(Path.Join(CangerPaths.InstallDirectory, "config"));
-
         if (!options.Clean)
         {
+            // The shipped commands.cs is loaded before the user's, exactly as cc.conf is and
+            // exactly as ranger loads its own commands.py before a personal one. Without this
+            // the file Canger ships is never loaded at all — it is only a thing to copy, which
+            // is not what the rest of the configuration does.
+            //
+            // Inside the --clean guard, because it was outside it: `canger --clean --config`
+            // reported two plugin commands, and --clean is meant to leave nothing loaded that
+            // could be the thing being diagnosed.
+            pluginHost.LoadFrom(Path.Join(CangerPaths.InstallDirectory, "config"));
+
             pluginHost.LoadFrom(paths.ConfigDirectory);
         }
 
@@ -222,7 +231,7 @@ internal static class Program
                 SaveBacktickBookmark = settings.SaveBacktickBookmark,
             };
 
-            Tags tags = new(options.Clean ? "/dev/null" : paths.Data("tagged"));
+            Tags tags = new(paths.Data("tagged")) { Persistent = !options.Clean };
 
             if (!options.Clean)
             {
@@ -245,13 +254,39 @@ internal static class Program
             browser.LoadConsoleHistory();
 
             browserForQuit = browser;
+
+            // Needs both the launcher and the browser, so it is wired here where both exist —
+            // which is also where ranger installs it, on the way up rather than inside either.
+            ImageViewerHandover.Install(opener, browser);
             pluginHost.NotifyInit(browser);
+
+            // Tabs remembered from the last session, but only when the user has not said where
+            // to start — an explicit path is an instruction, not a suggestion. Ranger applies
+            // the same condition (`core/main.py:161`), and neither restores under --clean.
+            if (!options.Clean && settings.SaveTabsOnExit && options.Paths.Count == 0)
+            {
+                startPaths.AddRange(
+                    SavedTabs.Take(paths.Data("tabs"), settings.FilterDeadTabsOnStartup)
+                             .Where(p => !string.Equals(p, path, StringComparison.Ordinal)));
+            }
 
             browser.Ready += (_, _) =>
             {
                 foreach (string line in deferred)
                 {
                     browser.Execute(line);
+                }
+
+                // After the deferred commands, so a `--cmd` that opens tabs of its own is not
+                // interleaved with these, and after Ready so the first listing is loaded.
+                foreach (string extra in startPaths)
+                {
+                    browser.OpenTab(browser.Tabs.Keys.Max() + 1, extra);
+                }
+
+                if (startPaths.Count > 0)
+                {
+                    browser.OpenTab(1);
                 }
 
                 // --selectfile names a file to start on. It has to wait until the listing is
@@ -271,6 +306,12 @@ internal static class Program
             if (!options.Clean)
             {
                 bookmarks.Save();
+
+                if (settings.SaveTabsOnExit)
+                {
+                    SavedTabs.Save(paths.Data("tabs"),
+                                   [.. browser.Tabs.OrderBy(t => t.Key).Select(t => t.Value.Path)]);
+                }
             }
 
             // --choosedir reports where the user ended up, which is the answer a directory

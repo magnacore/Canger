@@ -370,13 +370,18 @@ public sealed class ConsoleWidget(IColorScheme colorScheme) : Widget
     {
         ArgumentNullException.ThrowIfNull(candidates);
 
-        if (candidates.Count == 0)
-        {
-            return;
-        }
-
+        // Only a *new* cycle needs candidates. Once one is running the list is already held, and
+        // asking again would be worse than useless: the text has been replaced by a completion,
+        // so the caller recomputes from `fd_next ` rather than from `f` and gets nothing back.
+        // Returning early on that emptiness is what stopped the second Tab doing anything, and
+        // made completion look like a one-shot that picked the first match and stuck there.
         if (_completionIndex < 0)
         {
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
             _completionSeed = _text;
             _completions.Clear();
             _completions.Add(_text);
