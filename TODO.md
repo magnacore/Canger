@@ -2686,6 +2686,50 @@ nothing when the fixture cannot produce a presence.
 Verified in a pty: `FIL<Tab>` gives `FILE_ONE.txt`, again gives `FILE_TWO.txt`, and `two<Tab>`
 gives `'two words.txt'`.
 
+## Permission changes did not show until `Ctrl+R`
+
+The report was "I change permissions and do not see them until reset". The first three things I
+tried all worked — `:shell chmod` on a file in the current directory, on a directory in the current
+listing, and creating a file in the previewed one — which nearly had me answer "works here".
+
+What actually reproduces it is the workflow the user's tool implies. `directory-file-permission-set-tui`
+takes a *folder* and recurses into it, so it is run from the parent with the cursor on the folder,
+and the folder is then entered to check. That sequence:
+
+| | before | after |
+|---|---|---|
+| inside `sub` | `-rw-------` | `-rw-------` |
+| back to the parent, chmod the file, enter `sub` again | `-rw-------` (stale) | `-rwxrwxrwx` |
+
+Two things had to line up. `sub` was already loaded, so entering it reuses the interned node rather
+than scanning; and `chmod` changes a file's **ctime**, not the containing directory's **mtime**,
+which is the only thing staleness is judged on (`DirectoryNode.Load`, and ranger's
+`container/directory.py:700` — the same test, so ranger has the same blind spot). Nothing between
+those two points ever marks the listing out of date, and `Ctrl+R` only worked because `reset`
+throws the whole cache away.
+
+`RunProgram` reloaded only the current directory. It now reloads every directory on screen — the
+pathway, the preview column, and in multipane every tab's directory. The finished-background-work
+path in the main loop uses it too, which is the same event and covers a paste landing in the column
+to the right.
+
+Deliberately *visible* rather than *loaded*. `DirectoryCache.Trim` exists and has no callers, so
+the cache holds every directory of the session; re-scanning all of them synchronously would stall
+the interface at around 5 ms per two thousand entries, and would reach paths on media since
+unplugged or on a mount that has stopped answering, with no key to press to escape it. What is on
+screen is a handful of columns, and they are by definition the ones being looked at.
+
+`Browser.VisibleDirectories` is static and takes what it needs, so the rule is unit-testable
+without a terminal — six tests. It is the same set `ApplySettingsToDirectory` already walked, which
+is not a coincidence: both answer "what is the user looking at".
+
+Still not fixed, and deliberately: a `chmod` from another terminal. No directory-mtime poll can see
+it, so that needs re-statting visible rows on a timer — a real divergence from ranger, not taken on
+without asking.
+
+`DirectoryCache.Trim` having no callers is left as a separate concern: memory growth over a long
+session, not correctness.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

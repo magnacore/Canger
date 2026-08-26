@@ -845,6 +845,83 @@ public sealed class Browser : IFileManager, IDisposable
         ApplySettingsToDirectory();
     }
 
+    /// <summary>Re-reads every directory the user can currently see.</summary>
+    /// <remarks>
+    /// <para>
+    /// A command that changes files is not confined to the directory the cursor happens to be in.
+    /// A tool that walks a tree, or one given a path in another column, leaves the rest of the
+    /// screen showing what was true before it ran — and because staleness is judged by the
+    /// directory's own modification time, nothing later notices: <c>chmod</c> changes a file's
+    /// ctime and leaves the directory's mtime alone, so the listing never looks out of date.
+    /// Ranger has the same blind spot for the same reason
+    /// (<c>container/directory.py:700</c>).
+    /// </para>
+    /// <para>
+    /// Deliberately what is <em>visible</em> rather than what is loaded. The cache never evicts,
+    /// so after a long session "everything loaded" is hundreds of directories — a synchronous
+    /// re-scan of all of them would stall the interface, and it would reach paths on media that
+    /// has since been unplugged or on a mount that has stopped answering, with nothing the user
+    /// could press to get out of it. The columns on screen are few, and they are by definition
+    /// the ones being looked at.
+    /// </para>
+    /// </remarks>
+    public void ReloadVisibleDirectories()
+    {
+        foreach (DirectoryNode directory in
+                 VisibleDirectories(CurrentTab, Tabs, Settings.Viewmode))
+        {
+            directory.Load();
+        }
+
+        ApplySettingsToDirectory();
+    }
+
+    /// <summary>The directories the current view is drawing.</summary>
+    /// <param name="current">The tab whose columns are on screen.</param>
+    /// <param name="tabs">Every open tab, for the view mode that shows them all at once.</param>
+    /// <param name="viewmode">The <c>viewmode</c> setting.</param>
+    /// <returns>Each directory once, however many columns happen to show it.</returns>
+    /// <remarks>
+    /// Static, and given everything it needs, so the rule can be checked without standing up a
+    /// terminal. It is the same set <see cref="ApplySettingsToDirectory"/> walks, which is not a
+    /// coincidence: both answer "what is the user looking at".
+    /// </remarks>
+    internal static IEnumerable<DirectoryNode> VisibleDirectories(
+        Tab current, IReadOnlyDictionary<int, Tab> tabs, string? viewmode)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(tabs);
+
+        HashSet<DirectoryNode> seen = [];
+
+        // The ancestry columns and the current directory; `Pathway` ends with the one the cursor
+        // is in. Then the preview column, which is a directory only when the cursor is on one.
+        foreach (DirectoryNode directory in current.Pathway)
+        {
+            if (seen.Add(directory))
+            {
+                yield return directory;
+            }
+        }
+
+        if (current.SelectedDirectory is { } selected && seen.Add(selected))
+        {
+            yield return selected;
+        }
+
+        // In multipane every tab is a column, so every tab's directory is on screen.
+        if (viewmode is "multipane")
+        {
+            foreach (Tab tab in tabs.Values)
+            {
+                if (seen.Add(tab.Current))
+                {
+                    yield return tab.Current;
+                }
+            }
+        }
+    }
+
     /// <inheritdoc />
     public void ReloadDirectory(string path)
     {
@@ -991,8 +1068,9 @@ public sealed class Browser : IFileManager, IDisposable
         }
 
         // The program may have written over the screen, so nothing less than a full repaint is
-        // safe. The directory may also have changed under it.
-        ReloadCurrentDirectory();
+        // safe. The directories may also have changed under it — every one on show, not just the
+        // one the cursor is in, since a program is free to touch anything it was pointed at.
+        ReloadVisibleDirectories();
         Redraw();
     }
 
@@ -1223,10 +1301,13 @@ public sealed class Browser : IFileManager, IDisposable
             else if (_hadWork)
             {
                 // Work has just finished. Whatever it did — a copy, a move — most likely changed
-                // the directory being shown, so the listing is re-read once rather than polled.
+                // a directory being shown, so the listings are re-read once rather than polled.
+                // Every visible one, because a paste lands in a directory the cursor is not in
+                // nearly as often as in one it is, and the destination is frequently the column
+                // to the right.
                 _hadWork = false;
                 ReportFinishedWork();
-                ReloadCurrentDirectory();
+                ReloadVisibleDirectories();
             }
 
             Draw();
