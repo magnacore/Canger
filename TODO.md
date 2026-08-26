@@ -2777,6 +2777,32 @@ Worth remembering: a method with no callers is a question, not a defect. The use
 asking what upstream does with its equivalent — the answer was "nothing, deliberately or by
 neglect" — and then measuring, which said the obvious fix would not have worked.
 
+## Copy-clash names counted from the second copy
+
+Pasting `notes.md` into its own directory four times gave `notes_.md`, `notes_0.md`,
+`notes_1.md`, `notes_2.md`.
+
+That is ranger's rule (`ext/safe_path.py:13-21`): try a bare underscore, and only start counting
+once that is taken. Canger already diverged from it in one respect — the suffix goes before the
+extension, so a copy still opens in the right program — but kept the two-stage shape.
+
+The report is right, and the reason it took four copies to notice is the interesting part: with
+one clash the scheme looks fine, and every test covering it used exactly one clash. Over a run it
+falls apart — three of the four are numbered, the odd one out is the oldest, and nothing in the set
+says which came first. Both variants now count from zero, so the rule is one sentence and the
+copies sort by the number that names them.
+
+Left alone deliberately: a `notes_.md` from before this change is simply a different name.
+Numbering starts at zero beside it rather than adopting it as the zeroth copy, which would mean
+guessing at a file the user may have named themselves. There is a test for that.
+
+Verified in a pty against the real config: `yy` then `pp` four times gives `notes_0.md` through
+`notes_3.md`.
+
+The lesson for the suite: **a test that exercises one iteration of a sequence cannot see a rule
+that is wrong about sequences.** Five tests covered this naming and all five stopped at the first
+collision.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
