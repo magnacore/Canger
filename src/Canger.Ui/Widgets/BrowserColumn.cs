@@ -343,15 +343,35 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             return null;
         }
 
-        return repository.StatusOf(entry.Path, entry.IsDirectory) switch
+        return MarkerFor(repository.StatusOf(entry.Path, entry.IsDirectory));
+    }
+
+    /// <summary>The mark and colour that stand for a version-control status.</summary>
+    /// <param name="status">What the repository says about the file.</param>
+    /// <returns>The mark and its colour context, or nothing when the status is not shown.</returns>
+    internal static (string Text, ContextKey Context)? MarkerFor(VcsStatus status)
+    {
+        return status switch
         {
-            VcsStatus.Conflict => ("=", ContextKey.VcsConflict),
+            // Ranger's table, character for character (`gui/widgets/__init__.py:11-30`). Three of
+            // these used to differ, and two of the three collided: `!` meant *ignored* here and
+            // *unknown* there, so the same mark told a ranger user the opposite of what it meant.
+            // A middle dot for ignored is also the right weight — ignored files are the least
+            // interesting thing in a listing and should not be the loudest mark in it.
+            VcsStatus.Conflict => ("X", ContextKey.VcsConflict),
             VcsStatus.Untracked => ("?", ContextKey.VcsUntracked),
             VcsStatus.Deleted => ("-", ContextKey.VcsChanged),
             VcsStatus.Changed => ("+", ContextKey.VcsChanged),
-            VcsStatus.Staged => ("*", ContextKey.VcsChanged),
-            VcsStatus.Ignored => ("!", ContextKey.VcsIgnored),
-            VcsStatus.Unknown => ("|", ContextKey.VcsUnknown),
+            VcsStatus.Staged => ("*", ContextKey.VcsStaged),
+            VcsStatus.Ignored => ("\u00b7", ContextKey.VcsIgnored),
+            VcsStatus.Unknown => ("!", ContextKey.VcsUnknown),
+
+            // Ranger ticks every clean file (`'sync': ('\u2713', ...)`). Deliberately not copied:
+            // in a source tree that is a tick on almost every row to say nothing is wrong, and a
+            // status column earns its width by being mostly blank. Written out rather than left
+            // to the default below, so it reads as a decision instead of an omission.
+            VcsStatus.Sync => null,
+
             _ => null,
         };
     }
