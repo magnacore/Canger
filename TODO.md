@@ -2861,16 +2861,44 @@ Nothing from ranger. Possible directions from here:
   ueberzug have been exercised against real terminals.
 - **`--profile` and `--logfile`**, which ranger has and Canger does not. Neither affects
   behaviour; both are debugging aids.
-- **Packaging** — a `canger.desktop`, a man page install path, and a build that produces a
-  self-contained tarball. Note that Roslyn rules out NativeAOT, so Canger ships
-  framework-dependent.
+- **A `canger.desktop` and a man page install path.** `./build.sh dist` produces the tarballs; what
+  is missing is the desktop entry and somewhere for `doc/canger.1` to land so `?` → `m` works
+  without the tarball's own directory.
+- **Noticing a `chmod` made in another terminal.** Both Canger and ranger judge staleness by the
+  directory's mtime, which a `chmod` does not touch, so neither sees it. Fixing it means
+  re-statting the visible rows on a timer — bounded, but a real divergence from ranger, and not
+  worth doing unasked.
 - **Performance work on very large directories.** Nothing is known to be slow; nothing has been
   measured either.
 
-Verification note: the pty harness in the scratchpad
-(`drive_browser.py <binary> <path> [keys...]`, `drive_args.py <binary> <args...> --keys ...`,
-`probe_raw.py`) reconstructs the screen by replaying the escape stream and has found every defect
-the unit tests missed. Two things to know when using it: it must set the window size explicitly
-(without that the pty reports 0x0 and nothing lays out), and the status bar writes text in
-separately-positioned chunks, so searching the raw stream for a multi-word phrase gives false
-negatives — match single tokens.
+### Watch these in daily use
+
+Everything below landed on the same day and has had no living-with. They are not suspected of
+being wrong — each is tested and was verified in a pty — but they are the least-exercised things
+in the tree, and two of them touch something that matters:
+
+- **`unload-idle-directories`** only fires after twenty minutes idle, so at its real threshold it
+  has effectively never run. It was verified by shortening the interval to seconds, which is not
+  the same as living with it. It drops listings silently; the sign of it going wrong would be a
+  selection or a cursor row lost on returning to a directory left alone for a while.
+- **`numbered-clash-suffixes`** changes what a pasted file is named. Well tested, but the kind of
+  change where being wrong touches files rather than pixels.
+- **`reload-visible-directories`** now re-reads every column after a command rather than one, and
+  after background work finishes.
+
+### Verifying by driving the real binary
+
+Several defects in this file were found only by running the published binary under a pty and
+reconstructing the screen from the escape stream — the unit tests could not see them. There is no
+committed harness; the scripts were written per-investigation in a scratch directory and are gone.
+What is worth knowing before writing the next one:
+
+- The window size must be set explicitly with `TIOCSWINSZ`. Without it the pty reports 0x0 and
+  nothing lays out.
+- The status bar writes text in separately positioned chunks, so searching the raw stream for a
+  multi-word phrase gives false negatives. Match single tokens.
+- A naive replayer that does not implement scrolling will show the first screenful and pile
+  everything after it onto the last row — which reads exactly like a program that has stopped
+  responding. `less` searching correctly was misdiagnosed twice this way.
+- Reading per-cell SGR state is what proves a colour question. `1;7;93` on one word and nothing on
+  the next is the difference between a fix and a plausible-looking one.
