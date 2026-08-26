@@ -489,6 +489,14 @@ public sealed class Browser : IFileManager, IDisposable
     /// <inheritdoc />
     public IReadOnlyList<FsNode> CopyBuffer { get; private set; } = [];
 
+    /// <summary>The same buffer as a set of paths, for the listing to dim as it draws.</summary>
+    /// <remarks>
+    /// Kept in step with <see cref="CopyBuffer"/> rather than rebuilt per frame. Ranger rebuilds
+    /// its list on every draw (<c>gui/widgets/browsercolumn.py:294</c>), which it can afford at
+    /// its refresh rate; this is the same answer without paying for it sixty times a second.
+    /// </remarks>
+    private readonly HashSet<string> _copyBufferPaths = new(StringComparer.Ordinal);
+
     /// <inheritdoc />
     public bool IsCutPending { get; private set; }
 
@@ -807,6 +815,12 @@ public sealed class Browser : IFileManager, IDisposable
     {
         CopyBuffer = [.. files];
         IsCutPending = cut;
+
+        _copyBufferPaths.Clear();
+        foreach (FsNode file in CopyBuffer)
+        {
+            _copyBufferPaths.Add(file.Path);
+        }
     }
 
     /// <inheritdoc />
@@ -1770,6 +1784,8 @@ public sealed class Browser : IFileManager, IDisposable
         _multipaneView.RelativeCurrentZero = Settings.RelativeCurrentZero;
         _multipaneView.Vcs = Vcs;
         _multipaneView.Tags = Tags;
+        _multipaneView.CopyBuffer = _copyBufferPaths;
+        _multipaneView.CopyBufferIsCut = IsCutPending;
         _multipaneView.DisplayTagsInAllColumns = Settings.DisplayTagsInAllColumns;
         _multipaneView.DrawBorders = Settings.DrawBordersMultipane ?? Settings.DrawBorders;
     }
@@ -1840,6 +1856,8 @@ public sealed class Browser : IFileManager, IDisposable
         // exactly the trade that keeps a slow repository from stalling the listing.
         _view.Vcs = Vcs;
         _view.Tags = Tags;
+        _view.CopyBuffer = _copyBufferPaths;
+        _view.CopyBufferIsCut = IsCutPending;
         _view.DisplayTagsInAllColumns = Settings.DisplayTagsInAllColumns;
         _view.CollapsePreview = Settings.CollapsePreview;
         Directories.Frozen = Settings.FreezeFiles;
