@@ -198,7 +198,7 @@ public class PasteCollisionTests
         Run(job);
 
         Assert.True(fs.Exists("/dest/a.txt"));
-        Assert.True(fs.Exists("/dest/a.txt_"), "the second must not have replaced the first");
+        Assert.True(fs.Exists("/dest/a.txt_0"), "the second must not have replaced the first");
     }
 
     [Fact]
@@ -213,7 +213,7 @@ public class PasteCollisionTests
 
         List<string> contents =
         [
-            .. new[] { "/dest/a.txt", "/dest/a.txt_" }
+            .. new[] { "/dest/a.txt", "/dest/a.txt_0" }
                 .Where(fs.Exists)
                 .Select(p => new StreamReader(fs.OpenRead(p)).ReadToEnd())
         ];
@@ -234,7 +234,7 @@ public class PasteCollisionTests
                           TransferKind.Copy, ClashPolicy.Overwrite);
         Run(job);
 
-        Assert.False(fs.Exists("/dest/a.txt_"), "an existing file is still replaced, not renamed");
+        Assert.False(fs.Exists("/dest/a.txt_0"), "an existing file is still replaced, not renamed");
         Assert.Equal("new", new StreamReader(fs.OpenRead("/dest/a.txt")).ReadToEnd());
     }
 }

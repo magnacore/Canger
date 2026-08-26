@@ -84,7 +84,7 @@ public class CopyJobTests
 
         Run(job);
 
-        Assert.True(fs.Exists("/dest/one_.txt") || fs.Exists("/dest/one.txt_"));
+        Assert.True(fs.Exists("/dest/one_0.txt") || fs.Exists("/dest/one.txt_0"));
         using StreamReader reader = new(fs.OpenRead("/dest/one.txt"));
         Assert.Equal("do not lose me", reader.ReadToEnd());
     }
@@ -92,14 +92,14 @@ public class CopyJobTests
     [Fact]
     public void Copy_CanKeepTheExtensionWhenRenaming()
     {
-        // report_.pdf still opens in the right program; report.pdf_ does not.
+        // report_0.pdf still opens in the right program; report.pdf_0 does not.
         InMemoryFileSystem fs = Tree().AddFile("/dest/one.txt", "existing");
         CopyJob job = new(fs, ["/src/one.txt"], "/dest", TransferKind.Copy,
                           ClashPolicy.RenameKeepingExtension);
 
         Run(job);
 
-        Assert.True(fs.Exists("/dest/one_.txt"));
+        Assert.True(fs.Exists("/dest/one_0.txt"));
     }
 
     [Fact]
@@ -292,6 +292,6 @@ public class CopyJobTests
 
         Assert.Empty(job.Errors);
         Assert.True(fs.Exists("/src/one.txt"));
-        Assert.True(fs.Exists("/src/one.txt_"));
+        Assert.True(fs.Exists("/src/one.txt_0"));
     }
 }
