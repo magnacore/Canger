@@ -3057,6 +3057,36 @@ Verified against real directories: `✓` on clean files, `·` plain on `dist` an
 red on `src`, and in `~/Projects`, `⌂` green on a local-only repository and `=` green on one in
 sync with its remote.
 
+## The version-control marks were on the wrong side of the row
+
+Reported with a screenshot: ranger draws them at the right-hand end, after the size. Canger drew
+them between the line number and the name.
+
+Ranger's row is built as two lists. The tag mark goes on `predisplay_left`; the version-control
+marks go on `predisplay_right`, and the size is then *prepended* to that with a separator
+(`gui/widgets/browsercolumn.py:394-423`). So the right-hand group reads: size, gap, remote mark,
+file mark — and the whole of it is flush right.
+
+The row layout is now built the same way: the marks and the size are measured as one group,
+claiming one column more than they draw so the group cannot butt against a truncated name, and
+drawn right-aligned. The tag mark stays on the left, as it is in ranger.
+
+### 1,568 tests and none of them knew where anything was
+
+I had just pinned the mark table character by character, and the colour of every status, and
+whether `Sync` draws. All of it passed with the mark in entirely the wrong place. The same was true
+of the size a few fixes earlier: every `BrowserColumn` test asserted the row's *contents*.
+
+So these are the first tests in the file that assert against a **real repository** — a temporary
+`git init`, a committed file, the column rendered, and the mark's column index compared with the
+name's. They have to be real: the mark only appears once a repository has been found *and*
+refreshed, and a fake that skipped either would be testing the drawing of something that never
+happens. Both fail with the marks back on the left.
+
+**A test that pins what a thing is says nothing about where it is.** Three layout defects this
+session — the size spacing, the marks' side, and the preview column's collapse — and the suite was
+silent on all three.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
