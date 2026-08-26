@@ -2648,6 +2648,44 @@ rather than showing nothing.
 Verified in a pty: `?` then `k` puts `less` on a `canger-*` temporary file, and
 `/--- taskview ---` scrolls to that section. Four tests, two of which fail without the routing.
 
+## `:shell` would not complete a filename
+
+Reported: `:shell some-program FIL<Tab>` did nothing. Completing the *program* name had been added
+earlier in this same session, which is what makes this worth writing down — the fix at the time
+read ranger's `shell.tab` far enough to find `get_executables()` and stopped there. The method has
+three branches (`config/commands.py:320-342`), keyed on where the cursor is:
+
+| where | ranger offers |
+|---|---|
+| no space yet | the programs on `$PATH` |
+| just after a space | the selection — one file by name, several as `%s` |
+| part-way through a word | the files here whose names begin with it |
+
+Only the first was implemented; the other two returned an empty list. A command line was the one
+place left in Canger where a filename had to be typed out in full — and the earlier fix had made
+that *less* obvious, because Tab now visibly worked on the first word.
+
+Two divergences from ranger, both forced by Canger quoting differently:
+
+- **Matching is against the plain name, not the escaped one.** Ranger compares
+  `file.shell_escaped_basename.startswith(start_of_word)`, which works there because its
+  `shell_escape` leaves an ordinary name untouched. `MacroExpander.ShellQuote` wraps
+  unconditionally, so `'FILE.txt'` would stop matching `FIL` the moment anything needed quoting.
+- **Names are quoted only when they need it.** Not cosmetic: the completed word goes back into the
+  console, and a name that returned wrapped in quotes would no longer match itself if the user
+  carried on typing, so cycling would lose it.
+
+Quoting goes through `QuoteForCommandLine`, not `ShellQuote` — the completed line is expanded again
+when it runs, so `x%sy.txt` would otherwise carry a macro into a command line. That is the same
+trap `ShellWord.Quote` fell into in the personal config.
+
+The old `OffersNothingOnceTheProgramIsNamed` test asserted the missing behaviour and passed only
+because the fixture directory was empty. Worth remembering: a test that pins an absence proves
+nothing when the fixture cannot produce a presence.
+
+Verified in a pty: `FIL<Tab>` gives `FILE_ONE.txt`, again gives `FILE_TWO.txt`, and `two<Tab>`
+gives `'two words.txt'`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
