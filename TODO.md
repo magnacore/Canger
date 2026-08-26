@@ -2589,6 +2589,39 @@ The arithmetic moved to `VisualRange` so it can be tested without a terminal —
 pty run of the reported sequence. Measured both ways: without the fix the status bar goes from
 `8 B/2` to `12 B/3` when `b.txt` appears; with it, it stays at `8 B/2`.
 
+## Cut and copied files were not dimmed
+
+Reported: in ranger, `dd` and `yy` grey out what is on the clipboard, the marking survives leaving
+the directory and coming back, and `uy` restores the colour. Canger showed nothing at all.
+
+The whole clipboard worked — `CopyBuffer`, `IsCutPending`, `SetCopyBuffer`, `uncut` on `ud`/`uy`,
+paste. Both stock colour schemes had carried the rule from the start:
+`HasAny(Cut, Copied) && !Has(Selected)` → bold on bright black, which is ranger's
+`colorschemes/default.py:70-77` line for line. Nothing anywhere produced the two keys.
+`BrowserColumn.ContextFor` set fourteen of them and not these, so every row resolved as though the
+clipboard were empty.
+
+This is the same shape as the dead-settings audit and the tag marker before it: the mechanism, the
+storage and the styling all present and correct, with no line joining the last two. Worth
+remembering that a colour scheme handling a key proves nothing about whether the key is ever set —
+it reads like evidence and is not.
+
+Now `ContextFor` sets `Cut` or `Copied` from a set of paths handed down through the views the same
+way `Tags` is. By path rather than by node, because the buffer outlives the listing it was filled
+from — returning to a directory rebuilds every entry, and ranger recomputes
+`[f.path for f in self.fm.copy_buffer]` on each draw for the same reason
+(`gui/widgets/browsercolumn.py:294`). Kept as a `HashSet` maintained in `SetCopyBuffer` instead of
+rebuilt per frame, which ranger can afford and a redraw loop should not pay for.
+
+Ranger's `not context.selected` is honoured: the cursor row is already reverse video and dimming it
+too would make it unreadable.
+
+`jungle` inherits from the default scheme and so gets this; `snow` does not define the rule — and
+neither does ranger's own `snow.py`, so that is a match rather than a gap.
+
+Five tests, four of which fail without the two lines. Verified in a pty: `a.txt` renders SGR
+`0;1;90` after `dd`, still `0;1;90` after leaving the directory and returning, and bare after `uy`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

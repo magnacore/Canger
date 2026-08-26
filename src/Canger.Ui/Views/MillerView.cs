@@ -70,6 +70,12 @@ public sealed class MillerView(IColorScheme colorScheme)
     /// <summary>The tag store, passed to every column for the marker at the left of each row.</summary>
     public Tags? Tags { get; set; }
 
+    /// <inheritdoc cref="BrowserColumn.CopyBuffer"/>
+    public IReadOnlySet<string>? CopyBuffer { get; set; }
+
+    /// <inheritdoc cref="BrowserColumn.CopyBufferIsCut"/>
+    public bool CopyBufferIsCut { get; set; }
+
     /// <summary>Whether columns other than the main one show tag markers.</summary>
     public bool DisplayTagsInAllColumns { get; set; } = true;
 
@@ -145,6 +151,8 @@ public sealed class MillerView(IColorScheme colorScheme)
             column.RelativeCurrentZero = RelativeCurrentZero;
             column.Vcs = Vcs;
             column.Tags = Tags;
+            column.CopyBuffer = CopyBuffer;
+            column.CopyBufferIsCut = CopyBufferIsCut;
             column.DisplayTagsInAllColumns = DisplayTagsInAllColumns;
 
             DirectoryNode? directory = DirectoryFor(tab, depthFromMain);
