@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using Canger.Core.Model;
 using Canger.Core.Processes;
 
@@ -120,26 +121,51 @@ public sealed class OpenWithCommand : CangerCommand
 public sealed class DrawPossibleProgramsCommand : CangerCommand
 {
     /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// Every line, over the listing, and it stays there while the console that follows is typed
+    /// into — because `r` is bound to <c>chain draw_possible_programs; console open_with%space</c>
+    /// and the whole point is to read the numbers while choosing one.
+    /// </para>
+    /// <para>
+    /// It used to go to the status bar. That could not work: the bar holds one line, so a dozen
+    /// programs were truncated to the first few, and the console opens in the same place a
+    /// moment later and covered what was left. The list was being drawn and then hidden by the
+    /// next link in its own chain.
+    /// </para>
+    /// </remarks>
     public override void Execute()
     {
         if (FileManager.CurrentFile is not { } file)
         {
+            // Ranger empties the overlay rather than leaving the previous file's answer up
+            // (`core/actions.py:949-952`).
+            FileManager.ShowInfo([]);
             return;
         }
 
         IReadOnlyList<OpenAlternative> alternatives = FileManager.Opener.Alternatives(file.Path);
 
-        FileManager.Notify(alternatives.Count == 0
-            ? "nothing can open this"
-            : string.Join("  ", alternatives.Select(
-                a => $"{a.Number}:{a.Label ?? Summarise(a.Command)}")));
-    }
+        if (alternatives.Count == 0)
+        {
+            FileManager.ShowInfo([]);
+            FileManager.Notify("nothing can open this");
+            return;
+        }
 
-    /// <summary>The first word of a command, which is usually the program's name.</summary>
-    private static string Summarise(string command) =>
-        command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries) is [string first, ..]
-            ? first
-            : command;
+        // Ranger's own layout: the number, right-justified so the pipes line up, then the command
+        // the rule would run — not its label (`core/actions.py:953-958`). The command is what
+        // tells two rules for the same program apart.
+        int width = alternatives.Max(
+            a => a.Number.ToString(CultureInfo.InvariantCulture).Length);
+
+        FileManager.ShowInfo(
+        [
+            .. alternatives.Select(
+                a => $"{a.Number.ToString(CultureInfo.InvariantCulture).PadLeft(width)} | " +
+                     (a.Label is { Length: > 0 } label ? $"{label}: {a.Command}" : a.Command)),
+        ]);
+    }
 }
 
 /// <summary>Opens a shell in the current directory.</summary>

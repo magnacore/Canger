@@ -183,15 +183,63 @@ public class ProcessCommandTests
     }
 
     [Fact]
-    public void DrawPossiblePrograms_ListsTheAlternatives()
+    public void DrawPossiblePrograms_ListsTheAlternativesOverTheListing()
     {
+        // It used to go to the status bar, where a dozen programs became the first few and the
+        // console that `r` opens a moment later covered even those. One line per program, in the
+        // browser, which is where ranger puts it.
         FakeFileManager manager = Build();
         manager.RecordedOpens.AvailableAlternatives.Add(new OpenAlternative(0, "editor", "vim"));
         manager.RecordedOpens.AvailableAlternatives.Add(new OpenAlternative(1, "pager", "less"));
 
         manager.Execute("draw_possible_programs");
 
-        Assert.Contains("editor", manager.LastMessage!, StringComparison.Ordinal);
-        Assert.Contains("pager", manager.LastMessage!, StringComparison.Ordinal);
+        Assert.Equal(2, manager.InfoLines.Count);
+        Assert.Contains("editor", manager.InfoLines[0], StringComparison.Ordinal);
+        Assert.Contains("vim", manager.InfoLines[0], StringComparison.Ordinal);
+        Assert.Contains("less", manager.InfoLines[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DrawPossiblePrograms_RightJustifiesTheNumbersSoTheyLineUp()
+    {
+        // Ranger pads to the widest number (`core/actions.py:955`), so a list that runs into
+        // double figures still reads as a column rather than a ragged edge.
+        FakeFileManager manager = Build();
+        for (int i = 0; i < 11; i++)
+        {
+            manager.RecordedOpens.AvailableAlternatives.Add(new OpenAlternative(i, null, "run"));
+        }
+
+        manager.Execute("draw_possible_programs");
+
+        Assert.StartsWith(" 0 | ", manager.InfoLines[0], StringComparison.Ordinal);
+        Assert.StartsWith("10 | ", manager.InfoLines[10], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DrawPossiblePrograms_ShowsTheCommandNotJustTheLabel()
+    {
+        // Two rules for the same program differ by their command, so the label alone cannot tell
+        // them apart. Ranger lists `program[1]`, which is the command.
+        FakeFileManager manager = Build();
+        manager.RecordedOpens.AvailableAlternatives.Add(
+            new OpenAlternative(0, "editor", "vim -- \"$@\""));
+
+        manager.Execute("draw_possible_programs");
+
+        Assert.Contains("vim -- \"$@\"", manager.InfoLines[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DrawPossiblePrograms_ClearsTheOverlayWhenNothingCanOpenIt()
+    {
+        // Leaving the previous file's answer up would be worse than showing none.
+        FakeFileManager manager = Build();
+
+        manager.Execute("draw_possible_programs");
+
+        Assert.Empty(manager.InfoLines);
+        Assert.Contains("nothing", manager.LastMessage!, StringComparison.OrdinalIgnoreCase);
     }
 }

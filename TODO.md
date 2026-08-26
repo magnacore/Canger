@@ -2853,6 +2853,36 @@ the bug announcing itself and it read as good news.
 Roslyn translation directories, the symbols and the API documentation, about 8 MB of a 37 MB tree.
 Nothing reads any of it at runtime.
 
+## `r` showed no programs to open with
+
+`r` is bound to `chain draw_possible_programs; console open_with%space`, and the first half of that
+chain was writing its answer to the **status bar** — where the second half then opened the console,
+in the same place, and covered it. A dozen programs were truncated to a line and the line was
+hidden a moment later by the next link in its own chain.
+
+Ranger does not use the status bar for this. `draw_possible_programs` sets `ui.browser.draw_info`
+(`core/actions.py:947-960`) and the view draws those lines over the bottom of the listing
+(`gui/widgets/view_base.py:97-107`), in the same slot as the bookmark and hint windows and with the
+same precedence — `if draw_bookmarks ... elif draw_hints ... elif draw_info`. It stays up while the
+console is typed into, which is the entire point, and `Console.close` clears it
+(`gui/widgets/console.py:179`).
+
+Canger now has `IFileManager.ShowInfo`, an overlay drawn bottom-anchored and no taller than it
+needs, cleared from a new `Browser.CloseConsole` that all three console-closing paths go through —
+one place, so the overlay cannot outlive the console by way of a route that forgot about it.
+
+Two details taken from ranger rather than invented. The number is right-justified to the widest
+(`core/actions.py:955`), so a list running into double figures reads as a column. And each line
+carries the **command**, not the label: ranger lists `program[1]`, and two rules for the same
+program differ only by their command — the shipped `rifle.conf` has four `editor:` rules.
+
+Verified in a pty against the real config: `r` lists ten programs over the listing with the console
+below, the list survives typing `2` into it, and escape takes both down together.
+
+The shape worth remembering: **a one-line channel cannot answer a question the user needs while
+they type.** The status bar was the wrong instrument, not a badly used one — and the chain was
+built so that the answer's own successor destroyed it.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

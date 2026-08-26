@@ -14,6 +14,7 @@ using Canger.Core.Tasks;
 using Canger.Tui;
 using Canger.Tui.Input;
 using Canger.Tui.Rendering;
+using Canger.Tui.Text;
 using Canger.Ui.Styling;
 using Canger.Vcs;
 using Canger.Ui.Views;
@@ -117,6 +118,35 @@ public sealed class Browser : IFileManager, IDisposable
 
     /// <inheritdoc />
     public void ShowBookmarks() => _showBookmarks = true;
+
+    /// <summary>Lines drawn over the bottom of the listing, or nothing.</summary>
+    /// <remarks>
+    /// Ranger's <c>ui.browser.draw_info</c>. It outlives the keystroke that set it, because the
+    /// thing it answers — "which number opens this in what?" — is needed while the console that
+    /// follows is being typed into.
+    /// </remarks>
+    private IReadOnlyList<string>? _info;
+
+    /// <inheritdoc />
+    public void ShowInfo(IReadOnlyList<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+
+        _info = lines.Count > 0 ? lines : null;
+        RequestRedraw();
+    }
+
+    /// <summary>Closes the console and takes any info overlay down with it.</summary>
+    /// <remarks>
+    /// One place, so the overlay cannot outlive the console by way of a route that forgot about
+    /// it. Ranger clears it from a single point too — <c>Console.close</c> calls
+    /// <c>hide_console_info</c> (<c>gui/widgets/console.py:179</c>).
+    /// </remarks>
+    private void CloseConsole()
+    {
+        _console.Close();
+        _info = null;
+    }
 
     private readonly FileDescriber _describer;
     private readonly IImageDisplay? _images;
@@ -1722,7 +1752,7 @@ public sealed class Browser : IFileManager, IDisposable
             {
                 Action<char>? callback = _questionCallback;
                 _questionCallback = null;
-                _console.Close();
+                CloseConsole();
                 callback?.Invoke(answer);
             }
 
@@ -1769,7 +1799,7 @@ public sealed class Browser : IFileManager, IDisposable
             case "console_close":
                 _pendingCommand?.Cancel();
                 _pendingCommand = null;
-                _console.Close();
+                CloseConsole();
                 break;
 
             case "console_complete":
@@ -1787,7 +1817,7 @@ public sealed class Browser : IFileManager, IDisposable
                 }
                 else
                 {
-                    _console.Close();
+                    CloseConsole();
                 }
 
                 break;
@@ -1935,6 +1965,38 @@ public sealed class Browser : IFileManager, IDisposable
         if (CurrentTab.SelectedDirectory is { } selected)
         {
             selected.AutoupdateCumulativeSize = autoupdate;
+        }
+    }
+
+    /// <summary>Draws the info lines over the bottom of the listing.</summary>
+    /// <param name="lines">What to show, one per row.</param>
+    /// <remarks>
+    /// Bottom-anchored and no taller than it needs, so as much of the directory as possible stays
+    /// readable behind it — the same shape as the bookmark and hint windows, and as ranger's own
+    /// (<c>gui/widgets/view_base.py:97-107</c>). Each row is blanked before it is written, because
+    /// the listing underneath is wider than the line replacing it.
+    /// </remarks>
+    private void DrawInfo(IReadOnlyList<string> lines)
+    {
+        Rect bounds = BrowserBounds();
+        int rows = Math.Min(lines.Count, bounds.Height);
+
+        if (rows <= 0)
+        {
+            return;
+        }
+
+        CellStyle style = _colorScheme.Resolve(StyleContext.Of(ContextKey.InBrowser));
+        int top = bounds.Bottom - rows;
+
+        // The last `rows` lines, so a list too long for the screen shows its end rather than its
+        // beginning — the higher numbers are the ones that would otherwise be unreachable.
+        for (int i = 0; i < rows; i++)
+        {
+            _screen.Fill(bounds.X, top + i, bounds.Width, 1, style);
+            _screen.Write(bounds.X, top + i,
+                          new WideString(lines[lines.Count - rows + i]).Truncate(bounds.Width),
+                          style);
         }
     }
 
@@ -2145,6 +2207,13 @@ public sealed class Browser : IFileManager, IDisposable
                                                 _screen.Width, wanted));
                 _bookmarkWindow.Render(_screen);
             }
+        }
+        else if (_info is { Count: > 0 } info)
+        {
+            // Last, matching ranger's `if draw_bookmarks ... elif draw_hints ... elif draw_info`
+            // (gui/widgets/view_base.py:44-49): a pending key sequence is a more urgent question
+            // than a list the user has already asked for.
+            DrawInfo(info);
         }
         else if (_showHints)
         {
