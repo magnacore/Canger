@@ -136,17 +136,6 @@ public sealed class Browser : IFileManager, IDisposable
         RequestRedraw();
     }
 
-    /// <summary>Closes the console and takes any info overlay down with it.</summary>
-    /// <remarks>
-    /// One place, so the overlay cannot outlive the console by way of a route that forgot about
-    /// it. Ranger clears it from a single point too — <c>Console.close</c> calls
-    /// <c>hide_console_info</c> (<c>gui/widgets/console.py:179</c>).
-    /// </remarks>
-    private void CloseConsole()
-    {
-        _console.Close();
-        _info = null;
-    }
 
     private readonly FileDescriber _describer;
     private readonly IImageDisplay? _images;
@@ -1746,13 +1735,31 @@ public sealed class Browser : IFileManager, IDisposable
     /// </remarks>
     private void HandleConsoleKey(int key)
     {
+        RouteConsoleKey(key);
+
+        // The overlay belongs to the console, so it goes when the console does — checked here
+        // rather than at each place that closes it. Enumerating those is what put this comment
+        // here: `console_accept` reaches `ConsoleWidget.Accept`, which closes the widget itself
+        // and never touches the browser's own closing path, so running a command from the console
+        // left the list of programs on screen with nothing to dismiss it. There are two `Accept`
+        // calls and three `Close` calls, and asking about the state afterwards covers all five
+        // and anything added later.
+        if (!_console.IsOpen)
+        {
+            _info = null;
+        }
+    }
+
+    /// <inheritdoc cref="HandleConsoleKey"/>
+    private void RouteConsoleKey(int key)
+    {
         if (_console.Question is not null)
         {
             if (_console.AnswerQuestion(key) is { } answer)
             {
                 Action<char>? callback = _questionCallback;
                 _questionCallback = null;
-                CloseConsole();
+                _console.Close();
                 callback?.Invoke(answer);
             }
 
@@ -1799,7 +1806,7 @@ public sealed class Browser : IFileManager, IDisposable
             case "console_close":
                 _pendingCommand?.Cancel();
                 _pendingCommand = null;
-                CloseConsole();
+                _console.Close();
                 break;
 
             case "console_complete":
@@ -1817,7 +1824,7 @@ public sealed class Browser : IFileManager, IDisposable
                 }
                 else
                 {
-                    CloseConsole();
+                    _console.Close();
                 }
 
                 break;
