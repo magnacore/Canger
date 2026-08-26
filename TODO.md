@@ -2868,16 +2868,37 @@ console is typed into, which is the entire point, and `Console.close` clears it
 (`gui/widgets/console.py:179`).
 
 Canger now has `IFileManager.ShowInfo`, an overlay drawn bottom-anchored and no taller than it
-needs, cleared from a new `Browser.CloseConsole` that all three console-closing paths go through —
-one place, so the overlay cannot outlive the console by way of a route that forgot about it.
+needs, and taken down when the console goes.
+
+**Getting that second part right took two attempts, and the first one is the lesson.** It cleared
+the overlay from a helper that the console-closing paths were routed through — "one place, so the
+overlay cannot outlive the console by way of a route that forgot about it", as the comment
+confidently said. It forgot a route. `console_accept` calls `ConsoleWidget.Accept`, which closes
+the widget itself and never goes near the browser's closing path, so *running* a command from the
+console — the ordinary way to use this feature — left the list of programs on screen with nothing
+to dismiss it. Reported as "it seemed stuck on the screen", and it was.
+
+There are two `Accept` calls and three `Close` calls. The fix is not a fourth call site: it is to
+stop enumerating them. `HandleConsoleKey` is the single funnel for every key the console sees, so
+it now asks afterwards whether the console is still open and drops the overlay if it is not. That
+covers all five paths and any added later.
+
+Worth remembering: **"I routed them all through one place" is a claim about a set you have to have
+enumerated correctly.** Asking about the resulting state needs no such enumeration. The first
+version even said the safe-sounding thing in a comment, which is how it read as done.
 
 Two details taken from ranger rather than invented. The number is right-justified to the widest
 (`core/actions.py:955`), so a list running into double figures reads as a column. And each line
 carries the **command**, not the label: ranger lists `program[1]`, and two rules for the same
 program differ only by their command — the shipped `rifle.conf` has four `editor:` rules.
 
-Verified in a pty against the real config: `r` lists ten programs over the listing with the console
-below, the list survives typing `2` into it, and escape takes both down together.
+Verified in a pty against the real config, with a control build: `r` lists ten programs over the
+listing with the console below, the list survives typing into it, and both accepting a choice and
+pressing escape take it down. Without the fix the count after accepting stays at ten.
+
+No unit test: the invariant lives in `Browser`, which needs a terminal to construct, and the four
+tests on `draw_possible_programs` itself cover only what the command produces. The pty run against
+a control is the evidence here.
 
 The shape worth remembering: **a one-line channel cannot answer a question the user needs while
 they type.** The status bar was the wrong instrument, not a badly used one — and the chain was
