@@ -82,7 +82,7 @@ Building
 --------
 
 You need the **.NET 10 SDK** (10.0.302 or newer — `global.json` rolls forward within the feature
-band) and a Linux machine. There is no packaging yet: you build from a clone and run it there.
+band) and a Linux machine. You build from a clone and run it there.
 
 ```
 git clone <this repository> canger
@@ -91,6 +91,7 @@ cd canger
 ./build.sh              # Debug — the development loop
 ./build.sh Release      # optimised, still JITs itself on the way to the first frame
 ./build.sh publish      # Release + ReadyToRun, framework-dependent — the one to actually use
+./build.sh dist         # tarballs to hand to somebody else
 ./test.sh               # the whole suite
 ```
 
@@ -98,6 +99,14 @@ cd canger
 applies at publish, so a plain build — in either configuration — still pays to compile itself on
 every launch. It stays framework-dependent (`--self-contained false`), so it uses the runtime
 that is already installed rather than bundling one.
+
+`dist` is for giving Canger to someone else. It writes two tarballs into `dist/`: a
+framework-dependent one for a machine that already has .NET 10, and a self-contained one that
+needs nothing installed at all. Both are ReadyToRun, both leave out the debug symbols, the API
+documentation and the Roslyn translations that `publish` keeps, and both carry `config/` — without
+which Canger starts with no key bindings whatsoever — along with `LICENSE`, this file and the man
+page. Each is started once before it is packaged, because a publish that emits a broken assembly
+still reports success.
 
 It publishes for `linux-x64`; set `CANGER_RID=linux-arm64` if that is what you are on.
 

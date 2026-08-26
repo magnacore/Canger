@@ -26,7 +26,7 @@ public sealed class LocalFileSystem : IFileSystem
 
         // EnumerateFileSystemEntries surfaces names cheaply; the per-entry stat below is the
         // expensive part, and is what a caller parallelises when a directory is large.
-        var entries = new List<DirectoryEntry>();
+        List<DirectoryEntry> entries = [];
         foreach (string entryPath in Directory.EnumerateFileSystemEntries(path))
         {
             cancellationToken.ThrowIfCancellationRequested();
