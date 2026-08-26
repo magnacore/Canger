@@ -46,15 +46,15 @@ public sealed class HelpCommand : CangerCommand
                 break;
 
             case 'k':
-                FileManager.ShowInPager(DescribeBindings());
+                FileManager.ShowInExternalPager(DescribeBindings());
                 break;
 
             case 'c':
-                FileManager.ShowInPager(DescribeCommands());
+                FileManager.ShowInExternalPager(DescribeCommands());
                 break;
 
             case 's':
-                FileManager.ShowInPager(DescribeSettings());
+                FileManager.ShowInExternalPager(DescribeSettings());
                 break;
 
             default:

@@ -2622,6 +2622,32 @@ neither does ranger's own `snow.py`, so that is a match rather than a gap.
 Five tests, four of which fail without the two lines. Verified in a pty: `a.txt` renders SGR
 `0;1;90` after `dd`, still `0;1;90` after leaving the directory and returning, and bare after `uy`.
 
+## The help dumps could not be searched
+
+Reported: `?` opens the key bindings, but `/` does nothing there, unlike ranger.
+
+Canger sent all three dumps to its own pager, which scrolls and nothing else. Ranger's pager is
+just as bare — there is no `/` in its `pmap` block either — but ranger never shows the dumps in it.
+`dump_keybindings` writes a temporary file and calls `_run_pager`, which is one line
+(`core/actions.py:1483-1484`):
+
+    self.run(shlex.split(os.environ.get('PAGER', ranger.DEFAULT_PAGER)) + [path])
+
+The search comes from `less`, not from ranger. Which is the interesting part: the feature was never
+implemented by either program, and reimplementing it would have been the wrong answer to the
+report — the right one was to notice that ranger delegates, and delegate the same way. Whoever
+reads this next: check whether the upstream feature is *implemented* or *delegated* before building
+it.
+
+`ShowInExternalPager` now writes the text to a temporary file and runs `$PAGER` on it, defaulting
+to `less` as ranger does. Previews and command output stay in the built-in pager, exactly as
+upstream. Two divergences, both deliberate: the file is created with `FileMode.CreateNew` and
+`0600` before anything is written to it, and a missing `$PAGER` falls back to the built-in pager
+rather than showing nothing.
+
+Verified in a pty: `?` then `k` puts `less` on a `canger-*` temporary file, and
+`/--- taskview ---` scrolls to that section. Four tests, two of which fail without the routing.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
