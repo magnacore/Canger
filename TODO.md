@@ -3087,6 +3087,40 @@ happens. Both fail with the marks back on the left.
 session — the size spacing, the marks' side, and the preview column's collapse — and the suite was
 silent on all three.
 
+## A repository in a listing pushed every other row's count sideways
+
+Reported with two screenshots side by side: in ranger the entry counts hold one column and the
+version-control marks sit beyond them; in Canger a row that had a mark pushed its own count a
+column to the left, so the numbers stepped in and out down the listing.
+
+Two things, both in the same eight lines of ranger.
+
+**The columns are reserved, not packed.** `_draw_vcsstring_display` appends a *space* where a row
+has no mark, as long as the listing contains a repository at all —
+`elif self.target.has_vcschild: vcsstring_display.append([' ', []])`, twice, and `['  ', []]` for a
+row that is not tracked (`gui/widgets/browsercolumn.py:504-513`). So every row in such a listing is
+the same width. Canger packed the group flush right and let each row claim only what it used.
+
+**A repository root has no file status.** Ranger sets one or the other, never both: a child that is
+a root sets `has_vcschild` and gets no `vcsstatus`, while a child inside a repository gets a status
+and no remote (`container/directory.py:430-437`). That is why ranger showed `7 ⌂` where Canger
+showed `7 ⌂?` — the `?` was Canger answering a question ranger does not ask of a repository.
+
+`_hasRepositoryChild` is worked out once per render rather than per row, since it is a property of
+the listing.
+
+### The test that nearly was not written
+
+The obvious assertion — both rows show a count of `0`, so compare where the `0` is — failed,
+because the repository directory contains `.git` and its count is not `0`. The fix was to compare
+the *right edge of the count field* instead, which is what "the numbers do not move" actually
+means, and to assert the reservation directly: the row without marks ends in two blanks.
+
+Also worth remembering: the first version built its temporary tree with a `..` in the path. The
+repository cache is keyed by the path string, so it registered the repository under a name the scan
+never produced and nothing matched — the test failed for a reason that had nothing to do with the
+code under test. `Path.GetFullPath` before anything else.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

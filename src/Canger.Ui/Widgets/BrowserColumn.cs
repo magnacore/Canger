@@ -140,6 +140,14 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
         _scrollOffset = ComputeScroll(directory.Cursor.Index, directory.Count, Bounds.Height,
                                       _scrollOffset, ScrollOffset);
 
+        // Once for the listing, not once per row: whether anything here is a repository in its
+        // own right. When something is, every row keeps two blank columns for the marks even
+        // where it has none, so the sizes stay in one column instead of stepping left and right
+        // down the listing. Ranger reserves them the same way, by appending spaces
+        // (`gui/widgets/browsercolumn.py:504-513`, `has_vcschild`).
+        _hasRepositoryChild = Vcs is not null &&
+                              directory.Entries.Any(e => e.IsDirectory && IsRepositoryRoot(e));
+
         for (int row = 0; row < Bounds.Height; row++)
         {
             int index = _scrollOffset + row;
@@ -214,16 +222,31 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
 
         if (Vcs is not null)
         {
-            if (RemoteMarker(entry) is { } remote)
+            (string Text, ContextKey Context)? remote = RemoteMarker(entry);
+            (string Text, ContextKey Context)? marker = VcsMarker(entry);
+
+            // A blank stands in for a mark this row has not got, so every row in a listing that
+            // contains a repository is the same width and the sizes line up down the column.
+            // Without it a row that gained a mark pushed its own size a column to the left, which
+            // is what the listing looked like: a ragged edge that moved as you scrolled.
+            if (remote is { } r)
             {
-                marks.Add((remote.Text, StyleContext.Of(ContextKey.InBrowser,
-                                                        ContextKey.VcsRemote, remote.Context)));
+                marks.Add((r.Text, StyleContext.Of(ContextKey.InBrowser,
+                                                   ContextKey.VcsRemote, r.Context)));
+            }
+            else if (_hasRepositoryChild)
+            {
+                marks.Add((" ", StyleContext.Of(ContextKey.InBrowser)));
             }
 
-            if (VcsMarker(entry) is { } marker)
+            if (marker is { } m)
             {
-                marks.Add((marker.Text, StyleContext.Of(ContextKey.InBrowser,
-                                                        ContextKey.VcsFile, marker.Context)));
+                marks.Add((m.Text, StyleContext.Of(ContextKey.InBrowser,
+                                                   ContextKey.VcsFile, m.Context)));
+            }
+            else if (_hasRepositoryChild)
+            {
+                marks.Add((" ", StyleContext.Of(ContextKey.InBrowser)));
             }
         }
 
@@ -355,6 +378,17 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             ? StyleContext.Of(ContextKey.InBrowser, ContextKey.LineNumber, ContextKey.Selected)
             : StyleContext.Of(ContextKey.InBrowser, ContextKey.LineNumber);
 
+    /// <summary>Whether this listing holds a repository, so the mark columns are worth keeping.</summary>
+    private bool _hasRepositoryChild;
+
+    /// <summary>Whether an entry is the root of a repository rather than something inside one.</summary>
+    /// <param name="entry">The row being drawn.</param>
+    /// <returns>Whether a repository starts here.</returns>
+    private bool IsRepositoryRoot(FsNode entry) =>
+        entry.IsDirectory &&
+        Vcs?.RepositoryFor(entry.Path) is { IsLoaded: true } repository &&
+        string.Equals(repository.Root, entry.Path, StringComparison.Ordinal);
+
     /// <summary>The remote mark for an entry, when the entry is a repository in its own right.</summary>
     /// <param name="entry">The row being drawn.</param>
     /// <returns>The mark, or nothing when the entry is not a repository root.</returns>
@@ -364,14 +398,12 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
     /// </remarks>
     private (string Text, ContextKey Context)? RemoteMarker(FsNode entry)
     {
-        if (!entry.IsDirectory ||
-            Vcs?.RepositoryFor(entry.Path) is not { IsLoaded: true } repository ||
-            !string.Equals(repository.Root, entry.Path, StringComparison.Ordinal))
+        if (!IsRepositoryRoot(entry))
         {
             return null;
         }
 
-        return RemoteMarkerFor(repository.RemoteStatus);
+        return RemoteMarkerFor(Vcs!.RepositoryFor(entry.Path)!.RemoteStatus);
     }
 
     /// <summary>The single character standing for an entry's version-control status.</summary>
@@ -379,6 +411,15 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
     /// <returns>The character and its colour context, or <see langword="null"/> to show nothing.</returns>
     private (string Text, ContextKey Context)? VcsMarker(FsNode entry)
     {
+        // A repository root answers with its remote instead. Ranger splits the two the same way
+        // — a child that is a root sets `has_vcschild` and gets no `vcsstatus`, while a child
+        // inside a repository gets a status and no remote (`container/directory.py:430-437`) —
+        // so a project directory reads `⌂` rather than `⌂?`.
+        if (IsRepositoryRoot(entry))
+        {
+            return null;
+        }
+
         if (Vcs?.RepositoryFor(Directory?.Path ?? entry.Path) is not { IsLoaded: true } repository)
         {
             return null;
