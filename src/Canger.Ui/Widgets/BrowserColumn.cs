@@ -205,48 +205,52 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             available -= 1;
         }
 
-        // A directory that is itself a repository says how it stands against its remote, in its
-        // own column before the file marker — which is the order ranger draws them in
-        // (`gui/widgets/browsercolumn.py:498-506`).
-        if (Vcs is not null && RemoteMarker(entry) is { } remote && available > 4)
-        {
-            screen.Write(left, row, remote.Text,
-                         colorScheme.Resolve(StyleContext.Of(ContextKey.InBrowser,
-                                                             ContextKey.VcsRemote, remote.Context)));
+        // Everything from here is laid out from the right, so the name gets whatever is left.
+        // Ranger builds the same group and in the same order: the version-control marks go on
+        // `predisplay_right`, then the size is *prepended* to them with a separator
+        // (`gui/widgets/browsercolumn.py:400-423`), which reads left to right as
+        // size, gap, remote, file. Only the tag marker stays on the left, on `predisplay_left`.
+        List<(string Text, StyleContext Context)> marks = [];
 
-            left += 1;
-            available -= 1;
+        if (Vcs is not null)
+        {
+            if (RemoteMarker(entry) is { } remote)
+            {
+                marks.Add((remote.Text, StyleContext.Of(ContextKey.InBrowser,
+                                                        ContextKey.VcsRemote, remote.Context)));
+            }
+
+            if (VcsMarker(entry) is { } marker)
+            {
+                marks.Add((marker.Text, StyleContext.Of(ContextKey.InBrowser,
+                                                        ContextKey.VcsFile, marker.Context)));
+            }
         }
 
-        // The version-control marker sits between the number and the name, where the eye
-        // scanning down a listing finds it without having to read across.
-        if (Vcs is not null && VcsMarker(entry) is { } marker && available > 3)
-        {
-            screen.Write(left, row, marker.Text,
-                         colorScheme.Resolve(StyleContext.Of(ContextKey.InBrowser,
-                                                             ContextKey.VcsFile, marker.Context)));
+        int marksWidth = marks.Sum(m => new WideString(m.Text).Width);
 
-            left += 2;
-            available -= 2;
-        }
-
-        // The detail is laid out from the right, so the name gets whatever is left.
         (string title, string detail) = Render(entry);
         string right = ShowSize ? detail : string.Empty;
 
-        // The width the detail claims, which is one more than it draws: the extra column is the
-        // gap that keeps the size off the end of a name long enough to be truncated. Ranger
-        // reserves it the same way, by carrying the space in the string itself —
-        // `infostring.append([" " + infostringdata, ...])` (browsercolumn.py:410-411).
         int detailText = right.Length == 0 ? 0 : new WideString(right).Width;
-        int detailWidth = detailText == 0 ? 0 : detailText + 1;
 
-        // A detail that would leave the name barely legible is dropped instead. The name is
+        // One column between the size and the marks, as ranger's `sep` puts there, and only when
+        // both are present.
+        int betweenSizeAndMarks = detailText > 0 && marksWidth > 0 ? 1 : 0;
+        int drawn = detailText + betweenSizeAndMarks + marksWidth;
+
+        // The whole group claims one column more than it draws: the gap that keeps it off the end
+        // of a name long enough to be truncated. Ranger reserves it the same way, by carrying the
+        // space in the string itself — `" " + infostringdata` (browsercolumn.py:410-411).
+        int detailWidth = drawn == 0 ? 0 : drawn + 1;
+
+        // A group that would leave the name barely legible is dropped instead. The name is
         // what the row is for; a description squeezed in beside one truncated character helps
         // nobody, and the fileinfo linemode routinely produces details longer than the column.
         if (detailWidth > 0 && available - detailWidth <= 2)
         {
             detailWidth = 0;
+            drawn = 0;
         }
 
         int nameWidth = Math.Max(available - detailWidth, 1);
@@ -255,11 +259,22 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
 
         if (detailWidth > 0)
         {
-            // Flush right, so the column reserved above falls between the name and the size
-            // rather than beyond the size. Anchoring on `detailWidth` instead put the gap at the
+            // Flush right, so the column reserved above falls between the name and the group
+            // rather than beyond it. Anchoring on the claimed width instead put the gap at the
             // end of the row, where nothing needed it, and ran `…-truncated~` straight into
             // `2 k`.
-            screen.Write(Bounds.Right - detailText, row, right, style);
+            int x = Bounds.Right - drawn;
+
+            if (detailText > 0)
+            {
+                screen.Write(x, row, right, style);
+                x += detailText + betweenSizeAndMarks;
+            }
+
+            foreach ((string text, StyleContext markContext) in marks)
+            {
+                x += screen.Write(x, row, text, colorScheme.Resolve(markContext));
+            }
         }
     }
 
