@@ -10,10 +10,15 @@ namespace Canger.Core.Tests.FileOperations;
 /// </summary>
 /// <remarks>
 /// A transfer walks its sources and sums their sizes first, so the percentage and the estimate
-/// mean something from the start. These pin two things about that: it finishes before a byte is
-/// written, and it is not separable from the copying that follows — which is what stands between
-/// Canger and a queue-wide estimate, since a job awaiting its turn cannot be asked how big it is
-/// without also starting it.
+/// mean something from the start. These pin two things about a transfer driven directly, with
+/// nothing having sized it in advance: the walk finishes before a byte is written, and copying
+/// begins on the very next step.
+///
+/// The second of those was once the whole story, and it is why the queue-wide estimate needed
+/// work before it could be built: a job awaiting its turn could not be asked how big it was
+/// without also starting it. It can now — see <c>ISizedWork</c> and the queue's sizing channel —
+/// and these two remain to say what happens when nothing has. The first is worth keeping
+/// whatever else changes: a percentage against an unknown total is a lie.
 /// </remarks>
 public class MeasurePhaseTests
 {

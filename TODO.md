@@ -3556,6 +3556,66 @@ would quietly stop being true if the phases were ever reordered.
 separately and then continue without pause, which reads the same in the source and is not the same
 thing at all.
 
+## The status bar now speaks for the whole queue
+
+Two films pasted one after the other showed the second one's percentage restarting from nothing.
+The bar had only ever described whichever film was moving, and it could not describe more than
+that: a job awaiting its turn had no size, and the previous section established that it could not
+be asked for one without also starting it.
+
+**Sizing is now separate from transferring.** `CopyJob` has a `SizingSteps()` walk that sums the
+sources and stops, and `Steps()` drains it first — so a job the queue sized while something else
+ran starts moving data on its first step, and a job driven directly still sizes itself. One walk
+either way; the iterator is shared, so the tree is never read twice.
+
+**The queue sizes what is waiting, in a tenth of each slice.** Not as a task in the task view,
+which is the obvious design and the wrong one: the queue serves one job at a time, so a sizing
+task at the front would take every slice until it finished and stop the copy behind it dead — for
+seconds, on a large tree. Three milliseconds of the thirty instead, which is around a fifth of a
+second of walking per second of real time. The one-job-at-a-time rule does not apply here because
+its reason does not: two walks read metadata and do not halve each other's throughput the way two
+copies do. On a spinning drive they do cost seeks, which is what the ceiling is for.
+
+**The percentage is byte-weighted again.** This was tried once and reverted, because a job waiting
+its turn weighed nothing until it started and the figure *fell* when its size arrived. What
+changed is that the size now arrives a frame or two after the paste rather than minutes later. The
+other half is the guard: until everything outstanding has a size, the old average is used, so the
+weighted figure never starts from a total it is about to revise. A job that cannot be sized at all
+— unpacking an archive, an external command — keeps the average for the whole queue, because a
+byte figure that quietly leaves work out is worse than none.
+
+Measured in a pty, two 1.5 G pastes: **5% → 100% without a step backwards**, `(1 of 2)` becoming
+`(2 of 2)` at the seam.
+
+### Two things the pty found that the unit tests could not
+
+**`387 k/s ETA 1:00:58`, for a second or so after the first film finished.** `CopyProgress` started
+its clock in its constructor — which is when paste is pressed, not when the job runs. A job that
+waited its turn divided its first real bytes by the whole wait. The clock now starts at the first
+file it touches. This was wrong before any of this work and nothing showed it, because with one
+job the wait is a few milliseconds.
+
+**The estimate blinked out at the handover.** A job that has just started has moved nothing and so
+has no rate. The queue keeps the last throughput it saw and uses it until the new job has its own,
+and forgets it when the queue empties — the next paste may be going to a memory stick.
+
+### What it still cannot do
+
+The figures cover the sized part of the queue and mark themselves with a `+` while anything is
+unsized. That window is a frame or two for files and as long as the walk takes for a large tree.
+
+One estimate, one rate. If the running job is going to the SSD and the queued one to a USB drive,
+the estimate assumes the SSD's speed for both and reads low until the second starts. Fixing that
+means measuring per destination, which is not worth it.
+
+A paused job is still counted as work to come. Pausing is deliberate and the user can see what
+they held.
+
+### Noticed and not fixed
+
+`ReportFinishedWork` notifies once per finished job, and each notification overwrites the last, so
+finishing two jobs at once shows `done: 1 files` and nothing about the other. Predates this work.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

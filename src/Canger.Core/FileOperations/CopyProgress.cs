@@ -15,7 +15,7 @@ namespace Canger.Core.FileOperations;
 /// </remarks>
 public sealed class CopyProgress(long totalBytes, int totalFiles)
 {
-    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private readonly Stopwatch _clock = new();
     private readonly TransferRate _rate = new();
 
     private TimeSpan _lastSampleAt = TimeSpan.Zero;
@@ -56,7 +56,17 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
     /// <summary>Throughput, or <see langword="null"/> when nothing has moved yet.</summary>
     public double? BytesPerSecond => _rate.BytesPerSecond;
 
-    /// <summary>How long the operation has been running.</summary>
+    /// <summary>
+    /// How long the operation has been running.
+    /// </summary>
+    /// <remarks>
+    /// From the first file it touched, not from when it was set up. A transfer is built the
+    /// moment the user presses paste and may then sit in the queue behind another one for
+    /// minutes; timing from construction counted that wait as time spent transferring. The rate
+    /// is measured against this clock, so the first sample of a job that had waited its turn
+    /// divided real bytes by the whole wait — a second film starting behind a first reported
+    /// 387 k/s and an hour remaining, for as long as it took the average to recover.
+    /// </remarks>
     public TimeSpan Elapsed => _clock.Elapsed;
 
     /// <summary>
@@ -70,7 +80,19 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
 
     /// <summary>Notes which file is being worked on.</summary>
     /// <param name="path">The file.</param>
-    public void BeginFile(string path) => CurrentFile = path;
+    /// <remarks>
+    /// Where the clock starts, this being the first moment the transfer is doing anything rather
+    /// than waiting to be allowed to.
+    /// </remarks>
+    public void BeginFile(string path)
+    {
+        CurrentFile = path;
+
+        if (!_clock.IsRunning)
+        {
+            _clock.Start();
+        }
+    }
 
     /// <summary>
     /// Records progress within a file whose data is being copied.
@@ -81,6 +103,13 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
         if (bytes <= 0)
         {
             return;
+        }
+
+        // Also here, and not only in `BeginFile`: a caller that reports bytes without announcing
+        // a file would otherwise measure its rate against a clock that had never started.
+        if (!_clock.IsRunning)
+        {
+            _clock.Start();
         }
 
         CompletedBytes += bytes;
@@ -220,15 +249,8 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
     /// <summary>Formats a duration as minutes and seconds, or hours when it is long.</summary>
     /// <param name="duration">The duration.</param>
     /// <returns>A short representation.</returns>
-    public static string FormatDuration(TimeSpan duration)
-    {
-        if (duration < TimeSpan.Zero)
-        {
-            return "--:--";
-        }
-
-        return duration.TotalHours >= 1
-            ? $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}"
-            : $"{duration.Minutes:D2}:{duration.Seconds:D2}";
-    }
+    /// <remarks>
+    /// The same formatting the queue's own figures use, rather than a second copy of it.
+    /// </remarks>
+    public static string FormatDuration(TimeSpan duration) => Model.HumanReadable.Duration(duration);
 }
