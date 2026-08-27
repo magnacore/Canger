@@ -16,8 +16,8 @@ namespace Canger.Tui.Tests.Text;
 /// </remarks>
 public class CombiningMarkTests
 {
-    // हेल्थ इंश्यो — twelve code points, seven columns: five of them are marks applied to the
-    // letters before them, and a terminal that shapes text draws each with its own letter.
+    // हेल्थ इंश्यो — twelve code points, eight columns: four nonspacing marks take none, and the
+    // one spacing mark keeps its own.
     private const string Hindi = "हेल्थ इंश्यो";
 
     [Fact]
@@ -29,23 +29,25 @@ public class CombiningMarkTests
     }
 
     [Fact]
-    public void ASpacingMarkTakesNoColumnEither()
+    public void ASpacingMarkKeepsItsColumn()
     {
-        // The judgement call. Older tables give Mc a column of its own; a terminal that shapes
-        // text draws it as part of the cluster, so का is one column and not two. Reserving the
-        // second put a gap inside every word containing one — मका न मा लिक सा वधा न.
-        Assert.Equal(0, CellWidth.Of(new Rune(0x093E)));   // ◌ा  Devanagari vowel sign aa
-        Assert.Equal(0, CellWidth.Of(new Rune(0x093F)));   // ◌ि  Devanagari vowel sign i
-        Assert.Equal(0, CellWidth.Of(new Rune(0x094B)));   // ◌ो  Devanagari vowel sign o
+        // Tried at zero and reverted. It closes the gaps inside Devanagari words and makes every
+        // name containing one measure narrower than it draws, so the text overruns its column and
+        // writes over the one beside it. A gap is a blemish; bleeding columns are unusable.
+        Assert.Equal(1, CellWidth.Of(new Rune(0x093E)));   // ◌ा  Devanagari vowel sign aa
+        Assert.Equal(1, CellWidth.Of(new Rune(0x093F)));   // ◌ि  Devanagari vowel sign i
+        Assert.Equal(1, CellWidth.Of(new Rune(0x094B)));   // ◌ो  Devanagari vowel sign o
     }
 
     [Fact]
-    public void AClusterIsAsWideAsTheLetterItIsBuiltOn()
+    public void OverReservingIsTheSafeDirection()
     {
-        // The rule the three cases above are instances of.
-        Assert.Equal(1, CellWidth.Of("का"));      // ka + aa
-        Assert.Equal(3, CellWidth.Of("मकान"));    // four code points, one of them a mark
-        Assert.Equal(4, CellWidth.Of("सावधान"));  // six code points, two of them marks
+        // Whether a cluster takes one column or two is a question about the font and the
+        // terminal's shaping, not one the Unicode category can answer. Until it is measured, a
+        // measurement that is too large wastes a column and keeps the grid; one that is too small
+        // destroys it.
+        Assert.True(CellWidth.Of("का") >= 1);
+        Assert.True(CellWidth.Of("मकान") >= 3);
     }
 
     [Fact]
@@ -58,7 +60,7 @@ public class CombiningMarkTests
     public void TheHindiNameMeasuresWhatItRenders()
     {
         Assert.Equal(12, Hindi.EnumerateRunes().Count());
-        Assert.Equal(7, CellWidth.Of(Hindi));
+        Assert.Equal(8, CellWidth.Of(Hindi));
     }
 
     [Fact]
@@ -68,7 +70,7 @@ public class CombiningMarkTests
         // last four columns of the row unwritten.
         ScreenBuffer screen = new(40, 1);
 
-        Assert.Equal(7, screen.Write(0, 0, Hindi));
+        Assert.Equal(8, screen.Write(0, 0, Hindi));
     }
 
     [Fact]
@@ -126,9 +128,9 @@ public class CombiningMarkTests
         // stayed: in the report, a count from the column behind.
         ScreenBuffer screen = new(40, 1);
 
-        Assert.Equal(7, CellWidth.Of(Hindi));
-        Assert.Equal(7, new WideString(Hindi).Width);
-        Assert.Equal(7, screen.Write(0, 0, Hindi));
+        Assert.Equal(8, CellWidth.Of(Hindi));
+        Assert.Equal(8, new WideString(Hindi).Width);
+        Assert.Equal(8, screen.Write(0, 0, Hindi));
     }
 
     [Fact]

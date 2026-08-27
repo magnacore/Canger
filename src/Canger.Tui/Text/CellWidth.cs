@@ -32,13 +32,18 @@ public static class CellWidth
     /// is the gaps that appear inside the words.
     /// </para>
     /// <para>
-    /// Spacing marks (<c>Mc</c>) are zero too, which is the part that is a judgement rather than
-    /// a fact. A Devanagari <c>ा</c> is a spacing mark and older tables give it a column of its
-    /// own; a terminal that shapes text draws it as part of the cluster it belongs to, so
-    /// <c>का</c> is one column and not two. Reserving the second put a gap inside every word
-    /// containing one — <c>मका न मा लिक सा वधा न</c>, with the gaps falling after exactly those
-    /// marks. The rule that produces this: a grapheme cluster is as wide as the character it is
-    /// built on, and everything applied to that character adds nothing.
+    /// Spacing marks (<c>Mc</c>) keep their column, and that was tried the other way round and
+    /// reverted. Zeroing them closed the gaps that appear inside Devanagari words — <c>का</c>
+    /// drawn as one cluster where two columns were reserved — and then every name containing one
+    /// measured narrower than it drew, so text overran its column and the neighbouring column was
+    /// written over. A gap inside a word is a blemish; a listing whose columns bleed into each
+    /// other is unusable, and the second is what zeroing them produced.
+    /// </para>
+    /// <para>
+    /// The lesson is about the shape of the rule rather than the value. Whether a cluster takes
+    /// one column or two is a question about the font and the terminal's shaping, and it cannot
+    /// be answered from the Unicode category alone. Until it is measured against the terminal,
+    /// over-reserving is the safe direction: it wastes a column and keeps the grid.
     /// </para>
     /// <para>
     /// Ranger measures by East Asian Width alone (<c>ext/widestring.py:27</c>) and has the same
@@ -49,7 +54,6 @@ public static class CellWidth
     {
         UnicodeCategory.NonSpacingMark or
         UnicodeCategory.EnclosingMark or
-        UnicodeCategory.SpacingCombiningMark or
         UnicodeCategory.Format => 0,
         _ => IsWide(rune.Value) ? 2 : 1,
     };
