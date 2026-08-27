@@ -88,4 +88,45 @@ public class TransferProgressTests
         Assert.True(together < alone,
                     $"a second transfer should pull the average down: {alone} -> {together}");
     }
+
+    [Fact]
+    public void TheRunningTransferIsStillNamedAfterAnotherFinishesAheadOfIt()
+    {
+        // The reported sequence. A second paste goes to the front and runs; when it finishes the
+        // first is picked up again — but the list still begins with the completed one, and
+        // reading the list's head said "nothing is running" while a copy plainly was. The
+        // description and its time remaining vanished from the status bar at that moment.
+        InMemoryFileSystem fs = new();
+        TaskQueue queue = new();
+
+        QueuedTask first = queue.Add(Job(fs, "/a", "/dest-a", 8));
+        QueuedTask second = queue.Add(Job(fs, "/b", "/dest-b", 2), atFront: true);
+
+        // Run until the one that jumped the queue is done, leaving the first part-finished.
+        for (int i = 0; i < 400 && !second.IsComplete; i++)
+        {
+            queue.Work(TimeSpan.Zero);
+        }
+
+        Assert.True(second.IsComplete, "the second transfer never finished");
+        Assert.False(first.IsComplete, "the first should still have work left");
+
+        Assert.Same(first, queue.Current);
+        Assert.NotNull(queue.Current?.Description);
+    }
+
+    [Fact]
+    public void NothingIsNamedWhenNothingIsRunning()
+    {
+        InMemoryFileSystem fs = new();
+        TaskQueue queue = new();
+        queue.Add(Job(fs, "/a", "/dest-a", 2));
+
+        while (queue.HasWork)
+        {
+            queue.Work(TimeSpan.Zero);
+        }
+
+        Assert.Null(queue.Current);
+    }
 }
