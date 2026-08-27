@@ -32,15 +32,24 @@ public static class CellWidth
     /// is the gaps that appear inside the words.
     /// </para>
     /// <para>
+    /// Spacing marks (<c>Mc</c>) are zero too, which is the part that is a judgement rather than
+    /// a fact. A Devanagari <c>ा</c> is a spacing mark and older tables give it a column of its
+    /// own; a terminal that shapes text draws it as part of the cluster it belongs to, so
+    /// <c>का</c> is one column and not two. Reserving the second put a gap inside every word
+    /// containing one — <c>मका न मा लिक सा वधा न</c>, with the gaps falling after exactly those
+    /// marks. The rule that produces this: a grapheme cluster is as wide as the character it is
+    /// built on, and everything applied to that character adds nothing.
+    /// </para>
+    /// <para>
     /// Ranger measures by East Asian Width alone (<c>ext/widestring.py:27</c>) and has the same
-    /// fault; the terminal is the authority here, not ranger. Spacing marks (<c>Mc</c>) are left
-    /// at one, because they do take a column.
+    /// fault. The terminal is the authority here, not ranger.
     /// </para>
     /// </remarks>
     public static int Of(Rune rune) => Rune.GetUnicodeCategory(rune) switch
     {
         UnicodeCategory.NonSpacingMark or
         UnicodeCategory.EnclosingMark or
+        UnicodeCategory.SpacingCombiningMark or
         UnicodeCategory.Format => 0,
         _ => IsWide(rune.Value) ? 2 : 1,
     };

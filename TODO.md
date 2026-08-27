@@ -3213,6 +3213,22 @@ after a mark a column too far right, which is the gaps.
 Ranger measures by East Asian Width alone (`ext/widestring.py:27`) and has the same fault. The
 terminal is the authority here, not ranger.
 
+### Half a fix, because spacing marks are marks too
+
+Zeroing `Mn`/`Me`/`Cf` fixed the repaint and left the words still broken: `मका न मा लिक सा वधा न`,
+with the gaps falling after exactly the `Mc` characters — spacing combining marks, which I had
+deliberately kept at one column on the grounds that they "do take a column". Older width tables say
+so. A terminal that shapes text does not: it draws `का` as one cluster in one column, so reserving
+a second column puts a space inside the word.
+
+`Mc` is now zero as well, and the rule is worth stating as a rule rather than a list of categories:
+**a grapheme cluster is as wide as the character it is built on, and everything applied to that
+character adds nothing.** `मकान` is four code points and three columns; `सावधान` is six and four.
+
+This is the one judgement in the change rather than a fact. A terminal that gives every spacing
+mark its own column would now see Canger under-reserve. Every terminal that shapes Indic text —
+which is what anyone reading these filenames is using — clusters.
+
 ### I introduced a hang fixing it, and only running it caught that
 
 `CellWidth.Of` returning 0 was correct and not sufficient. `WideString` held one array slot per
