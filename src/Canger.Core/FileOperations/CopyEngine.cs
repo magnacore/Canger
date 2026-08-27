@@ -206,6 +206,56 @@ public sealed class CopyEngine(IFileSystem fileSystem)
     /// </remarks>
     internal long KernelRun { get; set; } = 8L * 1024 * 1024;
 
+    /// <summary>The smallest run to ask the kernel for.</summary>
+    /// <remarks>
+    /// One block — the same amount the fallback path moves per read and write, and that path was
+    /// reported as staying responsive on the very device this floor exists for. Going lower would
+    /// spend more on syscalls than on copying; stopping higher would leave the kernel path coarser
+    /// than the one known to behave.
+    /// </remarks>
+    internal long SmallestKernelRun { get; set; } = BlockSize;
+
+    /// <summary>
+    /// Chooses the next run length from how long the last one took.
+    /// </summary>
+    /// <param name="current">The length just used.</param>
+    /// <param name="elapsed">How long that call took.</param>
+    /// <param name="budget">How long a piece of work should take.</param>
+    /// <param name="smallest">The floor.</param>
+    /// <param name="largest">The ceiling.</param>
+    /// <returns>The length to ask for next.</returns>
+    /// <remarks>
+    /// <para>
+    /// A fixed run cannot suit both a solid-state disc and a USB one. Eight megabytes is a
+    /// fraction of a second on the first and can be several seconds on the second — and
+    /// <c>copy_file_range</c> does not return until it has moved what it was asked for, so that
+    /// call is time the interface cannot have. Reported as a copy within one USB disc being
+    /// sluggish while the same file to an internal disc was not: across filesystems the kernel
+    /// path is refused and the copy falls back to sixteen-kilobyte blocks, which is why only one
+    /// of the two was affected.
+    /// </para>
+    /// <para>
+    /// Doubling and halving rather than solving for a target: the measurement is noisy, and a
+    /// rule that moves gently is easier to trust than one that swings.
+    /// </para>
+    /// </remarks>
+    internal static long NextKernelRun(long current, TimeSpan elapsed, TimeSpan budget,
+                                       long smallest, long largest)
+    {
+        long next = current;
+
+        if (elapsed > budget)
+        {
+            next = current / 2;
+        }
+        else if (elapsed + elapsed < budget)
+        {
+            next = current * 2;
+        }
+
+        return Math.Clamp(next, smallest, Math.Max(smallest, largest));
+    }
+
     /// <summary>One file copy in progress, able to stop and carry on.</summary>
     /// <remarks>
     /// Holds what the old loops held in locals — the handles, the offset, how much has moved —
@@ -260,6 +310,9 @@ public sealed class CopyEngine(IFileSystem fileSystem)
         private bool _started;
         private bool _kernel;
 
+        /// <summary>The run length in use, adjusted to what the device turns out to manage.</summary>
+        private long _run;
+
         public HandleTransfer(CopyEngine engine, string source, string destination,
                               bool destinationIsOurs, Action<long>? onProgress)
             : base(engine, destination, destinationIsOurs)
@@ -312,6 +365,11 @@ public sealed class CopyEngine(IFileSystem fileSystem)
                 }
 
                 _kernel = Engine.AllowKernelCopy;
+
+                // Modest to begin with. A slow device is found out on the first call rather than
+                // after a multi-second one, and a fast device climbs to the ceiling in a handful
+                // of doublings.
+                _run = Math.Clamp(256 * 1024, Engine.SmallestKernelRun, Engine.KernelRun);
             }
 
             // `do`, not `while`: a piece always moves something. A budget already spent would
@@ -370,8 +428,13 @@ public sealed class CopyEngine(IFileSystem fileSystem)
             int destinationFd = (int)_destinationHandle!.DangerousGetHandle();
 
             // Bounded, so a slow disc cannot disappear into a single call.
-            nuint want = (nuint)Math.Min(Engine.KernelRun, _length - _copied);
+            nuint want = (nuint)Math.Min(_run, _length - _copied);
+
+            long before = Environment.TickCount64;
             nint moved = Libc.CopyFileRange(sourceFd, 0, destinationFd, 0, want, 0);
+
+            _run = NextKernelRun(_run, TimeSpan.FromMilliseconds(Environment.TickCount64 - before),
+                                 Engine.StepBudget, Engine.SmallestKernelRun, Engine.KernelRun);
 
             if (moved < 0)
             {
