@@ -1414,23 +1414,13 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>Says how finished work turned out, then clears it from the queue.</summary>
     private void ReportFinishedWork()
     {
-        foreach (QueuedTask task in Tasks.Tasks.Where(t => t.IsComplete).ToList())
+        // One message for the whole run. Reporting each job in turn meant each report replacing
+        // the last, so a transfer that had lost a file was reported and then unreported in the
+        // same frame by a transfer that finished cleanly beside it.
+        if (Core.FileOperations.FinishedWork.Describe(
+                [.. Tasks.Tasks.Where(t => t.IsComplete)]) is var (message, isError))
         {
-            if (task.State == TaskState.Failed && task.Error is { } error)
-            {
-                Notify($"{task.Description}: {error.Message}", isError: true);
-            }
-            else if (task.Work is Core.FileOperations.CopyJob { Errors.Count: > 0 } job)
-            {
-                Notify($"{job.Errors.Count} problem(s): {job.Errors[0]}", isError: true);
-            }
-            else if (task.Work is Core.FileOperations.CopyJob finished)
-            {
-                string strategies = finished.Progress.DescribeStrategies();
-                Notify(strategies.Length > 0
-                    ? $"done: {finished.Progress.CompletedFiles} files, {strategies}"
-                    : $"done: {finished.Progress.CompletedFiles} files");
-            }
+            Notify(message, isError);
         }
 
         Tasks.RemoveCompleted();
