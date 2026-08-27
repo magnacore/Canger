@@ -3782,6 +3782,54 @@ failures a person can act on are translated — busy, wrong passphrase, already 
 mounted. Anything else is passed through untouched rather than paraphrased into vagueness: the raw
 text is at least the truth, and is what a search will match.
 
+## Measured: unmount is the sync, and no `sync` should be added
+
+Asked whether Canger runs `sync` before unmounting or ejecting. It does not, and adding one would
+be a pessimisation. Verified rather than asserted, on a loop-backed ext4 filesystem attached with
+`udisksctl loop-setup` — which mounts a real filesystem without root and without going near the
+real drive.
+
+512 MB written to the mounted filesystem, no sync anywhere:
+
+| | Dirty | unmount took |
+|---|---|---|
+| after writing 512 MB | **525 172 kB** | |
+| `udisksctl unmount --no-user-interaction` | | **0.544 s** |
+| after the unmount | **1 744 kB** | |
+| control: unmount again, nothing dirty | 436 kB | **0.071 s** |
+
+The unmount **blocks on the writeback**: half a second with 512 MB outstanding, a twentieth of
+that with none, and every dirty page gone afterwards. Remounted, the 512 MB checksums identically.
+
+The other half is documented rather than measured — `man 1 udisksctl` on `power-off`: *"requesting
+that in-flight buffers and caches are committed to stable storage"*, which also reaches the drive's
+own cache, where a bare `sync` does not.
+
+**Why adding `sync` would be worse.** `sync(1)` is global: it waits for dirty data on every
+mounted filesystem. Ejecting a stick during a large write to the internal disc would block until
+that finished, for no benefit to the stick. The targeted form is what unmount already does.
+
+The one case where none of this helps is unplugging without ejecting, and no code can fix that —
+which is the argument for the key existing.
+
+### Two things confirmed along the way
+
+**The busy refusal is real, and refuses rather than forces.** Holding a file open with `tail -f`
+and asking for the unmount: exit 1, data intact, and the error verbatim —
+`Error unmounting /dev/loop0: GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: Error
+unmounting /dev/loop0: target is busy`. The same shape reported from the real drive, and
+`DeviceActions.Explain` matches it.
+
+**A loop device is not offered as removable.** `lsblk` reports it `type=loop, hotplug=false,
+tran=null`, and the lister only considers `type=disk` with hotplug or a removable transport. An
+accidental confirmation of the filter from a direction the fixtures do not cover.
+
+### Still not verified
+
+`power-off` itself, which does not apply to a loop device — the eject chain has been run as far as
+`unmount`, and the last step is documented rather than measured. Everything was cleaned up:
+unmounted, `loop-delete`, image removed, nothing left in `/media`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
