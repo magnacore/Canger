@@ -190,4 +190,86 @@ public sealed class ResumableCopyTests : IDisposable
         Assert.False(result.Succeeded);
         Assert.Equal(1024, new FileInfo(source).Length);
     }
+
+    // ---- how much is asked of the kernel at once ------------------------------------
+
+    private static readonly TimeSpan Budget = TimeSpan.FromMilliseconds(12);
+
+    [Fact]
+    public void ASlowDeviceIsAskedForLess()
+    {
+        // The reported case: within one USB disc, read and write share a spindle and a large run
+        // takes seconds. copy_file_range does not return until it has moved what it was asked
+        // for, so that time is time the interface cannot have.
+        long next = CopyEngine.NextKernelRun(8 << 20, TimeSpan.FromMilliseconds(900), Budget,
+                                             64 << 10, 8 << 20);
+
+        Assert.Equal(4 << 20, next);
+    }
+
+    [Fact]
+    public void ItKeepsShrinkingUntilTheRunFitsTheBudget()
+    {
+        // One halving is not enough when the first run was a hundred times too long.
+        long run = 8 << 20;
+        for (int i = 0; i < 12; i++)
+        {
+            run = CopyEngine.NextKernelRun(run, TimeSpan.FromMilliseconds(900), Budget,
+                                           64 << 10, 8 << 20);
+        }
+
+        Assert.Equal(64 << 10, run);
+    }
+
+    [Fact]
+    public void AFastDeviceIsAskedForMore()
+    {
+        // And climbs back, so a solid-state disc is not held to a slow disc's run length.
+        long next = CopyEngine.NextKernelRun(256 << 10, TimeSpan.FromMilliseconds(1), Budget,
+                                             64 << 10, 8 << 20);
+
+        Assert.Equal(512 << 10, next);
+    }
+
+    [Fact]
+    public void ARunThatFitsIsLeftAlone()
+    {
+        // Neither too slow nor twice as fast as it needs to be: nothing to correct.
+        Assert.Equal(1 << 20,
+                     CopyEngine.NextKernelRun(1 << 20, TimeSpan.FromMilliseconds(9), Budget,
+                                              64 << 10, 8 << 20));
+    }
+
+    [Fact]
+    public void ItNeverShrinksBelowTheFloorOrGrowsPastTheCeiling()
+    {
+        // Below the floor the syscalls would cost more than the copying; above the ceiling is the
+        // freeze this is here to prevent.
+        Assert.Equal(64 << 10,
+                     CopyEngine.NextKernelRun(64 << 10, TimeSpan.FromSeconds(5), Budget,
+                                              64 << 10, 8 << 20));
+
+        Assert.Equal(8 << 20,
+                     CopyEngine.NextKernelRun(8 << 20, TimeSpan.Zero, Budget, 64 << 10, 8 << 20));
+    }
+
+    [Fact]
+    public void ACopyStillComesOutIdenticalWhateverTheRunLength()
+    {
+        // The adjustment changes how much is asked for at a time and nothing else.
+        LocalFileSystem fs = new();
+        string source = Source();
+
+        foreach (long run in new long[] { 64 << 10, 1 << 20, 8 << 20 })
+        {
+            CopyEngine engine = new(fs) { AllowReflink = false, KernelRun = run };
+            string destination = At($"copy-{run}.bin");
+
+            FileCopyResult result = engine.CopyFile(source, destination, null,
+                                                    TestContext.Current.CancellationToken);
+
+            Assert.True(result.Succeeded, result.Error);
+            Assert.Equal(File.ReadAllBytes(source), File.ReadAllBytes(destination));
+        }
+    }
 }

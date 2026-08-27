@@ -3467,6 +3467,36 @@ roughly right — which is the whole complaint.
 The `Weight` member added for it was removed rather than left unused. This file has four entries
 about mechanisms nobody consumed; it did not need a fifth.
 
+## A copy within one USB disc was still sluggish
+
+Reported after the resumable copy landed: a film from the USB disc to the internal one kept the
+interface responsive, but the same film copied *within* the USB disc did not.
+
+The difference is which path the copy takes. Across filesystems the kernel refuses
+`copy_file_range` — `EXDEV` — so the copy falls back to sixteen-kilobyte blocks with the deadline
+checked between each, and stays responsive. Within one filesystem the kernel path is available, and
+it was being asked for eight megabytes at a time. `copy_file_range` does not return until it has
+moved what it was asked for, so on a spindle serving both the read and the write, one call was
+most of a second. Pausing between calls cannot help when a call is the problem.
+
+The run length now adapts: it starts at a quarter of a megabyte, halves when a call overruns the
+step budget and doubles when a call takes less than half of it, between one block and eight
+megabytes. A solid-state disc climbs to the ceiling in a few doublings; a slow one settles at
+whatever it can manage.
+
+The floor is one block, deliberately — the same amount the fallback path moves per read, and that
+path is the one reported as responsive on this very device. Going lower would spend more on
+syscalls than on copying; stopping higher would leave the kernel path coarser than the one already
+known to behave.
+
+Doubling and halving rather than solving for the budget directly: the measurement is noisy, and a
+rule that moves gently is easier to trust than one that swings.
+
+Six tests on the rule, and one that copies the same file at three run lengths and compares the
+bytes — the adjustment changes how much is asked for at a time and must change nothing else. The
+device that provokes it is a backup disc belonging to the user, so the real confirmation is theirs
+to make.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
