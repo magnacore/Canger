@@ -3172,6 +3172,32 @@ the shipped plugin and asks the registered linemode for glyphs, which is the sam
 that does not build would leave the linemode simply absent, and `default_linemode devicons` would
 fall back with no complaint anyone would notice.
 
+## A directory of hidden files counted as empty
+
+Reported: `~/Downloads/MEGA` holds two hidden items; ranger shows 2 and Canger showed 0.
+
+Ranger's count is `self.size = len(filelist)` straight from `os.listdir`
+(`container/directory.py:391`) — every name on disk, before any filtering. Canger counted the
+*displayed* listing.
+
+Which made the number depend on something the user cannot see. Unvisited, a directory reported the
+shallow count, which counts everything; once loaded it reported the filtered listing. So `MEGA`
+read 2 until you looked inside it and 0 ever after. Measured in a pty before the fix: `MEGA=2` at
+startup, `MEGA=0` after entering and leaving.
+
+### Fixing `Size` fixed nothing anyone could see
+
+`DirectoryNode.Size` was the obvious place and the change was right, and the pty still showed 0 —
+because the column does not read `Size`. `LinemodeText.Size` asks for `DirectoryNode.Count`, which
+is `_entries.Count`, the displayed listing. Two properties, two call sites, one of them the one
+that matters.
+
+`Count` stays as it is: the cursor and the `3/48` position indicator need the number of *rows*.
+The column now asks for `Size`, which for a directory is exactly "how much is in here".
+
+The order that saved this: change, then **run the thing**, then write the test. Had the unit test
+come first it would have passed against `Size` and the report would have stayed open.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

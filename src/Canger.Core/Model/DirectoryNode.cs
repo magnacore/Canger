@@ -183,11 +183,20 @@ public sealed class DirectoryNode : FsNode
 
     /// <inheritdoc />
     /// <remarks>
+    /// <para>
     /// A directory has no meaningful byte size of its own, so the entry count is reported
-    /// instead: the loaded listing's own count where there is one, otherwise whatever
-    /// <see cref="EnsureCounted"/> found.
+    /// instead — everything in it, not what a filter or <c>show_hidden</c> would leave.
+    /// </para>
+    /// <para>
+    /// Counting the <em>filtered</em> listing made the number depend on whether the directory
+    /// happened to have been loaded: unvisited it reported what <see cref="EnsureCounted"/>
+    /// found, which counts everything, and after a visit it reported the filtered count. A
+    /// directory holding two hidden files read 2 until you looked inside it and 0 afterwards.
+    /// Ranger has no such split — <c>self.size = len(filelist)</c> straight from
+    /// <c>os.listdir</c> (<c>container/directory.py:391</c>), which is every name on disk.
+    /// </para>
     /// </remarks>
-    public override long? Size => IsLoaded ? _entries.Count : _shallowCount;
+    public override long? Size => IsLoaded ? _allEntries.Count : _shallowCount;
 
     private int? _shallowCount;
     private bool _counted;
