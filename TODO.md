@@ -3628,6 +3628,28 @@ was not.
 
 Confirmed live: two pastes of one file now report `done: 2 files`.
 
+## Figures that stay in their columns
+
+Every field on the transfer line changes width as it counts — `5%` to `48%` to `100%`, `159 M` to
+`1.08 G`, `671 M/s` to `1.18 G/s` — and each change shoved everything after it sideways. The rate
+and the time remaining, which are the two a person actually watches, jittered several times a
+second.
+
+Each field is now given a width wide enough for anything it can hold. The widths suit decimal
+prefixes, which is what this line uses: three significant figures and a one-letter unit reach six
+characters at their widest, `88.5 M`, because the count rolls over at a thousand rather than at
+1024. Padding only grows a field, so a value that somehow outgrew its column is still shown whole
+— untidy beats wrong. Whichever field comes last needs no width at all, since nothing follows it
+to be pushed along.
+
+It was written twice, once in `CopyProgress.Describe` and once in `QueueSummary.Describe`, so the
+line about one transfer and the line about all of them could drift apart. Both now go through
+`TransferFigures.Describe`.
+
+Measured in a pty across a two-job paste: every column held through the total being revised from
+900 M to 1.8 G, through the completed count rolling from M to G, and through the rate changing
+width.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

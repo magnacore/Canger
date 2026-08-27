@@ -165,30 +165,13 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
     /// Describes the progress the way the task view shows it.
     /// </summary>
     /// <returns>A single line of text.</returns>
-    public string Describe()
-    {
-        System.Text.StringBuilder text = new();
-
-        text.Append(CultureInfo.InvariantCulture, $"{Fraction * 100:F0}%");
-
-        if (TotalBytes > 0)
-        {
-            text.Append(CultureInfo.InvariantCulture,
-                        $"  {FormatBytes(CompletedBytes)}/{FormatBytes(TotalBytes)}");
-        }
-
-        if (BytesPerSecond is { } rate)
-        {
-            text.Append(CultureInfo.InvariantCulture, $"  {FormatBytes((long)rate)}/s");
-        }
-
-        if (Estimate is { } estimate)
-        {
-            text.Append(CultureInfo.InvariantCulture, $"  ETA {FormatDuration(estimate)}");
-        }
-
-        return text.ToString();
-    }
+    /// <remarks>
+    /// The columns are the queue's, so that a line about one transfer and a line about all of
+    /// them are laid out alike — and so that neither jitters as its figures change width.
+    /// </remarks>
+    public string Describe() =>
+        Model.TransferFigures.Describe(Fraction, CompletedBytes, TotalBytes, BytesPerSecond,
+                                       Estimate);
 
     /// <summary>
     /// Describes how the files were handled, when that is worth saying.
