@@ -3128,6 +3128,40 @@ repository cache is keyed by the path string, so it registered the repository un
 never produced and nothing matched — the test failed for a reason that had nothing to do with the
 code under test. `Path.GetFullPath` before anything else.
 
+## Devicons as a plugin
+
+`tools/generate-devicons-plugin.py` emits a self-contained plugin from the same
+`ranger_devicons/devicons.py` the core tables come from — 88 exact names, 227 extensions, 15
+directory names — with its own dictionaries and no dependency on Canger's internals, so it can sit
+in `~/.config/canger/plugins/` and be edited freely.
+
+It registers under the name `devicons`, which is the built-in's name, and `LinemodeRegistry.Register`
+overwrites a mode of the same name — so it replaces the built-in with no other change and
+`default_linemode devicons` keeps working.
+
+Verified by comparing the private-use glyphs in the rendered output with and without the plugin
+present, in two directories: identical sets both times, 6 and 11 glyphs.
+
+### Measuring it needed three tries, again
+
+Searching the escape-stripped output for the character before a filename found nothing, twice,
+and the second attempt "proved" the two builds identical while both showed no glyphs at all.
+Rendering is differential: the glyph and the name are written in separate runs with a cursor move
+between them, so they are not adjacent in the stream even after the escapes are removed. Counting
+the private-use codepoints present is indifferent to where they were written.
+
+**A comparison that reports "identical" while measuring nothing is worse than no comparison** — it
+reads as evidence. The check that saved it was asking whether the thing being compared was there
+at all.
+
+### Still built in as well
+
+The core `DeviconsLinemode` remains, so devicons works without the plugin. That is a divergence
+from ranger, where no plugin means no icons, and it is now duplication: two copies of the same
+table, generated from the same source by two scripts. Whether to delete the core one is a real
+decision — it would match ranger and remove the duplication, and it would mean a `cc.conf` asking
+for `devicons` gets nothing unless the plugin ships in `config/plugins/` too.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
