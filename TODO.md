@@ -3528,6 +3528,34 @@ because it never puts the description in the status bar at all; that is Canger's
 fixed, because which way to resolve it is a judgement: a queue-wide ETA is the honest companion to
 a queue-wide bar, but the per-file figure is the one that tells you whether to wait for *this* file.
 
+## Verified: measuring cannot be driven without also starting the copy
+
+Before building a queue-wide estimate, the thing to check was whether a transfer's measuring phase
+can be run on its own — because a queue-wide estimate needs the size of jobs that have not started.
+
+It cannot, as written. `CopyJob.Steps` walks the sources and sums their sizes, then falls straight
+into the copying loop in the same enumerator. Measured with three files: the total is complete at
+**step 3** and the first byte is written at **step 4**. Adjacent, with nothing announcing the
+boundary.
+
+Nor can a caller predict the step to stop at. Measuring yields once per file *found*, so a single
+directory source yields as many times as it holds files — the step count is exactly the thing being
+measured.
+
+So the design proposed for a queue-wide estimate needs one more piece than it appeared to: the two
+phases have to be separated first — a measuring pass the queue can run to completion for every
+queued job, and a copying pass that skips it when the total is already known. That is a change to
+`CopyJob`'s shape, not just an addition to the queue.
+
+Both facts are now tests: nothing is written until the whole transfer has been measured, and
+copying begins on the very next step. The first is an invariant worth keeping whatever happens to
+the estimate — a percentage against an unknown total is a lie — and the second is the one that
+would quietly stop being true if the phases were ever reordered.
+
+**Worth the check.** The claim was "I've read that it yields separately"; what it does is yield
+separately and then continue without pause, which reads the same in the source and is not the same
+thing at all.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
