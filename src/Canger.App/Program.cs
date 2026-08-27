@@ -539,6 +539,23 @@ internal static class Program
     /// This is how to answer "did my cc.conf take effect?" without hunting through a full-screen
     /// interface for the evidence.
     /// </remarks>
+    /// <summary>The headline for the binding check.</summary>
+    /// <param name="unresolved">How many bound commands the registry could not find.</param>
+    /// <param name="hooksPending">Whether any plugin's <c>OnInit</c> is still to run.</param>
+    /// <returns>The line to print.</returns>
+    /// <remarks>
+    /// The distinction is the whole point. A plugin's <c>OnInit</c> runs after this report, so an
+    /// alias it adds is absent here and present in a real session — which makes "does not exist"
+    /// a false accusation against every such binding, and a check that cries wolf is one people
+    /// learn to skip. With no hooks pending the check knows the answer and says so plainly.
+    /// </remarks>
+    internal static string BindingSummary(int unresolved, bool hooksPending) => unresolved switch
+    {
+        0 => "browser bindings: every command resolves",
+        _ when hooksPending => $"browser bindings: {unresolved} could not be checked here",
+        _ => $"browser bindings: {unresolved} name a command that does not exist",
+    };
+
     private static int ReportConfiguration(CangerPaths paths, ConfigurationReader reader,
                                            CangerSettings settings, KeyMaps keyMaps,
                                            CommandRegistry commands, PluginHost plugins)
@@ -634,9 +651,15 @@ internal static class Program
             }
         }
 
-        Console.WriteLine(broken.Count == 0
-            ? "browser bindings: every command resolves"
-            : $"browser bindings: {broken.Count} name a command that does not exist");
+        // A plugin's `OnInit` runs once the interface exists, which is after this report, so any
+        // alias it adds there is absent here and present in a real session. Whether an unresolved
+        // name is broken is therefore not knowable from here — and saying "does not exist" anyway
+        // was a false accusation against every such binding. A check that cries wolf is a check
+        // people learn to skip, which is how thirty-six genuinely dead bindings once went unseen
+        // behind a different fault in this same report.
+        bool hooksPending = plugins.Plugins.Count > 0;
+
+        Console.WriteLine(BindingSummary(broken.Count, hooksPending));
 
         foreach ((string keys, string line) in broken)
         {
@@ -646,15 +669,14 @@ internal static class Program
             Console.WriteLine($"  {keys,-14} {line.Split('#', 2)[0].TrimEnd()}");
         }
 
-        // A plugin's OnInit runs once the interface exists, which is after this report — so any
-        // alias or command it adds there is genuinely absent *here* and present in a real
-        // session. Saying so beats listing a working binding as broken with no explanation.
-        if (broken.Count > 0 && plugins.Plugins.Count > 0)
+        if (broken.Count > 0 && hooksPending)
         {
             Console.WriteLine();
-            Console.WriteLine($"  ({plugins.Plugins.Count} plugin hook(s) have not run: this "
-                              + "report is made before the interface exists, so a command or "
-                              + "alias added in OnInit is not counted above.)");
+            Console.WriteLine(
+                $"  {plugins.Plugins.Count} plugin hook(s) have not run — this report is made "
+                + "before the interface exists, so a command or alias a plugin adds in OnInit is "
+                + "not visible here. Anything above that a plugin defines works in a real "
+                + "session; anything it does not is a dead binding.");
         }
     }
 
