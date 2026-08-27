@@ -3320,6 +3320,63 @@ their own percentages — `76% copying aaa` above `0% copying aaa` — and the q
 time, as ranger's loader does. The status bar averages them, so a second transfer starting pulls the
 bar back rather than restarting it.
 
+## Copying one large file froze the whole interface
+
+Reported: a film copied from a USB disc froze Canger from `pp` until the copy finished — no
+progress bar, no keys, no way to cancel.
+
+`CopyJob.TransferFile` called `_engine.CopyFile` once per file, and that call returned when the
+file was done. The task queue's time slice therefore only ever fell *between* files, so a single
+large file took the main loop with it for the whole transfer. The progress figures were updating
+the entire time; nothing was running that could draw them. Ranger's copy is a generator that yields
+inside its byte loop for exactly this reason (`core/loader.py:120-160`).
+
+`copy_file_range` made it worse: the old loop asked the kernel for the whole remainder in one call,
+and that call does not return until it has moved it. One syscall was the entire freeze.
+
+### The shape of the fix
+
+`CopyEngine.CopyFileSteps` copies a piece at a time and hands control back between pieces. A piece
+is a time budget rather than a byte count, because the same number of bytes takes wildly different
+times on an SSD and on a USB disc; and a piece always moves *something*, so a budget already spent
+cannot hand back control having done nothing.
+
+`CopyFile` is now a drain of that iterator, which is why its twenty-two call sites are untouched
+and why the two cannot drift: it is the same copy, run without pausing.
+
+### The state that did not exist before
+
+A half-copied file used to be unobservable — the copy either finished or threw, and one `catch`
+removed the remains. Pausing makes it reachable, because a caller can simply stop asking. So
+cleanup moved out of the `catch` and into `Transfer.Dispose`, reached from a `finally` around the
+whole enumeration: failure, cancellation and plain abandonment all arrive at the same place, and a
+destination this engine created is removed unless the copy finished and succeeded. A destination
+that was *already there* is never removed — `destinationIsOurs` is still taken before anything is
+opened.
+
+Verified by deleting that cleanup and watching three tests fail, one of them an audit-era test that
+predates this change.
+
+`yield return` cannot appear inside a `try` with a `catch`, which is what forced this shape rather
+than a lightly edited loop — and the shape turned out to be the safer one. The alternative
+considered and rejected was moving the copy to a worker thread: it would have left the audited
+byte-moving code untouched, but cleanup would then race with quitting.
+
+### Measured
+
+| | writes to the terminal during the copy | longest silence |
+|---|---|---|
+| before | 2 | 366 ms — the whole copy |
+| after | 11 | 40 ms |
+
+That is on tmpfs. On a USB disc at thirty megabytes a second the same silence is half a minute,
+which is what was reported. A 900 MB copy came out byte-identical, and the task view opens a tenth
+of a second into a copy that used to accept no keys at all.
+
+Seven new tests, and the step size is a seam so they exercise the pausing on any disc: a time
+budget means a fast one finishes a test file inside a single piece, which is right for the program
+and useless for a test.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
