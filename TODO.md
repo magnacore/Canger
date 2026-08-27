@@ -3733,6 +3733,55 @@ media or phones, and not the internal disks Thunar also lists. The size column f
 `binary_size_prefix` like the rest of Canger, so it says `4 T` where lsblk says `3.6T` — the same
 4 000 752 599 040 bytes counted in thousands rather than in 1024s.
 
+## Every key in the device list ran twice
+
+`q` in the device list closed the list and then quit Canger. The key routing was a chain of
+`if`s, each ending in `continue`, and the branch added for the device view had no `continue` — so
+the key was handled by the device map and then handled again by the browser map. Both halves did
+exactly what they were bound to do. Nothing failed, nothing was logged, and the whole suite was
+green: 1703 tests, none of which can reach `Browser`'s input loop.
+
+`m` set a bookmark, `u` started an unmark, `<CR>` opened whatever the browser cursor was on. `q`
+is simply the one that was noticed, because quitting is hard to miss.
+
+**Fixed structurally rather than by adding the missing keyword.** The chain is now one
+`FocusedOn(...)` call and a `switch`, so "exactly one part of the interface gets the key" is
+decided in a function that can be stated and tested instead of being a property of a chain
+written in the right order and left in the right way. `InternalsVisibleTo` was already there for
+precisely this — Browser needs a real terminal to construct, so its decisions are tested apart
+from its drawing.
+
+Reproduced and fixed in a pty, both ways round: with the `continue` removed, `<F9>` then `q` exits;
+with it restored, it does not, while `q` in the browser still does.
+
+The pty probe had to be fixed first. It polled `waitpid` after a read loop that ends for its own
+reasons, and reported "still running" for a process that had plainly quit — so the first three
+attempts to reproduce this said the bug was not there. It now treats the pty closing as the exit,
+which is what actually happens. *Twice now the instrument has been the thing that was wrong.*
+
+## Ejecting a drive Canger is looking at
+
+`e` on a mounted drive reported `GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: target is
+busy`. A file manager showing a directory is a reason that directory cannot be unmounted, and
+Canger standing in the way of its own eject is no use to anybody — Thunar handles it by leaving
+first, which is why ejecting from Thunar lands you in your home directory.
+
+Unmount and eject now do the same: every tab looking at the drive is sent home, the cached
+listings for it are dropped, and any preview taken from it is thrown away. Anything **else** still
+holding the drive — a video playing, an editor with a file open — is beyond reach, and the unmount
+then fails and says so, which is the right answer.
+
+Not confirmed against the drive itself: it was unmounted by the time this was looked at, so what
+actually held it could not be established. What is established is that Canger is no longer a
+candidate.
+
+**And the error is now in English.** `Error unmounting /dev/dm-2:
+GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: Error unmounting /dev/dm-2: target is busy`
+says one thing three times, none of them in English and none of them what to do about it. Only
+failures a person can act on are translated — busy, wrong passphrase, already mounted, not
+mounted. Anything else is passed through untouched rather than paraphrased into vagueness: the raw
+text is at least the truth, and is what a search will match.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

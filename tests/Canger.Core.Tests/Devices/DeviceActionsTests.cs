@@ -205,4 +205,41 @@ public class DeviceActionsTests
         // Retrying a busy unmount with a terminal would only fail again, more noisily.
         Assert.False(DeviceActions.NeedsAuthorisation(output));
     }
+
+
+    [Fact]
+    public void ABusyDriveIsExplainedInEnglish()
+    {
+        // What udisks actually says: one thing three times, none of them in English, and none of
+        // them what to do about it.
+        const string Raw =
+            "Error unmounting /dev/dm-2: GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: "
+            + "Error unmounting /dev/dm-2: target is busy";
+
+        string? plain = DeviceActions.Explain(Raw);
+
+        Assert.NotNull(plain);
+        Assert.DoesNotContain("GDBus", plain, StringComparison.Ordinal);
+        Assert.Contains("still in use", plain, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AWrongPassphraseIsExplained()
+    {
+        Assert.Equal("wrong passphrase",
+                     DeviceActions.Explain(
+                         "Error unlocking /dev/sda1: Failed to activate device: "
+                         + "Operation not permitted"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Error mounting: some cause nobody has seen before")]
+    public void AFailureWithNoPlainVersionIsLeftAlone(string? error)
+    {
+        // Passed through untouched rather than paraphrased into vagueness: the raw text is at
+        // least the truth, and is what a search engine will match.
+        Assert.Null(DeviceActions.Explain(error));
+    }
 }
