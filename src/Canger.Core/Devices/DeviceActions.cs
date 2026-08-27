@@ -157,6 +157,52 @@ public static class DeviceActions
             || output.Contains("NotAuthorized", StringComparison.Ordinal));
 
     /// <summary>
+    /// Turns a udisks failure into something a person can act on.
+    /// </summary>
+    /// <param name="error">What the program printed.</param>
+    /// <returns>The plain version, or <see langword="null"/> when there is nothing to translate.</returns>
+    /// <remarks>
+    /// <c>Error unmounting /dev/dm-2: GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy:
+    /// Error unmounting /dev/dm-2: target is busy</c> says one thing three times, none of them in
+    /// English, and none of them what to do about it. Only the failures a person can actually do
+    /// something about are translated; anything else is passed through untouched rather than
+    /// paraphrased into vagueness.
+    /// </remarks>
+    public static string? Explain(string? error)
+    {
+        if (error is not { Length: > 0 })
+        {
+            return null;
+        }
+
+        if (error.Contains("DeviceBusy", StringComparison.Ordinal)
+            || error.Contains("target is busy", StringComparison.OrdinalIgnoreCase))
+        {
+            return "still in use — something outside Canger has a file open on it. "
+                   + "Close it and try again.";
+        }
+
+        if (error.Contains("Failed to activate", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("No key available", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("wrong passphrase", StringComparison.OrdinalIgnoreCase))
+        {
+            return "wrong passphrase";
+        }
+
+        if (error.Contains("AlreadyMounted", StringComparison.Ordinal))
+        {
+            return "already mounted";
+        }
+
+        if (error.Contains("NotMounted", StringComparison.Ordinal))
+        {
+            return "not mounted";
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Says why an action must not go ahead.
     /// </summary>
     /// <param name="device">The volume the user asked about.</param>

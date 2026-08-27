@@ -109,10 +109,95 @@ public abstract class DeviceActionCommand : CangerCommand
                 FileManager.RunProgram(command.Command.Replace(
                     " --no-user-interaction", string.Empty, StringComparison.Ordinal));
             }
+            else if (DeviceActions.Explain(task.Error) is { } plain)
+            {
+                // After the task's own report rather than instead of it: this replaces the raw
+                // GDBus line, which says one thing three times and none of them in English.
+                FileManager.Notify($"{command.Description}: {plain}", isError: true);
+            }
 
             FileManager.Devices.Reload();
             then?.Invoke();
         });
+    }
+
+    /// <summary>
+    /// Moves out of the way of a drive that is about to be unmounted.
+    /// </summary>
+    /// <param name="mountPoints">Where the affected volumes are mounted.</param>
+    /// <returns>Whether anything had to move.</returns>
+    /// <remarks>
+    /// <para>
+    /// A file manager showing a directory is a reason that directory cannot be unmounted, and
+    /// Canger being the one thing standing in the way of its own eject is no use to anybody. So
+    /// every tab looking at the drive is sent home first, its cached listings are dropped, and
+    /// any preview taken from it is thrown away — the last because a preview is a file that was
+    /// read, and on some paths one that is still being held.
+    /// </para>
+    /// <para>
+    /// This is what a desktop file manager does, and why ejecting from one leaves you in your
+    /// home directory rather than refusing. Anything <em>else</em> still holding the drive — a
+    /// video playing, an editor with a file open — is beyond Canger's reach, and the unmount will
+    /// fail and say so, which is the right answer.
+    /// </para>
+    /// </remarks>
+    protected bool LeaveDrive(IReadOnlyList<string> mountPoints)
+    {
+        ArgumentNullException.ThrowIfNull(mountPoints);
+
+        if (mountPoints.Count == 0)
+        {
+            return false;
+        }
+
+        bool moved = false;
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        foreach (Model.Tab tab in FileManager.Tabs.Values)
+        {
+            if (IsOn(tab.Path, mountPoints))
+            {
+                tab.Enter(home);
+                moved = true;
+            }
+        }
+
+        foreach (string cached in FileManager.Directories.Paths.ToList())
+        {
+            if (IsOn(cached, mountPoints))
+            {
+                FileManager.Directories.Evict(cached);
+                moved = true;
+            }
+        }
+
+        if (moved)
+        {
+            FileManager.InvalidatePreviews();
+        }
+
+        return moved;
+    }
+
+    /// <summary>Whether a path is on one of the given mount points.</summary>
+    private static bool IsOn(string path, IReadOnlyList<string> mountPoints) =>
+        mountPoints.Any(m => string.Equals(path, m, StringComparison.Ordinal)
+                             || FileOperations.PathRelation.IsInside(path, m));
+
+    /// <summary>Where the volumes about to be unmounted are mounted.</summary>
+    /// <param name="device">The drive the user asked about.</param>
+    /// <param name="wholeDisk">Whether the action affects the drive rather than one volume.</param>
+    /// <returns>The mount points, which may be none.</returns>
+    protected IReadOnlyList<string> MountPointsOf(BlockDevice device, bool wholeDisk)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+
+        IEnumerable<BlockDevice> affected = wholeDisk
+            ? FileManager.Devices.Devices.Where(
+                  d => string.Equals(d.DiskPath, device.DiskPath, StringComparison.Ordinal))
+            : [device];
+
+        return [.. affected.Select(d => d.MountPoint).OfType<string>()];
     }
 
     /// <summary>Finds a volume again by its device path, after the list has been re-read.</summary>
@@ -157,6 +242,7 @@ public sealed class DevicesUnmountCommand : DeviceActionCommand
             return;
         }
 
+        LeaveDrive(MountPointsOf(device, wholeDisk: false));
         Run(DeviceActions.Unmount(device));
     }
 }
@@ -214,10 +300,15 @@ public sealed class DevicesEjectCommand : DeviceActionCommand
     /// <inheritdoc />
     protected override void Act(BlockDevice device)
     {
+        bool moved = LeaveDrive(MountPointsOf(device, wholeDisk: true));
+
         Run(DeviceActions.SafelyRemove(device.DiskPath, device.DiskName,
                                        FileManager.Devices.Devices));
 
-        FileManager.Notify($"removing {device.DiskName} — wait for it to finish before unplugging");
+        FileManager.Notify(moved
+            ? $"removing {device.DiskName} — left the drive first; "
+              + "wait for it to finish before unplugging"
+            : $"removing {device.DiskName} — wait for it to finish before unplugging");
     }
 }
 

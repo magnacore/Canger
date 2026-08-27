@@ -207,4 +207,57 @@ public class DeviceCommandsTests
         manager.Execute("devices_close");
         Assert.False(manager.DevicesOpen);
     }
+
+
+    [Fact]
+    public void UnmountingStepsOffTheDriveFirst()
+    {
+        // Canger showing a directory is a reason that directory cannot be unmounted, and Canger
+        // being the one thing in the way of its own eject is no use to anybody.
+        FakeFileManager manager = Manager("mounted-usb-stick.json");
+        manager.CurrentTab.Enter("/media/manuj/VERBATIM",
+                                 cancellationToken: TestContext.Current.CancellationToken);
+
+        manager.Execute("devices_unmount");
+
+        Assert.NotEqual("/media/manuj/VERBATIM", manager.CurrentTab.Path);
+        Assert.NotEmpty(manager.BackgroundWork);
+    }
+
+    [Fact]
+    public void EjectingStepsOffTheDriveFirstToo()
+    {
+        FakeFileManager manager = Manager("mounted-usb-stick.json");
+        manager.CurrentTab.Enter("/media/manuj/VERBATIM",
+                                 cancellationToken: TestContext.Current.CancellationToken);
+
+        manager.Execute("devices_eject");
+
+        Assert.NotEqual("/media/manuj/VERBATIM", manager.CurrentTab.Path);
+    }
+
+    [Fact]
+    public void StepplingOffADriveForgetsWhatWasCachedFromIt()
+    {
+        // A listing kept from a drive that is no longer there would show files that cannot be
+        // opened, and is one more thing holding what was read.
+        FakeFileManager manager = Manager("mounted-usb-stick.json");
+        manager.CurrentTab.Enter("/media/manuj/VERBATIM",
+                                 cancellationToken: TestContext.Current.CancellationToken);
+
+        manager.Execute("devices_unmount");
+
+        Assert.DoesNotContain(manager.Directories.Paths,
+                              p => p.StartsWith("/media/manuj/VERBATIM", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ATabSomewhereElseIsLeftWhereItIs()
+    {
+        FakeFileManager manager = Manager("mounted-usb-stick.json");
+
+        manager.Execute("devices_unmount");
+
+        Assert.Equal("/home/manuj", manager.CurrentTab.Path);
+    }
 }

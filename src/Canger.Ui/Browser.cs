@@ -1500,27 +1500,32 @@ public sealed class Browser : IFileManager, IDisposable
 
             _message = null;
 
-            if (_console.IsOpen)
+            // Whichever of these is up takes the key, and only it. Written as one choice and a
+            // switch rather than a chain of ifs because the chain needed a `continue` in every
+            // branch to be correct, and the day one was left out every keystroke in the device
+            // list ran twice: `q` closed the list and then quit Canger. Nothing failed, because
+            // both halves did exactly what they were bound to do.
+            switch (FocusedOn(_console.IsOpen, _pager.IsVisible, _deviceView.IsVisible,
+                              _taskView.IsVisible))
             {
-                HandleConsoleKey(key.Key);
-                continue;
-            }
+                case KeyTarget.Console:
+                    HandleConsoleKey(key.Key);
+                    continue;
 
-            // The pager and the task view take the whole screen, so they take the keys too.
-            if (_pager.IsVisible)
-            {
-                HandlePagerKey(key.Key);
-                continue;
-            }
+                case KeyTarget.Pager:
+                    HandlePagerKey(key.Key);
+                    continue;
 
-            if (_deviceView.IsVisible)
-            {
-                HandleDeviceKey(key.Key);
-            }
-            else if (_taskView.IsVisible)
-            {
-                HandleTaskViewKey(key.Key);
-                continue;
+                case KeyTarget.Devices:
+                    HandleDeviceKey(key.Key);
+                    continue;
+
+                case KeyTarget.TaskView:
+                    HandleTaskViewKey(key.Key);
+                    continue;
+
+                default:
+                    break;
             }
 
             string? command = _keys.Add(key.Key);
@@ -1662,6 +1667,47 @@ public sealed class Browser : IFileManager, IDisposable
                                      ? amount * Math.Max(_screen.Height - 3, 1)
                                      : amount));
     }
+
+    /// <summary>Which part of the interface a keystroke belongs to.</summary>
+    internal enum KeyTarget
+    {
+        /// <summary>The file browser, which is where keys go when nothing is over it.</summary>
+        Browser,
+
+        /// <summary>The command line.</summary>
+        Console,
+
+        /// <summary>The file pager.</summary>
+        Pager,
+
+        /// <summary>The list of removable drives.</summary>
+        Devices,
+
+        /// <summary>The list of background work.</summary>
+        TaskView,
+    }
+
+    /// <summary>
+    /// Decides which part of the interface a keystroke belongs to.
+    /// </summary>
+    /// <param name="console">Whether the command line is open.</param>
+    /// <param name="pager">Whether the pager is showing.</param>
+    /// <param name="devices">Whether the device list is showing.</param>
+    /// <param name="taskView">Whether the task view is showing.</param>
+    /// <returns>The one part that gets the key.</returns>
+    /// <remarks>
+    /// A function so that the ordering is a thing that can be stated and tested, rather than a
+    /// property of a chain of <c>if</c>s that happens to be written in the right order and to
+    /// leave each branch in the right way. Everything here draws over the browser, so it takes
+    /// the browser's keys with it: two of them acting on one keystroke means a key doing its job
+    /// twice over, in two different places, with nothing to show that anything went wrong.
+    /// </remarks>
+    internal static KeyTarget FocusedOn(bool console, bool pager, bool devices, bool taskView) =>
+        console ? KeyTarget.Console
+        : pager ? KeyTarget.Pager
+        : devices ? KeyTarget.Devices
+        : taskView ? KeyTarget.TaskView
+        : KeyTarget.Browser;
 
     /// <summary>Routes a key while the task view has focus.</summary>
     private void HandleTaskViewKey(int key)
