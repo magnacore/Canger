@@ -141,6 +141,67 @@ public class DefaultColorScheme : ColorScheme
             attributes &= ~CellAttributes.Bold;
         }
 
+        // The version-control mark beside a name. Every one of these keys was already being set
+        // on the marker and no scheme read any of them, so all six statuses drew in whatever
+        // colour the row happened to have — which is half of why the glyphs had to carry so much.
+        // Ranger's own assignment (`colorschemes/default.py:156-171`), including leaving ignored
+        // at the default colour: the quiet mark stays quiet.
+        if (context.Has(ContextKey.VcsFile) && !context.Has(ContextKey.Selected))
+        {
+            attributes &= ~CellAttributes.Bold;
+
+            if (context.Has(ContextKey.VcsConflict))
+            {
+                foreground = Color.Magenta;
+            }
+            else if (context.Has(ContextKey.VcsUntracked))
+            {
+                foreground = Color.Cyan;
+            }
+            else if (context.HasAny(ContextKey.VcsChanged, ContextKey.VcsUnknown))
+            {
+                foreground = Color.Red;
+            }
+            else if (context.HasAny(ContextKey.VcsStaged, ContextKey.VcsSync))
+            {
+                foreground = Color.Green;
+            }
+            else if (context.Has(ContextKey.VcsIgnored))
+            {
+                foreground = Color.Default;
+            }
+        }
+
+        // The mark on a directory that is itself a repository, saying how it stands against its
+        // remote. A separate scale from the file one and coloured separately by ranger too
+        // (`colorschemes/default.py:173-184`): green means nothing to do, red means the remote is
+        // ahead of you, blue means you have something to push.
+        else if (context.Has(ContextKey.VcsRemote) && !context.Has(ContextKey.Selected))
+        {
+            attributes &= ~CellAttributes.Bold;
+
+            if (context.HasAny(ContextKey.VcsSync, ContextKey.VcsNone))
+            {
+                foreground = Color.Green;
+            }
+            else if (context.Has(ContextKey.VcsBehind))
+            {
+                foreground = Color.Red;
+            }
+            else if (context.Has(ContextKey.VcsAhead))
+            {
+                foreground = Color.Blue;
+            }
+            else if (context.Has(ContextKey.VcsDiverged))
+            {
+                foreground = Color.Magenta;
+            }
+            else if (context.Has(ContextKey.VcsUnknown))
+            {
+                foreground = Color.Red;
+            }
+        }
+
         if (context.HasAny(ContextKey.Cut, ContextKey.Copied) && !context.Has(ContextKey.Selected))
         {
             attributes |= CellAttributes.Bold;

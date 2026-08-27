@@ -2853,6 +2853,325 @@ the bug announcing itself and it read as good news.
 Roslyn translation directories, the symbols and the API documentation, about 8 MB of a 37 MB tree.
 Nothing reads any of it at runtime.
 
+## `r` showed no programs to open with
+
+`r` is bound to `chain draw_possible_programs; console open_with%space`, and the first half of that
+chain was writing its answer to the **status bar** — where the second half then opened the console,
+in the same place, and covered it. A dozen programs were truncated to a line and the line was
+hidden a moment later by the next link in its own chain.
+
+Ranger does not use the status bar for this. `draw_possible_programs` sets `ui.browser.draw_info`
+(`core/actions.py:947-960`) and the view draws those lines over the bottom of the listing
+(`gui/widgets/view_base.py:97-107`), in the same slot as the bookmark and hint windows and with the
+same precedence — `if draw_bookmarks ... elif draw_hints ... elif draw_info`. It stays up while the
+console is typed into, which is the entire point, and `Console.close` clears it
+(`gui/widgets/console.py:179`).
+
+Canger now has `IFileManager.ShowInfo`, an overlay drawn bottom-anchored and no taller than it
+needs, and taken down when the console goes.
+
+**Getting that second part right took two attempts, and the first one is the lesson.** It cleared
+the overlay from a helper that the console-closing paths were routed through — "one place, so the
+overlay cannot outlive the console by way of a route that forgot about it", as the comment
+confidently said. It forgot a route. `console_accept` calls `ConsoleWidget.Accept`, which closes
+the widget itself and never goes near the browser's closing path, so *running* a command from the
+console — the ordinary way to use this feature — left the list of programs on screen with nothing
+to dismiss it. Reported as "it seemed stuck on the screen", and it was.
+
+There are two `Accept` calls and three `Close` calls. The fix is not a fourth call site: it is to
+stop enumerating them. `HandleConsoleKey` is the single funnel for every key the console sees, so
+it now asks afterwards whether the console is still open and drops the overlay if it is not. That
+covers all five paths and any added later.
+
+Worth remembering: **"I routed them all through one place" is a claim about a set you have to have
+enumerated correctly.** Asking about the resulting state needs no such enumeration. The first
+version even said the safe-sounding thing in a comment, which is how it read as done.
+
+Two details taken from ranger rather than invented. The number is right-justified to the widest
+(`core/actions.py:955`), so a list running into double figures reads as a column. And each line
+carries the **command**, not the label: ranger lists `program[1]`, and two rules for the same
+program differ only by their command — the shipped `rifle.conf` has four `editor:` rules.
+
+Verified in a pty against the real config, with a control build: `r` lists ten programs over the
+listing with the console below, the list survives typing into it, and both accepting a choice and
+pressing escape take it down. Without the fix the count after accepting stays at ten.
+
+No unit test: the invariant lives in `Browser`, which needs a terminal to construct, and the four
+tests on `draw_possible_programs` itself cover only what the command produces. The pty run against
+a control is the evidence here.
+
+The shape worth remembering: **a one-line channel cannot answer a question the user needs while
+they type.** The status bar was the wrong instrument, not a badly used one — and the chain was
+built so that the answer's own successor destroyed it.
+
+## The size ran into the end of a truncated name
+
+Reported from a screenshot: `hi-trevor-my-read-after-the-call_2026-08-26_12-17~1.9 k`, with the
+size against the ellipsis and no space between them.
+
+`BrowserColumn` did reserve the gap — `detailWidth` is the size's width **plus one** — and then
+spent it in the wrong place. The size was written at `Bounds.Right - detailWidth`, one column left
+of the edge, so the spare column landed *after* the size, against the border, where nothing needed
+it. The name then filled every column up to the size. One character in the wrong expression, and
+the arithmetic that was supposed to produce the gap produced a trailing blank instead.
+
+Ranger avoids the question by carrying the space inside the string it lays out:
+`infostring.append([" " + infostringdata, ...])` (`browsercolumn.py:410-411`). The gap is part of
+the thing, so it cannot be reserved in one place and drawn in another.
+
+The size is now written at `Bounds.Right - detailText`, flush to the edge, and the reserved column
+falls where it was meant to. Four tests: the truncated case, the size ending at the last column,
+the untruncated case where the gap is padding rather than the reserved column, and the existing
+guard that drops the size entirely rather than crush the name.
+
+None of the 1528 tests noticed, because the row's *contents* were all anyone had ever asserted —
+`StartsWith(" alpha.txt")` and the like. Where things sit was untested, so a layout bug had nowhere
+to fail. The new ones read specific cells.
+
+## The preview column flickered while a PDF preview was generated
+
+Reported as a twitch down the right of the screen while a PDF preview is produced, gone once it is
+cached.
+
+Previews are generated on a worker so the browser does not stop dead on every video thumbnail, and
+`Preview` returned `PreviewResult.None` for the frames in between. `None` is also what "there is
+nothing to preview here" looks like, and with `collapse_preview` on that is the answer that
+**removes the column**. So: land on a PDF, the column collapses because the answer has not arrived,
+the answer arrives a fifth of a second later, the column comes back. Two frames of a different
+layout, and the whole right-hand side shifts twice.
+
+"Nothing to show" and "not ready yet" are indistinguishable to a drawing routine and opposites to a
+layout one. `PreviewKind.Pending` now separates them, and `MillerView.CountsAsPreview` repeats the
+previous frame's decision when the answer is pending rather than making a new one. Ranger reaches
+the same place by a different route: `_collapse` consults the file's cache entry and returns
+`old_collapse` when there is not one yet (`gui/widgets/view_miller.py:196-201`).
+
+### Measuring it took three attempts, and the first two said "no bug"
+
+Sampling the reconstructed screen every 100 ms found one layout with the fix and one without —
+because the whole episode is about two frames inside a 200 ms window, and a poll that slow steps
+over it. Counting border rows in the raw stream found none at all, because rendering is
+differential and an unchanged border is never rewritten.
+
+What worked was forcing the issue: send `<C-l>` forty times through the generation window so every
+intermediate state is actually painted, then count distinct border rows in the output. With the
+fix, forty identical. Without it, thirty-eight identical and **two collapsed** — the preview column
+missing from both.
+
+Worth remembering: **"I could not reproduce it" is a statement about the instrument** until the
+instrument has been shown to be able to see the thing. Two measurements agreed the bug was absent
+and both were too coarse to see a two-frame event. The fix was written before any of them, from
+reading the code, and nearly got reverted as unvalidated.
+
+## `console -s` was not implemented, so the separator appeared as text
+
+`map efc console -s | compress |.tar.lz` opened `:| compress |.tar.lz` with the cursor at the end,
+where ranger opens `:compress .tar.lz` with the cursor on the dot.
+
+Ranger's `:console` takes two ways of placing the cursor (`config/commands.py:930-955`): `-pN` is a
+column, and `-s` takes a separator as **its own argument**, finds it in the command, removes it,
+and leaves the cursor in the gap. Canger had `-pN` and not `-s`.
+
+The reason it degraded the way it did is worth keeping. `ParseFlags` folds leading `-x` words into
+a set of letters and returns the rest of the line from the first word that is not one. Given
+`-s | compress |.tar.lz` it produced flags `s` — which nothing read — and a command starting at the
+separator. So the flag vanished silently and its argument became text. **A flag with an argument
+cannot go through flag parsing at all**, and the failure is quiet: no error, just the argument
+turning up on screen.
+
+Both forms are now read off the first word the way ranger reads them, which is also why `-p` moved
+off `ParseFlags` in the same change. Five tests: the reported line, a separator that occurs again
+later (only the first is removed), a separator that is not there at all (line untouched, default
+cursor), and a multi-character separator, which ranger's own help allows — "any char[s] sequence".
+
+Verified in a pty with the real binding: `efc` gives `:compress .tar.lz` with the caret on the dot.
+
+## Version-control marks now use ranger's characters
+
+Noticed from a listing: `dist/` and `TestResults/` wearing a `!`, which reads as a warning for the
+two directories in the tree that matter least.
+
+`!` was Canger's mark for *ignored*. In ranger `!` is *unknown* — so the same character told
+someone arriving from ranger the opposite of what it meant, and "unknown" is the one status worth
+looking closer at. Three of the seven differed and two of the three collided:
+
+| status | was | now, as ranger has it |
+|---|---|---|
+| conflict | `=` | `X` |
+| ignored | `!` | `·` |
+| unknown | `\|` | `!` |
+
+The middle dot is also the right weight. Ignored files are the least interesting thing in a listing
+and should not carry its loudest mark.
+
+### The half nobody could see
+
+Every marker was already being drawn with `ContextKey.VcsFile` plus a per-status key —
+`VcsConflict`, `VcsUntracked`, `VcsChanged`, `VcsIgnored`, `VcsUnknown` — and **no colour scheme
+read any of them**. All seven statuses drew in whatever colour the row happened to have, which is
+half the reason the glyphs were carrying the entire signal. Ranger's assignment
+(`colorschemes/default.py:156-171`) is now in the default scheme: conflict magenta, untracked cyan,
+changed and unknown red, staged green, and ignored deliberately left at the default colour — the
+quiet mark stays quiet.
+
+`Staged` was also borrowing `VcsChanged`, so a staged file came out red where ranger shows it
+green: the difference between "you have work to commit" and "you have work to lose".
+
+That makes three separate instances of the same shape in this file — the keys existed, the
+mechanism existed, and nothing joined them. It is worth a standing suspicion: **a context key that
+compiles is not a context key that is read.**
+
+### Two divergences proposed, and overruled — rightly
+
+I argued for leaving out ranger's `✓` on every clean file (noise) and its per-row remote marks
+(a repository property repeated on every row), keeping the title bar's `↑`/`↓` instead. Both were
+overruled on one argument that beats both of mine: **a ranger user who scans for a mark and does
+not find it cannot tell a clean file from a broken file manager.** Absence is not neutral when the
+reader has been trained to expect a symbol. Tidiness is worth less than that.
+
+So `VcsStatus.Sync` ticks, and a directory that is itself a repository now carries ranger's remote
+mark in its own column before the file one — `Y` diverged, `>` ahead, `<` behind, `=` in sync,
+`⌂` for a repository with no remote at all. Coloured on their own scale, as ranger colours them
+(`colorschemes/default.py:173-184`): green means nothing to do, red means the remote is ahead of
+you, blue means you have something to push. The title bar keeps its `↑`/`↓` as well; the two answer
+different questions and ranger shows both.
+
+### The remote mark would have been inert
+
+Worth its own note, because it nearly shipped invisible. A repository is only drawn once it has
+been refreshed, and **only the current directory's repository was ever refreshed**
+(`Vcs?.Request(CurrentTab.Path)`, and nothing else). So in a listing of project directories — the
+one place a per-row remote mark earns anything — every repository was found, none was loaded, and
+every marker came back `null`. The feature would have existed, compiled, been tested at the table
+level, and shown nothing.
+
+`RequestVcsForListedRepositories` now asks for each subdirectory in the listing, once per listing
+rather than once per frame: the ask is a dictionary lookup per subdirectory, which is nothing on
+its own and a few thousand a second in a directory of repositories. The revision number changes
+exactly when the listing is rebuilt, which is exactly when the answer could differ.
+
+That is the fourth instance of the same shape in this file. The counter-move is now explicit:
+**after adding anything that reads state, look for what writes it.**
+
+Verified against real directories: `✓` on clean files, `·` plain on `dist` and `TestResults`, `+`
+red on `src`, and in `~/Projects`, `⌂` green on a local-only repository and `=` green on one in
+sync with its remote.
+
+## The version-control marks were on the wrong side of the row
+
+Reported with a screenshot: ranger draws them at the right-hand end, after the size. Canger drew
+them between the line number and the name.
+
+Ranger's row is built as two lists. The tag mark goes on `predisplay_left`; the version-control
+marks go on `predisplay_right`, and the size is then *prepended* to that with a separator
+(`gui/widgets/browsercolumn.py:394-423`). So the right-hand group reads: size, gap, remote mark,
+file mark — and the whole of it is flush right.
+
+The row layout is now built the same way: the marks and the size are measured as one group,
+claiming one column more than they draw so the group cannot butt against a truncated name, and
+drawn right-aligned. The tag mark stays on the left, as it is in ranger.
+
+### 1,568 tests and none of them knew where anything was
+
+I had just pinned the mark table character by character, and the colour of every status, and
+whether `Sync` draws. All of it passed with the mark in entirely the wrong place. The same was true
+of the size a few fixes earlier: every `BrowserColumn` test asserted the row's *contents*.
+
+So these are the first tests in the file that assert against a **real repository** — a temporary
+`git init`, a committed file, the column rendered, and the mark's column index compared with the
+name's. They have to be real: the mark only appears once a repository has been found *and*
+refreshed, and a fake that skipped either would be testing the drawing of something that never
+happens. Both fail with the marks back on the left.
+
+**A test that pins what a thing is says nothing about where it is.** Three layout defects this
+session — the size spacing, the marks' side, and the preview column's collapse — and the suite was
+silent on all three.
+
+## A repository in a listing pushed every other row's count sideways
+
+Reported with two screenshots side by side: in ranger the entry counts hold one column and the
+version-control marks sit beyond them; in Canger a row that had a mark pushed its own count a
+column to the left, so the numbers stepped in and out down the listing.
+
+Two things, both in the same eight lines of ranger.
+
+**The columns are reserved, not packed.** `_draw_vcsstring_display` appends a *space* where a row
+has no mark, as long as the listing contains a repository at all —
+`elif self.target.has_vcschild: vcsstring_display.append([' ', []])`, twice, and `['  ', []]` for a
+row that is not tracked (`gui/widgets/browsercolumn.py:504-513`). So every row in such a listing is
+the same width. Canger packed the group flush right and let each row claim only what it used.
+
+**A repository root does have a status, and I removed it by mistake.** From
+`container/directory.py:430-437` — where a root sets `has_vcschild` and only a non-root gets
+`item.vcsstatus` — I concluded that ranger shows a repository only its remote mark. It does not.
+A root's status is set from the other end, by `init_root`/`update_root`
+(`ext/vcs/vcs.py:246-268`), as `data_status_root()`: the aggregate over everything inside, by the
+same precedence Canger's `VcsStatuses.Combine` uses. So `⌂?` is right — no remote, and something
+untracked in there — and I had to put it back a few minutes after taking it away.
+
+The mistake is worth naming: **I read one call site and treated it as the whole answer.** The line
+I read says what that loop does not set; it says nothing about what is set elsewhere. Two greps
+would have found `self.obj.vcsstatus =` in the other file.
+
+`_hasRepositoryChild` is worked out once per render rather than per row, since it is a property of
+the listing.
+
+### The test that nearly was not written
+
+The obvious assertion — both rows show a count of `0`, so compare where the `0` is — failed,
+because the repository directory contains `.git` and its count is not `0`. The fix was to compare
+the *right edge of the count field* instead, which is what "the numbers do not move" actually
+means, and to assert the reservation directly: the row without marks ends in two blanks.
+
+Also worth remembering: the first version built its temporary tree with a `..` in the path. The
+repository cache is keyed by the path string, so it registered the repository under a name the scan
+never produced and nothing matched — the test failed for a reason that had nothing to do with the
+code under test. `Path.GetFullPath` before anything else.
+
+## Devicons as a plugin
+
+`tools/generate-devicons-plugin.py` emits a self-contained plugin from the same
+`ranger_devicons/devicons.py` the core tables come from — 88 exact names, 227 extensions, 15
+directory names — with its own dictionaries and no dependency on Canger's internals, so it can sit
+in `~/.config/canger/plugins/` and be edited freely.
+
+It registers under the name `devicons`, which is the built-in's name, and `LinemodeRegistry.Register`
+overwrites a mode of the same name — so it replaces the built-in with no other change and
+`default_linemode devicons` keeps working.
+
+Verified by comparing the private-use glyphs in the rendered output with and without the plugin
+present, in two directories: identical sets both times, 6 and 11 glyphs.
+
+### Measuring it needed three tries, again
+
+Searching the escape-stripped output for the character before a filename found nothing, twice,
+and the second attempt "proved" the two builds identical while both showed no glyphs at all.
+Rendering is differential: the glyph and the name are written in separate runs with a cursor move
+between them, so they are not adjacent in the stream even after the escapes are removed. Counting
+the private-use codepoints present is indifferent to where they were written.
+
+**A comparison that reports "identical" while measuring nothing is worse than no comparison** — it
+reads as evidence. The check that saved it was asking whether the thing being compared was there
+at all.
+
+### And the core copy is gone
+
+`DeviconsLinemode`, `DeviconTables.g.cs`, its registration and `tools/generate-devicons.py` are
+all deleted. The plugin is generated into `config/plugins/devicons.cs` instead, which the app
+project already ships wholesale (`Content Include="../../config/**"`) and which
+`PluginHost.LoadFrom` already reads — so it travels in the `dist` tarballs and works out of the
+box without being built in.
+
+That is ranger's arrangement: a plugin, and no icons without it. It also ends the duplication —
+two copies of the same four hundred glyphs, generated from one source by two scripts, one silently
+shadowing the other whenever the plugin was present.
+
+The test moved with it. `DeviconsLinemodeTests` tested a class; `ShippedDeviconsTests` compiles
+the shipped plugin and asks the registered linemode for glyphs, which is the same shape as
+`ShippedCommandsTests` and covers the thing that can now actually break: a generator emitting code
+that does not build would leave the linemode simply absent, and `default_linemode devicons` would
+fall back with no complaint anyone would notice.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
@@ -2873,18 +3192,23 @@ Nothing from ranger. Possible directions from here:
 
 ### Watch these in daily use
 
-Everything below landed on the same day and has had no living-with. They are not suspected of
-being wrong — each is tested and was verified in a pty — but they are the least-exercised things
-in the tree, and two of them touch something that matters:
+Refreshed at 0.3.0. The previous batch — `unload-idle-directories`, `numbered-clash-suffixes`,
+`reload-visible-directories` — has now had a day of real use with nothing reported, so it comes off
+this list.
 
-- **`unload-idle-directories`** only fires after twenty minutes idle, so at its real threshold it
-  has effectively never run. It was verified by shortening the interval to seconds, which is not
-  the same as living with it. It drops listings silently; the sign of it going wrong would be a
-  selection or a cursor row lost on returning to a directory left alone for a while.
-- **`numbered-clash-suffixes`** changes what a pasted file is named. Well tested, but the kind of
-  change where being wrong touches files rather than pixels.
-- **`reload-visible-directories`** now re-reads every column after a command rather than one, and
-  after background work finishes.
+What is new and least exercised:
+
+- **Devicons leaving the core.** The failure mode is silent: a generator emitting code that does
+  not compile leaves the linemode simply absent, and `default_linemode devicons` falls back to
+  plain names with no complaint anyone would notice. `ShippedDeviconsTests` compiles the shipped
+  plugin for exactly this reason, and it is a day old.
+- **The preview-collapse fix.** The only change here that was never seen working in a terminal —
+  it was demonstrated by forcing forty redraws inside a two-hundred-millisecond window, against a
+  control. It should show as the preview column no longer twitching while a PDF is generated.
+- **The version-control marks.** Four changes in a row over the same twenty lines: the glyph
+  table, the colours, which side of the row they sit on, and the reserved columns. Each was
+  confirmed by eye, but they interact, and one of the four was a mistake I made and had to undo
+  within the hour.
 
 ### Verifying by driving the real binary
 

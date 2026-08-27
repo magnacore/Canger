@@ -220,6 +220,17 @@ public interface IFileManager
     /// <param name="text">What to show.</param>
     void ShowInPager(string text);
 
+    /// <summary>Shows a list of lines over the bottom of the listing until the console closes.</summary>
+    /// <param name="lines">What to show, one per row.</param>
+    /// <remarks>
+    /// For an answer the user needs <em>while</em> they type — the programs that could open a
+    /// file, with the numbers to pick them by. The status bar cannot do this: it holds one line,
+    /// and the console that follows sits in the same place and hides it immediately. Ranger draws
+    /// it into the browser instead (<c>ui.browser.draw_info</c>,
+    /// <c>gui/widgets/view_base.py:97-107</c>) and clears it when the console closes.
+    /// </remarks>
+    void ShowInfo(IReadOnlyList<string> lines);
+
     /// <summary>Shows text in the user's own pager, rather than in Canger's.</summary>
     /// <param name="text">What to show.</param>
     /// <remarks>

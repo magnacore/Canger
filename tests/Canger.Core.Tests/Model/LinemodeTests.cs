@@ -33,17 +33,18 @@ public class LinemodeTests
         new(kind, mode, 0, 1, 0, 0, 1, 1, Now, Now, Now);
 
     [Fact]
-    public void Registry_HoldsRangersEightModesPlusDevicons()
+    public void Registry_HoldsRangersEightModesAndNoMore()
     {
-        // Devicons is a Python plugin in ranger, so a configuration carried over from ranger
-        // asks for a linemode that would otherwise not exist here.
+        // Ranger's eight, and `devicons` deliberately not among them: it is a plugin there and a
+        // plugin here, shipped as `config/plugins/devicons.cs`. Having it built in as well meant
+        // two copies of the same four hundred glyphs, one shadowing the other whenever the plugin
+        // was present. `ShippedDeviconsTests` covers the plugin.
         LinemodeRegistry registry = new();
 
         Assert.Equal(
             [
                 "filename", "metatitle", "permissions", "fileinfo",
                 "mtime", "sizemtime", "humanreadablemtime", "sizehumanreadablemtime",
-                "devicons",
             ],
             registry.Names);
     }

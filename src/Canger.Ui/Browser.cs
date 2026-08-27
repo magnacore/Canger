@@ -14,6 +14,7 @@ using Canger.Core.Tasks;
 using Canger.Tui;
 using Canger.Tui.Input;
 using Canger.Tui.Rendering;
+using Canger.Tui.Text;
 using Canger.Ui.Styling;
 using Canger.Vcs;
 using Canger.Ui.Views;
@@ -117,6 +118,24 @@ public sealed class Browser : IFileManager, IDisposable
 
     /// <inheritdoc />
     public void ShowBookmarks() => _showBookmarks = true;
+
+    /// <summary>Lines drawn over the bottom of the listing, or nothing.</summary>
+    /// <remarks>
+    /// Ranger's <c>ui.browser.draw_info</c>. It outlives the keystroke that set it, because the
+    /// thing it answers — "which number opens this in what?" — is needed while the console that
+    /// follows is being typed into.
+    /// </remarks>
+    private IReadOnlyList<string>? _info;
+
+    /// <inheritdoc />
+    public void ShowInfo(IReadOnlyList<string> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+
+        _info = lines.Count > 0 ? lines : null;
+        RequestRedraw();
+    }
+
 
     private readonly FileDescriber _describer;
     private readonly IImageDisplay? _images;
@@ -1716,6 +1735,24 @@ public sealed class Browser : IFileManager, IDisposable
     /// </remarks>
     private void HandleConsoleKey(int key)
     {
+        RouteConsoleKey(key);
+
+        // The overlay belongs to the console, so it goes when the console does — checked here
+        // rather than at each place that closes it. Enumerating those is what put this comment
+        // here: `console_accept` reaches `ConsoleWidget.Accept`, which closes the widget itself
+        // and never touches the browser's own closing path, so running a command from the console
+        // left the list of programs on screen with nothing to dismiss it. There are two `Accept`
+        // calls and three `Close` calls, and asking about the state afterwards covers all five
+        // and anything added later.
+        if (!_console.IsOpen)
+        {
+            _info = null;
+        }
+    }
+
+    /// <inheritdoc cref="HandleConsoleKey"/>
+    private void RouteConsoleKey(int key)
+    {
         if (_console.Question is not null)
         {
             if (_console.AnswerQuestion(key) is { } answer)
@@ -1938,6 +1975,38 @@ public sealed class Browser : IFileManager, IDisposable
         }
     }
 
+    /// <summary>Draws the info lines over the bottom of the listing.</summary>
+    /// <param name="lines">What to show, one per row.</param>
+    /// <remarks>
+    /// Bottom-anchored and no taller than it needs, so as much of the directory as possible stays
+    /// readable behind it — the same shape as the bookmark and hint windows, and as ranger's own
+    /// (<c>gui/widgets/view_base.py:97-107</c>). Each row is blanked before it is written, because
+    /// the listing underneath is wider than the line replacing it.
+    /// </remarks>
+    private void DrawInfo(IReadOnlyList<string> lines)
+    {
+        Rect bounds = BrowserBounds();
+        int rows = Math.Min(lines.Count, bounds.Height);
+
+        if (rows <= 0)
+        {
+            return;
+        }
+
+        CellStyle style = _colorScheme.Resolve(StyleContext.Of(ContextKey.InBrowser));
+        int top = bounds.Bottom - rows;
+
+        // The last `rows` lines, so a list too long for the screen shows its end rather than its
+        // beginning — the higher numbers are the ones that would otherwise be unreachable.
+        for (int i = 0; i < rows; i++)
+        {
+            _screen.Fill(bounds.X, top + i, bounds.Width, 1, style);
+            _screen.Write(bounds.X, top + i,
+                          new WideString(lines[lines.Count - rows + i]).Truncate(bounds.Width),
+                          style);
+        }
+    }
+
     /// <summary>
     /// Draws or removes the image preview, after the buffer has been flushed.
     /// </summary>
@@ -1973,6 +2042,52 @@ public sealed class Browser : IFileManager, IDisposable
 
         _shownImage = wanted;
     }
+
+    /// <summary>Asks for the status of any repository shown as a row in the current listing.</summary>
+    /// <remarks>
+    /// <para>
+    /// Only the current directory's repository was ever refreshed, and a repository is only drawn
+    /// once it has been. So a listing of project directories — the one place a per-row remote
+    /// mark is worth anything — showed nothing at all: each repository was found, none was loaded,
+    /// and every marker came back empty.
+    /// </para>
+    /// <para>
+    /// Cheap after the first pass: <c>RepositoryFor</c> caches by directory, and <c>Request</c>
+    /// only queues a repository that has gone stale, on a worker. The first pass costs one walk
+    /// up the tree per subdirectory, which is what <c>vcs_aware</c> is asking for.
+    /// </para>
+    /// </remarks>
+    private void RequestVcsForListedRepositories()
+    {
+        if (Vcs is not { } vcs)
+        {
+            return;
+        }
+
+        // Once per listing, not once per frame. Asking is a dictionary lookup per subdirectory,
+        // which is nothing on its own and is a few thousand of them a second in a directory of
+        // repositories. The revision changes whenever the listing is rebuilt, which is exactly
+        // when the answer could differ.
+        DirectoryNode directory = CurrentTab.Current;
+
+        if (_vcsRequestedFor == (directory.Path, directory.Revision))
+        {
+            return;
+        }
+
+        _vcsRequestedFor = (directory.Path, directory.Revision);
+
+        foreach (FsNode entry in directory.Entries)
+        {
+            if (entry.IsDirectory)
+            {
+                vcs.Request(entry.Path);
+            }
+        }
+    }
+
+    /// <summary>The listing whose subdirectories have already been asked about.</summary>
+    private (string Path, int Revision)? _vcsRequestedFor;
 
     /// <summary>The region the columns occupy, between the two bars.</summary>
     /// <remarks>
@@ -2079,6 +2194,7 @@ public sealed class Browser : IFileManager, IDisposable
         _view.CollapsePreview = Settings.CollapsePreview;
         Directories.Frozen = Settings.FreezeFiles;
         Vcs?.Request(CurrentTab.Path);
+        RequestVcsForListedRepositories();
         Linemodes.BinaryPrefix = Settings.BinarySizePrefix;
         Linemodes.CountFiles = Settings.AutomaticallyCountFiles;
         Linemodes.ExactBytes = Settings.SizeInBytes;
@@ -2145,6 +2261,13 @@ public sealed class Browser : IFileManager, IDisposable
                                                 _screen.Width, wanted));
                 _bookmarkWindow.Render(_screen);
             }
+        }
+        else if (_info is { Count: > 0 } info)
+        {
+            // Last, matching ranger's `if draw_bookmarks ... elif draw_hints ... elif draw_info`
+            // (gui/widgets/view_base.py:44-49): a pending key sequence is a more urgent question
+            // than a list the user has already asked for.
+            DrawInfo(info);
         }
         else if (_showHints)
         {

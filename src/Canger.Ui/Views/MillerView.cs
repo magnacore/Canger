@@ -49,6 +49,38 @@ public sealed class MillerView(IColorScheme colorScheme)
     /// <summary>Whether the last frame found something to put in the preview column.</summary>
     private bool _hadPreview;
 
+    /// <summary>Whether the preview column was collapsed last frame.</summary>
+    /// <remarks>
+    /// Ranger's <c>old_collapse</c> (<c>gui/widgets/view_miller.py:190-205</c>). Starts false
+    /// because the column starts open.
+    /// </remarks>
+    private bool _collapsedLastFrame;
+
+    /// <summary>Whether a preview result should keep the preview column open.</summary>
+    /// <param name="kind">What the provider answered with.</param>
+    /// <param name="collapsedLastFrame">Whether the column was collapsed on the previous frame.</param>
+    /// <returns>Whether the column is worth its width.</returns>
+    /// <remarks>
+    /// <para>
+    /// The whole point is the middle case. "Nothing to show" and "not ready yet" look identical
+    /// to a drawing routine and are opposites to a layout one: collapsing while a preview is
+    /// being generated means the column vanishes and comes back a fifth of a second later, which
+    /// is seen as a flicker down the right of the screen.
+    /// </para>
+    /// <para>
+    /// So a pending answer changes nothing — it repeats whatever was decided last time. Ranger
+    /// does the same by a different route, returning <c>old_collapse</c> when the file has no
+    /// cache entry to consult (<c>gui/widgets/view_miller.py:196-201</c>).
+    /// </para>
+    /// </remarks>
+    internal static bool CountsAsPreview(PreviewKind kind, bool collapsedLastFrame) =>
+        kind switch
+        {
+            PreviewKind.Pending => !collapsedLastFrame,
+            PreviewKind.None => false,
+            _ => true,
+        };
+
     /// <summary>How many rows to keep visible above and below the cursor.</summary>
     public int ScrollOffset { get; set; } = 8;
 
@@ -124,6 +156,7 @@ public sealed class MillerView(IColorScheme colorScheme)
         // whether there is a preview means asking the provider, and the provider needs to be told
         // how much room it has (`gui/widgets/view_miller.py:190-206`, `old_collapse`).
         bool collapse = CollapsePreview && !_hadPreview;
+        _collapsedLastFrame = collapse;
 
         IReadOnlyList<Rect> regions = ComputeColumns(inner, ColumnRatios, PaddingRight, collapse);
         _hadPreview = false;
@@ -278,7 +311,7 @@ public sealed class MillerView(IColorScheme colorScheme)
         PreviewResult preview = provider.Preview(
             selected.Path, new PreviewSize(bounds.Width, bounds.Height));
 
-        _hadPreview = preview.Kind != PreviewKind.None;
+        _hadPreview = CountsAsPreview(preview.Kind, _collapsedLastFrame);
 
         switch (preview.Kind)
         {

@@ -263,6 +263,53 @@ public class BuiltinCommandTests
         Assert.Equal(6, manager.ConsoleOpenings[0].CursorPosition);
     }
 
+    [Fact]
+    public void Console_PutsTheCursorWhereTheSeparatorWasAndRemovesIt()
+    {
+        // `-s` was not implemented, so `-s` was folded away as an unknown flag and the separator
+        // was left on the line as text: `:| compress |.tar.lz`, cursor at the end. Ranger takes
+        // the separator as an argument of its own (`config/commands.py:948-954`).
+        FakeFileManager manager = Build();
+
+        manager.Execute("console -s | compress |.tar.lz");
+
+        // "compress .tar.lz" — the cursor lands on the dot, ready for a name before it.
+        Assert.Equal(("compress .tar.lz", 9), manager.ConsoleOpenings[0]);
+    }
+
+    [Fact]
+    public void Console_RemovesOnlyTheFirstSeparator()
+    {
+        // A separator that also occurs later in the command leaves the rest of the line alone.
+        FakeFileManager manager = Build();
+
+        manager.Execute("console -s | echo |a|b");
+
+        Assert.Equal(("echo a|b", 5), manager.ConsoleOpenings[0]);
+    }
+
+    [Fact]
+    public void Console_LeavesTheLineAloneWhenTheSeparatorIsNotInIt()
+    {
+        // Nothing to find, so nothing is removed and the cursor is left at its default.
+        FakeFileManager manager = Build();
+
+        manager.Execute("console -s @ compress .tar.lz");
+
+        Assert.Equal(("compress .tar.lz", -1), manager.ConsoleOpenings[0]);
+    }
+
+    [Fact]
+    public void Console_TreatsASeparatorOfMoreThanOneCharacterAsOne()
+    {
+        // Ranger's help says "any char[s] sequence", so the whole word is the separator.
+        FakeFileManager manager = Build();
+
+        manager.Execute("console -s ## rename ##name");
+
+        Assert.Equal(("rename name", 7), manager.ConsoleOpenings[0]);
+    }
+
     // ---- Scout, the search and filter command ----------------------------------------
 
     [Fact]

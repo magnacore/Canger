@@ -257,6 +257,16 @@ public sealed class FakeFileManager : IFileManager
     /// <inheritdoc />
     public void ShowInPager(string text) => PagerText.Add(text);
 
+    /// <summary>The lines last drawn over the listing.</summary>
+    public List<string> InfoLines { get; } = [];
+
+    /// <inheritdoc />
+    public void ShowInfo(IReadOnlyList<string> lines)
+    {
+        InfoLines.Clear();
+        InfoLines.AddRange(lines);
+    }
+
     /// <summary>What was handed to the user's own pager.</summary>
     public List<string> ExternalPagerText { get; } = [];
 

@@ -140,6 +140,14 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
         _scrollOffset = ComputeScroll(directory.Cursor.Index, directory.Count, Bounds.Height,
                                       _scrollOffset, ScrollOffset);
 
+        // Once for the listing, not once per row: whether anything here is a repository in its
+        // own right. When something is, every row keeps two blank columns for the marks even
+        // where it has none, so the sizes stay in one column instead of stepping left and right
+        // down the listing. Ranger reserves them the same way, by appending spaces
+        // (`gui/widgets/browsercolumn.py:504-513`, `has_vcschild`).
+        _hasRepositoryChild = Vcs is not null &&
+                              directory.Entries.Any(e => e.IsDirectory && IsRepositoryRoot(e));
+
         for (int row = 0; row < Bounds.Height; row++)
         {
             int index = _scrollOffset + row;
@@ -205,29 +213,67 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             available -= 1;
         }
 
-        // The version-control marker sits between the number and the name, where the eye
-        // scanning down a listing finds it without having to read across.
-        if (Vcs is not null && VcsMarker(entry) is { } marker && available > 3)
-        {
-            screen.Write(left, row, marker.Text,
-                         colorScheme.Resolve(StyleContext.Of(ContextKey.InBrowser,
-                                                             ContextKey.VcsFile, marker.Context)));
+        // Everything from here is laid out from the right, so the name gets whatever is left.
+        // Ranger builds the same group and in the same order: the version-control marks go on
+        // `predisplay_right`, then the size is *prepended* to them with a separator
+        // (`gui/widgets/browsercolumn.py:400-423`), which reads left to right as
+        // size, gap, remote, file. Only the tag marker stays on the left, on `predisplay_left`.
+        List<(string Text, StyleContext Context)> marks = [];
 
-            left += 2;
-            available -= 2;
+        if (Vcs is not null)
+        {
+            (string Text, ContextKey Context)? remote = RemoteMarker(entry);
+            (string Text, ContextKey Context)? marker = VcsMarker(entry);
+
+            // A blank stands in for a mark this row has not got, so every row in a listing that
+            // contains a repository is the same width and the sizes line up down the column.
+            // Without it a row that gained a mark pushed its own size a column to the left, which
+            // is what the listing looked like: a ragged edge that moved as you scrolled.
+            if (remote is { } r)
+            {
+                marks.Add((r.Text, StyleContext.Of(ContextKey.InBrowser,
+                                                   ContextKey.VcsRemote, r.Context)));
+            }
+            else if (_hasRepositoryChild)
+            {
+                marks.Add((" ", StyleContext.Of(ContextKey.InBrowser)));
+            }
+
+            if (marker is { } m)
+            {
+                marks.Add((m.Text, StyleContext.Of(ContextKey.InBrowser,
+                                                   ContextKey.VcsFile, m.Context)));
+            }
+            else if (_hasRepositoryChild)
+            {
+                marks.Add((" ", StyleContext.Of(ContextKey.InBrowser)));
+            }
         }
 
-        // The detail is laid out from the right, so the name gets whatever is left.
+        int marksWidth = marks.Sum(m => new WideString(m.Text).Width);
+
         (string title, string detail) = Render(entry);
         string right = ShowSize ? detail : string.Empty;
-        int detailWidth = right.Length == 0 ? 0 : new WideString(right).Width + 1;
 
-        // A detail that would leave the name barely legible is dropped instead. The name is
+        int detailText = right.Length == 0 ? 0 : new WideString(right).Width;
+
+        // One column between the size and the marks, as ranger's `sep` puts there, and only when
+        // both are present.
+        int betweenSizeAndMarks = detailText > 0 && marksWidth > 0 ? 1 : 0;
+        int drawn = detailText + betweenSizeAndMarks + marksWidth;
+
+        // The whole group claims one column more than it draws: the gap that keeps it off the end
+        // of a name long enough to be truncated. Ranger reserves it the same way, by carrying the
+        // space in the string itself — `" " + infostringdata` (browsercolumn.py:410-411).
+        int detailWidth = drawn == 0 ? 0 : drawn + 1;
+
+        // A group that would leave the name barely legible is dropped instead. The name is
         // what the row is for; a description squeezed in beside one truncated character helps
         // nobody, and the fileinfo linemode routinely produces details longer than the column.
         if (detailWidth > 0 && available - detailWidth <= 2)
         {
             detailWidth = 0;
+            drawn = 0;
         }
 
         int nameWidth = Math.Max(available - detailWidth, 1);
@@ -236,7 +282,22 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
 
         if (detailWidth > 0)
         {
-            screen.Write(Bounds.Right - detailWidth, row, right, style);
+            // Flush right, so the column reserved above falls between the name and the group
+            // rather than beyond it. Anchoring on the claimed width instead put the gap at the
+            // end of the row, where nothing needed it, and ran `…-truncated~` straight into
+            // `2 k`.
+            int x = Bounds.Right - drawn;
+
+            if (detailText > 0)
+            {
+                screen.Write(x, row, right, style);
+                x += detailText + betweenSizeAndMarks;
+            }
+
+            foreach ((string text, StyleContext markContext) in marks)
+            {
+                x += screen.Write(x, row, text, colorScheme.Resolve(markContext));
+            }
         }
     }
 
@@ -317,31 +378,104 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
             ? StyleContext.Of(ContextKey.InBrowser, ContextKey.LineNumber, ContextKey.Selected)
             : StyleContext.Of(ContextKey.InBrowser, ContextKey.LineNumber);
 
-    /// <summary>
-    /// The single character standing for an entry's version-control status.
-    /// </summary>
-    /// <param name="entry">The entry.</param>
-    /// <returns>The character and its colour context, or <see langword="null"/> to show nothing.</returns>
+    /// <summary>Whether this listing holds a repository, so the mark columns are worth keeping.</summary>
+    private bool _hasRepositoryChild;
+
+    /// <summary>Whether an entry is the root of a repository rather than something inside one.</summary>
+    /// <param name="entry">The row being drawn.</param>
+    /// <returns>Whether a repository starts here.</returns>
+    private bool IsRepositoryRoot(FsNode entry) =>
+        entry.IsDirectory &&
+        Vcs?.RepositoryFor(entry.Path) is { IsLoaded: true } repository &&
+        string.Equals(repository.Root, entry.Path, StringComparison.Ordinal);
+
+    /// <summary>The remote mark for an entry, when the entry is a repository in its own right.</summary>
+    /// <param name="entry">The row being drawn.</param>
+    /// <returns>The mark, or nothing when the entry is not a repository root.</returns>
     /// <remarks>
-    /// A file in sync gets nothing at all. Marking every clean file would fill the column with
-    /// noise and hide the handful that actually differ, which is the only reason to look.
+    /// The root test is what keeps this to one row per repository. Without it every file inside a
+    /// repository would repeat the same answer, which is true and useless.
     /// </remarks>
-    private (string Text, ContextKey Context)? VcsMarker(FsNode entry)
+    private (string Text, ContextKey Context)? RemoteMarker(FsNode entry)
     {
-        if (Vcs?.RepositoryFor(Directory?.Path ?? entry.Path) is not { IsLoaded: true } repository)
+        if (!IsRepositoryRoot(entry))
         {
             return null;
         }
 
-        return repository.StatusOf(entry.Path, entry.IsDirectory) switch
+        return RemoteMarkerFor(Vcs!.RepositoryFor(entry.Path)!.RemoteStatus);
+    }
+
+    /// <summary>The single character standing for an entry's version-control status.</summary>
+    /// <param name="entry">The entry.</param>
+    /// <returns>The character and its colour context, or <see langword="null"/> to show nothing.</returns>
+    private (string Text, ContextKey Context)? VcsMarker(FsNode entry)
+    {
+        // A repository shown as a row answers about *itself* — its own aggregate status, the
+        // worst thing anywhere inside it. Anything else answers to the repository the listing is
+        // in. Ranger keeps the same two sources: `container/directory.py:430-437` gives a child
+        // inside a repository its subpath status, while a child that is a root had its own set
+        // by `init_root`/`update_root` (`ext/vcs/vcs.py:246-268`), which is why a project
+        // directory reads `⌂?` — no remote, and something untracked inside.
+        VcsRepository? source = IsRepositoryRoot(entry)
+            ? Vcs?.RepositoryFor(entry.Path)
+            : Vcs?.RepositoryFor(Directory?.Path ?? entry.Path);
+
+        if (source is not { IsLoaded: true } repository)
         {
-            VcsStatus.Conflict => ("=", ContextKey.VcsConflict),
+            return null;
+        }
+
+        return MarkerFor(repository.StatusOf(entry.Path, entry.IsDirectory));
+    }
+
+    /// <summary>The mark and colour that stand for a repository's standing against its remote.</summary>
+    /// <param name="status">How the repository compares with the remote it tracks.</param>
+    /// <returns>The mark and its colour context, or nothing when there is none to show.</returns>
+    /// <remarks>
+    /// Ranger's table (<c>gui/widgets/__init__.py:32-45</c>). This is drawn on a directory that
+    /// <em>is</em> a repository, so a listing of projects says at a glance which of them have
+    /// commits that are not pushed. Canger also puts the current repository's standing in the
+    /// title bar; the two answer different questions and ranger shows both.
+    /// </remarks>
+    internal static (string Text, ContextKey Context)? RemoteMarkerFor(VcsRemoteStatus status) =>
+        status switch
+        {
+            VcsRemoteStatus.Diverged => ("Y", ContextKey.VcsDiverged),
+            VcsRemoteStatus.Ahead => (">", ContextKey.VcsAhead),
+            VcsRemoteStatus.Behind => ("<", ContextKey.VcsBehind),
+            VcsRemoteStatus.Sync => ("=", ContextKey.VcsSync),
+
+            // Ranger's `⌂` for a repository with no remote at all — a house, meaning local only.
+            VcsRemoteStatus.None => ("\u2302", ContextKey.VcsNone),
+            _ => null,
+        };
+
+    /// <summary>The mark and colour that stand for a version-control status.</summary>
+    /// <param name="status">What the repository says about the file.</param>
+    /// <returns>The mark and its colour context, or nothing when the status is not shown.</returns>
+    internal static (string Text, ContextKey Context)? MarkerFor(VcsStatus status)
+    {
+        return status switch
+        {
+            // Ranger's table, character for character (`gui/widgets/__init__.py:11-30`). Three of
+            // these used to differ, and two of the three collided: `!` meant *ignored* here and
+            // *unknown* there, so the same mark told a ranger user the opposite of what it meant.
+            // A middle dot for ignored is also the right weight — ignored files are the least
+            // interesting thing in a listing and should not be the loudest mark in it.
+            VcsStatus.Conflict => ("X", ContextKey.VcsConflict),
             VcsStatus.Untracked => ("?", ContextKey.VcsUntracked),
             VcsStatus.Deleted => ("-", ContextKey.VcsChanged),
             VcsStatus.Changed => ("+", ContextKey.VcsChanged),
-            VcsStatus.Staged => ("*", ContextKey.VcsChanged),
-            VcsStatus.Ignored => ("!", ContextKey.VcsIgnored),
-            VcsStatus.Unknown => ("|", ContextKey.VcsUnknown),
+            VcsStatus.Staged => ("*", ContextKey.VcsStaged),
+            VcsStatus.Ignored => ("\u00b7", ContextKey.VcsIgnored),
+            VcsStatus.Unknown => ("!", ContextKey.VcsUnknown),
+
+            // A tick on every clean file. Quiet in isolation and busy in a source tree — but a
+            // ranger user scanning for it and not finding it has to work out whether the file is
+            // clean or the file manager is broken, and that costs more than the noise does.
+            VcsStatus.Sync => ("\u2713", ContextKey.VcsSync),
+
             _ => null,
         };
     }
