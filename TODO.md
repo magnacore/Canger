@@ -3434,6 +3434,39 @@ The rule is a two-line function so it could be tested at all: `ReportConfigurati
 method that prints to the console and takes six collaborators, and none of that was ever going to
 be exercised.
 
+## The status bar's percentage restarted when a transfer finished
+
+Reported: with two films queued, the bar climbed while the first copied and went back to nothing
+the moment it finished.
+
+`OverallProgress` averaged the jobs that were **not complete**. Finishing one took it out of the
+reckoning, so the figure stopped describing the work and started describing whatever was left of
+it — which, with the second film untouched, was nothing.
+
+Ranger does the same: `_print_result` averages `self.fm.loader.queue`
+(`gui/widgets/statusbar.py:332-341`), and `_remove_current_process` takes a finished job out of
+that queue (`core/loader.py:480-486`). So the restart is ranger's behaviour too, and it is still
+wrong: a bar that speaks for a queue should speak for the whole of it.
+
+Finished jobs now count. They are swept only when the queue drains
+(`Browser.ReportFinishedWork`), so while anything is running they are exactly the part of the work
+that is done.
+
+### Weighting by size was the better idea and the worse figure
+
+The obvious refinement — weigh a four-gigabyte film above a hundred-megabyte one — was written,
+tested and reverted within the hour. A transfer does not know its total until it has walked its
+sources, which is work it deliberately does a piece at a time, so a job waiting its turn weighs
+almost nothing. The figure climbed to 0.9999 on the first film and **fell to 0.857** when the
+second started and its size arrived.
+
+That is the same defect as the one being fixed, arriving by a more sophisticated route. Equal
+weighting is only roughly right, and a number that goes backwards is worse than one that is
+roughly right — which is the whole complaint.
+
+The `Weight` member added for it was removed rather than left unused. This file has four entries
+about mechanisms nobody consumed; it did not need a fifth.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
