@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Globalization;
 using System.Text;
 
 namespace Canger.Tui.Text;
@@ -16,8 +17,33 @@ public static class CellWidth
 {
     /// <summary>How many cells a single code point occupies.</summary>
     /// <param name="rune">The code point.</param>
-    /// <returns>Two for wide and fullwidth characters, otherwise one.</returns>
-    public static int Of(Rune rune) => IsWide(rune.Value) ? 2 : 1;
+    /// <returns>Zero for a combining mark, two for wide and fullwidth, otherwise one.</returns>
+    /// <remarks>
+    /// <para>
+    /// The zero is the part that is easy to miss. A Devanagari matra, a Hebrew point, an accent
+    /// applied to the letter before it — these are drawn <em>on</em> the previous cell and take no
+    /// column of their own. Counting them as one made every such name measure wider than it
+    /// renders: <c>हेल्थ इंश्यो</c> is twelve code points and eight columns.
+    /// </para>
+    /// <para>
+    /// Two symptoms, one cause. Text was truncated early, so the cells past the end were never
+    /// written and whatever the previous frame left there — a count from the column behind —
+    /// showed through. And every chunk after a mark was positioned a column too far right, which
+    /// is the gaps that appear inside the words.
+    /// </para>
+    /// <para>
+    /// Ranger measures by East Asian Width alone (<c>ext/widestring.py:27</c>) and has the same
+    /// fault; the terminal is the authority here, not ranger. Spacing marks (<c>Mc</c>) are left
+    /// at one, because they do take a column.
+    /// </para>
+    /// </remarks>
+    public static int Of(Rune rune) => Rune.GetUnicodeCategory(rune) switch
+    {
+        UnicodeCategory.NonSpacingMark or
+        UnicodeCategory.EnclosingMark or
+        UnicodeCategory.Format => 0,
+        _ => IsWide(rune.Value) ? 2 : 1,
+    };
 
     /// <summary>How many cells a string occupies.</summary>
     /// <param name="text">The text to measure.</param>

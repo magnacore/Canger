@@ -3198,6 +3198,41 @@ The column now asks for `Size`, which for a directory is exactly "how much is in
 The order that saved this: change, then **run the thing**, then write the test. Had the unit test
 come first it would have passed against `Size` and the report would have stayed open.
 
+## Hindi filenames: gaps in the words, and a digit from the column behind
+
+Reported from a listing of Hindi video filenames: unusual spaces inside the words, and a `1` at the
+end of a row that was actually the entry count of `linux` from the parent column showing through.
+
+One cause. `CellWidth.Of` returned 1 for every code point that was not East Asian wide — including
+combining marks. A Devanagari matra is drawn *on* the letter before it and takes no column:
+`हेल्थ इंश्यो` is twelve code points and eight columns, and Canger measured twelve. So every such
+name was thought wider than it renders, was truncated early, and the cells past the end were never
+written — leaving whatever the previous frame had put there. The same drift positioned each chunk
+after a mark a column too far right, which is the gaps.
+
+Ranger measures by East Asian Width alone (`ext/widestring.py:27`) and has the same fault. The
+terminal is the authority here, not ranger.
+
+### I introduced a hang fixing it, and only running it caught that
+
+`CellWidth.Of` returning 0 was correct and not sufficient. `WideString` held one array slot per
+rune and treated the array index as the cell index — true only while every rune takes a cell — and
+`Slice` advanced by `CellWidth.Of(rune)`. A zero-width mark left the index where it was: an
+infinite loop. Canger entered the alternate screen, cleared it, and drew nothing, for ever.
+
+The unit tests were green. Twenty-six bytes of output against the previous build's three thousand
+is what showed it, on a directory of Hindi filenames created for the purpose.
+
+`WideString` now holds a *string* per cell — the letter and the marks drawn on it — and `Slice`
+advances one cell at a time, plus the continuation of a wide one, never by a rune's width. The
+buffer does the same: a zero-width rune joins the cell before it rather than taking one, which is
+also what keeps the marks on screen instead of being measured away.
+
+**Three measurements had to agree and did not.** `CellWidth.Of(text)`, `new WideString(text).Width`
+and what `ScreenBuffer.Write` returns are the same number or the model of the screen stops matching
+the screen. There is now a test that says so, which is the one that would have caught the original
+report and the hang I added on top of it.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

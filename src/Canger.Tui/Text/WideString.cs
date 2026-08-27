@@ -23,7 +23,17 @@ namespace Canger.Tui.Text;
 /// </remarks>
 public sealed class WideString
 {
-    private readonly Rune?[] _cells;
+    /// <summary>
+    /// The text occupying each cell, or <see langword="null"/> for the second half of a wide one.
+    /// </summary>
+    /// <remarks>
+    /// A <em>string</em> per cell rather than a rune, because a cell can hold more than one code
+    /// point: a letter and the marks drawn on it. Holding a rune each made the array index and the
+    /// cell index the same thing, which is true only while every rune takes a cell — and a
+    /// Devanagari matra does not. <see cref="Slice"/> then advanced by the rune's width and a
+    /// zero-width mark left it where it was, which is an infinite loop.
+    /// </remarks>
+    private readonly string?[] _cells;
 
     /// <summary>Creates a cell-addressed view of a string.</summary>
     /// <param name="text">The text.</param>
@@ -32,14 +42,31 @@ public sealed class WideString
         ArgumentNullException.ThrowIfNull(text);
         Text = text;
 
-        List<Rune?> cells = [];
+        List<string?> cells = [];
+        int last = -1;
+
         foreach (Rune rune in text.EnumerateRunes())
         {
-            cells.Add(rune);
+            int width = CellWidth.Of(rune);
+
+            if (width == 0)
+            {
+                // Drawn on the character before it. With nothing before it there is no cell to
+                // join, and a mark with no base is not text anyone meant to write.
+                if (last >= 0)
+                {
+                    cells[last] += rune.ToString();
+                }
+
+                continue;
+            }
+
+            last = cells.Count;
+            cells.Add(rune.ToString());
 
             // A wide character owns the following cell too. Marking it keeps cell index and
             // array index aligned, so a slice can tell it has landed mid-character.
-            if (CellWidth.Of(rune) == 2)
+            if (width == 2)
             {
                 cells.Add(null);
             }
@@ -88,8 +115,8 @@ public sealed class WideString
 
         while (from < to)
         {
-            Rune? rune = _cells[from];
-            if (rune is null)
+            string? cell = _cells[from];
+            if (cell is null)
             {
                 from++;
                 continue;
@@ -97,14 +124,19 @@ public sealed class WideString
 
             // A wide character whose second half falls outside the range is likewise replaced,
             // so the result still fills the cells it was asked to fill.
-            if (CellWidth.Of(rune.Value) == 2 && from + 1 >= to)
+            bool wide = from + 1 < _cells.Length && _cells[from + 1] is null;
+
+            if (wide && from + 1 >= to)
             {
                 result.Append(' ');
                 break;
             }
 
-            result.Append(rune.Value.ToString());
-            from += CellWidth.Of(rune.Value);
+            result.Append(cell);
+
+            // One cell per step, plus the continuation of a wide one. Never the rune's width:
+            // that is what looped forever on a mark measuring zero.
+            from += wide ? 2 : 1;
         }
 
         return result.ToString();
