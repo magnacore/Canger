@@ -3410,6 +3410,30 @@ because ranger does — `Loader.add` is `appendleft` unless told otherwise
 matches it, and `pP` is already bound to `paste append=True`, which queues behind whatever is
 running. So both behaviours exist; the question is only which one `pp` should be.
 
+## `--config` accused a working binding of being broken
+
+`map fh zi` was reported as naming a command that does not exist. It does exist: the zoxide plugin
+creates it in `OnInit` with `Commands.Alias("zi", "z -i")`, and `OnInit` runs after this report —
+so the alias is genuinely absent *here* and genuinely present in a session.
+
+The report already said as much in a footnote. That is not enough: the headline still read "name a
+command that does not exist", and a check that cries wolf is one people stop reading. This same
+report once hid thirty-six genuinely dead bindings behind a whitespace fault, and the reason nobody
+noticed was that its output had stopped meaning anything.
+
+It now distinguishes what it knows from what it cannot know. With no plugin hooks pending, nothing
+can define the name later and the report says "does not exist" as confidently as before. With hooks
+pending it says "could not be checked here" and explains which way to read the list.
+
+Running the hooks and checking properly is not available: `OnInit` needs an `IFileManager`, the only
+one is `Browser`, and building one needs a `Terminal` — which requires a tty and enters the
+alternate screen. `--config` is routinely piped, so that would break the flag to improve a line of
+its output.
+
+The rule is a two-line function so it could be tested at all: `ReportConfiguration` is a private
+method that prints to the console and takes six collaborators, and none of that was ever going to
+be exercised.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
