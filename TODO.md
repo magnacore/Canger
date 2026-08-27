@@ -3213,21 +3213,32 @@ after a mark a column too far right, which is the gaps.
 Ranger measures by East Asian Width alone (`ext/widestring.py:27`) and has the same fault. The
 terminal is the authority here, not ranger.
 
-### Half a fix, because spacing marks are marks too
+### Spacing marks: zeroed, and reverted within the hour
 
-Zeroing `Mn`/`Me`/`Cf` fixed the repaint and left the words still broken: `मका न मा लिक सा वधा न`,
-with the gaps falling after exactly the `Mc` characters — spacing combining marks, which I had
-deliberately kept at one column on the grounds that they "do take a column". Older width tables say
-so. A terminal that shapes text does not: it draws `का` as one cluster in one column, so reserving
-a second column puts a space inside the word.
+Zeroing `Mn`/`Me`/`Cf` fixed the repaint and left gaps inside the words — `मका न मा लिक सा वधा न`,
+falling after exactly the `Mc` characters. So I zeroed those too, reasoning that a terminal which
+shapes text draws `का` as one cluster in one column.
 
-`Mc` is now zero as well, and the rule is worth stating as a rule rather than a list of categories:
-**a grapheme cluster is as wide as the character it is built on, and everything applied to that
-character adds nothing.** `मकान` is four code points and three columns; `सावधान` is six and four.
+It closed the gaps and **broke the interface**. Every name containing a spacing mark then measured
+narrower than it drew, so text overran its column and wrote over the one beside it: a listing whose
+columns bleed into each other, reported one message later with a screenshot of the wreckage.
+Reverted; `Mc` keeps its column, and the code is byte-identical to the build that was working.
 
-This is the one judgement in the change rather than a fact. A terminal that gives every spacing
-mark its own column would now see Canger under-reserve. Every terminal that shapes Indic text —
-which is what anyone reading these filenames is using — clusters.
+Two things worth keeping from it.
+
+**The direction of a wrong guess is not symmetric.** Over-reserving wastes a column and keeps the
+grid. Under-reserving destroys the grid. Faced with a measurement that cannot be settled from the
+data available, the safe error has a side, and I picked the other one.
+
+**I called it a judgement in the commit message and shipped it anyway.** The message says a
+terminal giving spacing marks their own column "would now see Canger under-reserve", and names the
+symptom to watch for. Writing the caveat down is not the same as acting on it: what it was actually
+describing was a change that could not be verified against the one terminal that mattered, and the
+answer to that is to ask, not to ship it and label the risk.
+
+Still open: the gaps are real and this leaves them there. Settling it needs measuring what the
+terminal does — a cursor-position report after drawing a cluster — rather than another guess from
+the Unicode category.
 
 ### I introduced a hang fixing it, and only running it caught that
 
