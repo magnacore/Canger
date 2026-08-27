@@ -87,6 +87,15 @@ public sealed class CommandTask : ILoadable
     /// <summary>What the program printed to standard output.</summary>
     public string Output => _process?.StandardOutput ?? string.Empty;
 
+    /// <summary>
+    /// What the program wrote to standard error.
+    /// </summary>
+    /// <remarks>
+    /// Reported to the user when the job ends, and kept here as well for a caller that wants to
+    /// act on it — a mount refused for want of authorisation says so here and nowhere else.
+    /// </remarks>
+    public string Error => _process?.StandardError ?? string.Empty;
+
     /// <summary>Its exit code, or <see langword="null"/> until it has finished.</summary>
     public int? ExitCode => _process?.ExitCode;
 

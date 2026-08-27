@@ -15,6 +15,16 @@ public enum KeyContext
 
     /// <summary>The task view, bound with <c>tmap</c>.</summary>
     TaskView,
+
+    /// <summary>
+    /// The list of removable drives, bound with <c>dmap</c>.
+    /// </summary>
+    /// <remarks>
+    /// Canger's own, ranger having no such view. It gets a context of its own rather than
+    /// borrowing the task view's so that <c>u</c> can mean unmount here and nothing at all there,
+    /// which is the whole reason contexts exist.
+    /// </remarks>
+    Devices,
 }
 
 /// <summary>
@@ -33,6 +43,7 @@ public sealed class KeyMaps
         [KeyContext.Console] = new KeyMap(),
         [KeyContext.Pager] = new KeyMap(),
         [KeyContext.TaskView] = new KeyMap(),
+        [KeyContext.Devices] = new KeyMap(),
     };
 
     /// <summary>The key map for a context.</summary>
@@ -51,6 +62,9 @@ public sealed class KeyMaps
 
     /// <summary>The task view key map.</summary>
     public KeyMap TaskView => _maps[KeyContext.TaskView];
+
+    /// <summary>The removable drives key map.</summary>
+    public KeyMap Devices => _maps[KeyContext.Devices];
 
     /// <summary>Discards every binding in every context.</summary>
     public void Clear()

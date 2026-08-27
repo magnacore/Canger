@@ -149,6 +149,7 @@ public static class ManPage
                      (KeyContext.Console, "Console"),
                      (KeyContext.Pager, "Pager"),
                      (KeyContext.TaskView, "Task view"),
+                     (KeyContext.Devices, "Devices"),
                  ])
         {
             man.Append(CultureInfo.InvariantCulture, $".SS {title}\n");

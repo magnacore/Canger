@@ -15,6 +15,11 @@ namespace Canger.Core.Configuration;
 /// because configurations in the wild still use them.
 /// </para>
 /// <para>
+/// <c>d</c> is Canger's own, for the list of removable drives, ranger having no such view. It
+/// follows the same three shapes so that a configuration can bind, copy and unbind in it without
+/// learning anything new.
+/// </para>
+/// <para>
 /// The command is taken from the line verbatim after the key sequence, not split into words,
 /// because commands contain spaces and their own syntax:
 /// <c>map dj eval fm.cut(dirarg=dict(down=1), narg=quantifier)</c> must arrive intact. Macros
@@ -33,16 +38,19 @@ public sealed class KeyBindingDirective(KeyMaps keyMaps) : IConfigurationDirecti
             ["cmap"] = (KeyContext.Console, Operation.Bind),
             ["pmap"] = (KeyContext.Pager, Operation.Bind),
             ["tmap"] = (KeyContext.TaskView, Operation.Bind),
+            ["dmap"] = (KeyContext.Devices, Operation.Bind),
 
             ["copymap"] = (KeyContext.Browser, Operation.Copy),
             ["copycmap"] = (KeyContext.Console, Operation.Copy),
             ["copypmap"] = (KeyContext.Pager, Operation.Copy),
             ["copytmap"] = (KeyContext.TaskView, Operation.Copy),
+            ["copydmap"] = (KeyContext.Devices, Operation.Copy),
 
             ["unmap"] = (KeyContext.Browser, Operation.Unbind),
             ["uncmap"] = (KeyContext.Console, Operation.Unbind),
             ["unpmap"] = (KeyContext.Pager, Operation.Unbind),
             ["untmap"] = (KeyContext.TaskView, Operation.Unbind),
+            ["undmap"] = (KeyContext.Devices, Operation.Unbind),
 
             // Deprecated spellings, still found in existing configurations.
             ["cunmap"] = (KeyContext.Console, Operation.Unbind),

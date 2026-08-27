@@ -54,6 +54,8 @@ public sealed class Browser : IFileManager, IDisposable
     private readonly Pager _pager;
     private readonly TaskView _taskView;
     private readonly KeyBuffer _taskViewKeys;
+    private readonly DeviceView _deviceView;
+    private readonly KeyBuffer _deviceKeys;
     private readonly CommandDispatcher _dispatcher;
     private readonly Dictionary<int, Tab> _tabs;
 
@@ -239,9 +241,12 @@ public sealed class Browser : IFileManager, IDisposable
         _console = new ConsoleWidget(colorScheme) { IsVisible = false };
         _pager = new Pager(colorScheme) { IsVisible = false };
         _taskView = new TaskView(colorScheme, Tasks) { IsVisible = false };
+        Devices = new Core.Devices.DeviceSession(Runner, Tasks);
+        _deviceView = new DeviceView(colorScheme, Devices) { IsVisible = false };
         _hints = new HintWindow(colorScheme) { IsVisible = false };
         _bookmarkWindow = new BookmarkWindow(colorScheme) { IsVisible = false };
         _taskViewKeys = new KeyBuffer(keyMaps.TaskView);
+        _deviceKeys = new KeyBuffer(keyMaps.Devices);
 
         _tabs = new Dictionary<int, Tab>
         {
@@ -1382,6 +1387,15 @@ public sealed class Browser : IFileManager, IDisposable
                 Handle(_decoder.Flush());
             }
 
+            // A drive plugged in while the list is on screen should appear on its own, as it
+            // does in a desktop file manager. Only while the list is showing, and only every two
+            // seconds: lsblk reads sysfs rather than the drives themselves, so it costs nothing
+            // and cannot wake one that has spun down.
+            if (_deviceView.IsVisible && Devices.ReloadIfStale())
+            {
+                Volatile.Write(ref _needsRedraw, true);
+            }
+
             if (Tasks.HasWork)
             {
                 _hadWork = true;
@@ -1499,7 +1513,11 @@ public sealed class Browser : IFileManager, IDisposable
                 continue;
             }
 
-            if (_taskView.IsVisible)
+            if (_deviceView.IsVisible)
+            {
+                HandleDeviceKey(key.Key);
+            }
+            else if (_taskView.IsVisible)
             {
                 HandleTaskViewKey(key.Key);
                 continue;
@@ -1555,6 +1573,95 @@ public sealed class Browser : IFileManager, IDisposable
 
     /// <summary>Whether the task view is showing.</summary>
     public bool IsTaskViewOpen => _taskView.IsVisible;
+
+    /// <inheritdoc />
+    public Core.Devices.DeviceSession Devices { get; }
+
+    /// <inheritdoc />
+    public void OpenDevices()
+    {
+        // Read before it appears rather than after, so the list is never briefly blank and never
+        // briefly wrong. It costs one lsblk, which reads sysfs and does not touch the drives.
+        Devices.Reload();
+        _deviceView.IsVisible = true;
+        _deviceKeys.Clear();
+    }
+
+    /// <inheritdoc />
+    public void CloseDevices() => _deviceView.IsVisible = false;
+
+    /// <summary>Whether the device list is showing.</summary>
+    public bool IsDevicesOpen => _deviceView.IsVisible;
+
+    /// <summary>Routes a key while the device list has focus.</summary>
+    private void HandleDeviceKey(int key)
+    {
+        string? action = _deviceKeys.Add(key);
+
+        if (action is not null)
+        {
+            RunDeviceAction(action);
+        }
+
+        if (_deviceKeys.IsFinished || _deviceKeys.HasFailed)
+        {
+            _deviceKeys.Clear();
+        }
+    }
+
+    /// <summary>Carries out a device list binding.</summary>
+    /// <remarks>
+    /// Only the two that need the screen are handled here — moving the cursor has to know how
+    /// tall the window is. Everything else is an ordinary command, so it can equally be typed at
+    /// the console or bound anywhere else.
+    /// </remarks>
+    private void RunDeviceAction(string action)
+    {
+        string[] parts = action.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        switch (parts.Length > 0 ? parts[0] : action)
+        {
+            case "devices_move":
+                MoveDeviceCursor(parts.Length > 1 ? parts[1] : string.Empty);
+                break;
+
+            case "redraw_window":
+                Redraw();
+                break;
+
+            default:
+                _dispatcher.Execute(action);
+                break;
+        }
+    }
+
+    /// <summary>Moves the device list cursor according to a movement command's arguments.</summary>
+    private void MoveDeviceCursor(string arguments)
+    {
+        Dictionary<string, string> named = new(StringComparer.Ordinal);
+
+        foreach (string part in arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int equals = part.IndexOf('=', StringComparison.Ordinal);
+            if (equals > 0)
+            {
+                named[part[..equals]] = part[(equals + 1)..];
+            }
+        }
+
+        Direction direction = Direction.FromArguments(named);
+
+        if (direction.IsAbsolute)
+        {
+            Devices.MoveCursorToEdge(toEnd: direction.Down < 0);
+            return;
+        }
+
+        double amount = direction.Down;
+        Devices.MoveCursor((int)(direction.Pages
+                                     ? amount * Math.Max(_screen.Height - 3, 1)
+                                     : amount));
+    }
 
     /// <summary>Routes a key while the task view has focus.</summary>
     private void HandleTaskViewKey(int key)
@@ -2208,7 +2315,7 @@ public sealed class Browser : IFileManager, IDisposable
         _view.WrapPreviews = Settings.WrapPlaintextPreviews;
         _view.ClearPendingImage();
 
-        if (!_pager.IsVisible && !_taskView.IsVisible)
+        if (!_pager.IsVisible && !_taskView.IsVisible && !_deviceView.IsVisible)
         {
             if (Settings.Viewmode is "multipane")
             {
@@ -2222,7 +2329,13 @@ public sealed class Browser : IFileManager, IDisposable
         }
 
         // The task view and the pager each take the whole area between the bars.
-        if (_taskView.IsVisible)
+        if (_deviceView.IsVisible)
+        {
+            _deviceView.BinaryPrefix = Settings.BinarySizePrefix;
+            _deviceView.Layout(BrowserBounds());
+            _deviceView.Render(_screen);
+        }
+        else if (_taskView.IsVisible)
         {
             _taskView.Layout(BrowserBounds());
             _taskView.Render(_screen);
