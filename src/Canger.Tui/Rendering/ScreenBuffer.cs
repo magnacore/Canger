@@ -11,7 +11,13 @@ namespace Canger.Tui.Rendering;
 /// Whether this cell is the second half of a wide character that starts in the cell before it.
 /// Nothing is drawn for it; it exists so that the grid and the screen stay the same shape.
 /// </param>
-public readonly record struct Cell(Rune Rune, CellStyle Style, bool IsContinuation = false)
+/// <param name="Combining">
+/// Marks drawn on top of <paramref name="Rune"/> — a Devanagari matra, an accent — which occupy
+/// no column of their own. They have to be held here rather than in a cell of their own, because
+/// a cell is a column and these are not.
+/// </param>
+public readonly record struct Cell(Rune Rune, CellStyle Style, bool IsContinuation = false,
+                                   string? Combining = null)
 {
     /// <summary>An empty cell in the terminal's own colours.</summary>
     public static Cell Blank => new(new Rune(' '), CellStyle.Default);
@@ -192,6 +198,20 @@ public sealed class ScreenBuffer
             return width;
         }
 
+        if (width == 0)
+        {
+            // Onto the character it belongs to. Nothing to attach to at the very start of a row
+            // means a mark with no base, which is not text anyone meant to write.
+            if (x > 0)
+            {
+                Cell host = _current[(y * Width) + x - 1];
+                _current[(y * Width) + x - 1] =
+                    host with { Combining = host.Combining + rune.ToString() };
+            }
+
+            return 0;
+        }
+
         _current[(y * Width) + x] = new Cell(rune, style);
 
         if (width == 2)
@@ -293,7 +313,7 @@ public sealed class ScreenBuffer
             Cell cell = _current[(y * Width) + x];
             if (!cell.IsContinuation)
             {
-                text.Append(cell.Rune.ToString());
+                text.Append(cell.Rune.ToString()).Append(cell.Combining);
             }
         }
 
@@ -354,7 +374,7 @@ public sealed class ScreenBuffer
                     activeStyle = cell.Style;
                 }
 
-                output.Append(cell.Rune.ToString());
+                output.Append(cell.Rune.ToString()).Append(cell.Combining);
                 cursorX += CellWidth.Of(cell.Rune);
             }
         }
