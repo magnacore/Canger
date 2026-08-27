@@ -3172,6 +3172,664 @@ the shipped plugin and asks the registered linemode for glyphs, which is the sam
 that does not build would leave the linemode simply absent, and `default_linemode devicons` would
 fall back with no complaint anyone would notice.
 
+## A directory of hidden files counted as empty
+
+Reported: `~/Downloads/MEGA` holds two hidden items; ranger shows 2 and Canger showed 0.
+
+Ranger's count is `self.size = len(filelist)` straight from `os.listdir`
+(`container/directory.py:391`) — every name on disk, before any filtering. Canger counted the
+*displayed* listing.
+
+Which made the number depend on something the user cannot see. Unvisited, a directory reported the
+shallow count, which counts everything; once loaded it reported the filtered listing. So `MEGA`
+read 2 until you looked inside it and 0 ever after. Measured in a pty before the fix: `MEGA=2` at
+startup, `MEGA=0` after entering and leaving.
+
+### Fixing `Size` fixed nothing anyone could see
+
+`DirectoryNode.Size` was the obvious place and the change was right, and the pty still showed 0 —
+because the column does not read `Size`. `LinemodeText.Size` asks for `DirectoryNode.Count`, which
+is `_entries.Count`, the displayed listing. Two properties, two call sites, one of them the one
+that matters.
+
+`Count` stays as it is: the cursor and the `3/48` position indicator need the number of *rows*.
+The column now asks for `Size`, which for a directory is exactly "how much is in here".
+
+The order that saved this: change, then **run the thing**, then write the test. Had the unit test
+come first it would have passed against `Size` and the report would have stayed open.
+
+## Hindi filenames: gaps in the words, and a digit from the column behind
+
+Reported from a listing of Hindi video filenames: unusual spaces inside the words, and a `1` at the
+end of a row that was actually the entry count of `linux` from the parent column showing through.
+
+One cause. `CellWidth.Of` returned 1 for every code point that was not East Asian wide — including
+combining marks. A Devanagari matra is drawn *on* the letter before it and takes no column:
+`हेल्थ इंश्यो` is twelve code points and eight columns, and Canger measured twelve. So every such
+name was thought wider than it renders, was truncated early, and the cells past the end were never
+written — leaving whatever the previous frame had put there. The same drift positioned each chunk
+after a mark a column too far right, which is the gaps.
+
+Ranger measures by East Asian Width alone (`ext/widestring.py:27`) and has the same fault. The
+terminal is the authority here, not ranger.
+
+### Spacing marks: zeroed, and reverted within the hour
+
+Zeroing `Mn`/`Me`/`Cf` fixed the repaint and left gaps inside the words — `मका न मा लिक सा वधा न`,
+falling after exactly the `Mc` characters. So I zeroed those too, reasoning that a terminal which
+shapes text draws `का` as one cluster in one column.
+
+It closed the gaps and **broke the interface**. Every name containing a spacing mark then measured
+narrower than it drew, so text overran its column and wrote over the one beside it: a listing whose
+columns bleed into each other, reported one message later with a screenshot of the wreckage.
+Reverted; `Mc` keeps its column, and the code is byte-identical to the build that was working.
+
+Two things worth keeping from it.
+
+**The direction of a wrong guess is not symmetric.** Over-reserving wastes a column and keeps the
+grid. Under-reserving destroys the grid. Faced with a measurement that cannot be settled from the
+data available, the safe error has a side, and I picked the other one.
+
+**I called it a judgement in the commit message and shipped it anyway.** The message says a
+terminal giving spacing marks their own column "would now see Canger under-reserve", and names the
+symptom to watch for. Writing the caveat down is not the same as acting on it: what it was actually
+describing was a change that could not be verified against the one terminal that mattered, and the
+answer to that is to ask, not to ship it and label the risk.
+
+Still open: the gaps are real and this leaves them there. Settling it needs measuring what the
+terminal does — a cursor-position report after drawing a cluster — rather than another guess from
+the Unicode category.
+
+### I introduced a hang fixing it, and only running it caught that
+
+`CellWidth.Of` returning 0 was correct and not sufficient. `WideString` held one array slot per
+rune and treated the array index as the cell index — true only while every rune takes a cell — and
+`Slice` advanced by `CellWidth.Of(rune)`. A zero-width mark left the index where it was: an
+infinite loop. Canger entered the alternate screen, cleared it, and drew nothing, for ever.
+
+The unit tests were green. Twenty-six bytes of output against the previous build's three thousand
+is what showed it, on a directory of Hindi filenames created for the purpose.
+
+`WideString` now holds a *string* per cell — the letter and the marks drawn on it — and `Slice`
+advances one cell at a time, plus the continuation of a wide one, never by a rune's width. The
+buffer does the same: a zero-width rune joins the cell before it rather than taking one, which is
+also what keeps the marks on screen instead of being measured away.
+
+**Three measurements had to agree and did not.** `CellWidth.Of(text)`, `new WideString(text).Width`
+and what `ScreenBuffer.Write` returns are the same number or the model of the screen stops matching
+the screen. There is now a test that says so, which is the one that would have caught the original
+report and the hang I added on top of it.
+
+## The `?` on a measured size never went away
+
+Reported: `dc` measures a directory, deleting something inside it makes the figure stale so a `?`
+appears against it, and `dc` again leaves the `?` there — on a figure that had just been taken.
+
+`GetCumulativeSizeCommand` set `CumulativeSize` and never touched `CumulativeSizeStale`. The flag
+had exactly one writer that cleared it — the reload path, and only when
+`autoupdate_cumulative_size` is on. So once anything set it, the marker was permanent: `dc`
+reported a new size still wearing the doubt about the old one.
+
+Ranger has no flag to forget, which is why it cannot have this bug: `look_up_cumulative_size`
+rewrites the whole infostring with a plain separator (`container/directory.py:582-585`), so the
+`?` is not cleared, it simply is not written again. Canger split the figure and its uncertainty
+into two fields, and then updated one of them.
+
+Worth keeping: **a flag that qualifies a value has to be written wherever the value is.** Storing
+"is this stale" apart from the thing it is about means every writer of the thing is a writer of the
+flag, and the compiler will not say so.
+
+Verified in a pty: `2`, then `700 k`, then `700? k` after a deletion, then the new figure with no
+marker.
+
+## No progress bar behind the status line during a copy
+
+Reported: ranger tints the status bar as a copy runs; Canger did not.
+
+Every piece was there. `CopyProgress.Fraction`, `QueuedTask.Progress`, `TaskQueue.OverallProgress`
+averaging across the queue exactly as ranger does (`sum(states) / len(states)`,
+`gui/widgets/statusbar.py:334-338`), the setting, the colour, and `DrawProgress` recolouring the
+left of the bar. All of it correct and none of it reached.
+
+`StatusBar.Draw` writes the headline — a message, or the running task's description — and
+**returns**. During a transfer the headline is the task description, so the one moment the bar had
+progress to show was the moment it stopped before showing it. Ranger tints after printing, over
+whatever is there (`statusbar.py:332-341`).
+
+The tint now runs in that path too, but not under a message the user asked for: ranger draws those
+through `_draw_message`, which does no tinting, and a notice about something that has already
+happened is not progress.
+
+### Four measurements, three of them wrong
+
+The first pty test copied 859 MB and reported no colour — and never checked that anything had been
+copied. The second copied 1500 files, confirmed all 1500 arrived, and reported no colour, which was
+true and told me nothing about why. The third grepped for a background code that would have matched
+had one been emitted. Only the fourth — sampling the status row itself every 50 ms — showed
+`copying src: 6% … 30% … 65% … 89%`, which proved the progress was live, the bar was redrawn, and
+the fault was in the drawing rather than the arithmetic.
+
+**A test on the mechanism passed while the feature was broken.** `Progress = 0.5` tinted the bar
+correctly, because that path is the one nothing takes during a copy. The test that catches this
+sets `TaskDescription` as well, which is the state the bar is actually in.
+
+### Two transfers at once: already correct
+
+Checked because it was asked about. Two pastes queue as two tasks, the task view lists both with
+their own percentages — `76% copying aaa` above `0% copying aaa` — and the queue runs them one at a
+time, as ranger's loader does. The status bar averages them, so a second transfer starting pulls the
+bar back rather than restarting it.
+
+## Copying one large file froze the whole interface
+
+Reported: a film copied from a USB disc froze Canger from `pp` until the copy finished — no
+progress bar, no keys, no way to cancel.
+
+`CopyJob.TransferFile` called `_engine.CopyFile` once per file, and that call returned when the
+file was done. The task queue's time slice therefore only ever fell *between* files, so a single
+large file took the main loop with it for the whole transfer. The progress figures were updating
+the entire time; nothing was running that could draw them. Ranger's copy is a generator that yields
+inside its byte loop for exactly this reason (`core/loader.py:120-160`).
+
+`copy_file_range` made it worse: the old loop asked the kernel for the whole remainder in one call,
+and that call does not return until it has moved it. One syscall was the entire freeze.
+
+### The shape of the fix
+
+`CopyEngine.CopyFileSteps` copies a piece at a time and hands control back between pieces. A piece
+is a time budget rather than a byte count, because the same number of bytes takes wildly different
+times on an SSD and on a USB disc; and a piece always moves *something*, so a budget already spent
+cannot hand back control having done nothing.
+
+`CopyFile` is now a drain of that iterator, which is why its twenty-two call sites are untouched
+and why the two cannot drift: it is the same copy, run without pausing.
+
+### The state that did not exist before
+
+A half-copied file used to be unobservable — the copy either finished or threw, and one `catch`
+removed the remains. Pausing makes it reachable, because a caller can simply stop asking. So
+cleanup moved out of the `catch` and into `Transfer.Dispose`, reached from a `finally` around the
+whole enumeration: failure, cancellation and plain abandonment all arrive at the same place, and a
+destination this engine created is removed unless the copy finished and succeeded. A destination
+that was *already there* is never removed — `destinationIsOurs` is still taken before anything is
+opened.
+
+Verified by deleting that cleanup and watching three tests fail, one of them an audit-era test that
+predates this change.
+
+`yield return` cannot appear inside a `try` with a `catch`, which is what forced this shape rather
+than a lightly edited loop — and the shape turned out to be the safer one. The alternative
+considered and rejected was moving the copy to a worker thread: it would have left the audited
+byte-moving code untouched, but cleanup would then race with quitting.
+
+### Measured
+
+| | writes to the terminal during the copy | longest silence |
+|---|---|---|
+| before | 2 | 366 ms — the whole copy |
+| after | 11 | 40 ms |
+
+That is on tmpfs. On a USB disc at thirty megabytes a second the same silence is half a minute,
+which is what was reported. A 900 MB copy came out byte-identical, and the task view opens a tenth
+of a second into a copy that used to accept no keys at all.
+
+Seven new tests, and the step size is a seam so they exercise the pausing on any disc: a time
+budget means a fast one finishes a test file inside a single piece, which is right for the program
+and useless for a test.
+
+## The resumed transfer lost its name in the status bar
+
+Reported: two films pasted one after the other. The second ran, the first paused; when the second
+finished the first resumed — and its description and time remaining disappeared from the status
+bar, though the task view still showed both.
+
+`TaskQueue.Current` was `_tasks[0]`, the head of the list. That is the running job only while
+nothing finishes out of order. A paste goes to the front, so:
+
+| | list | `Current` | status bar |
+|---|---|---|---|
+| first paste | `[A]` | A | A |
+| second paste | `[B, A]` | B | B |
+| B finishes | `[B✔, A]` | **B, complete** | **nothing** |
+
+A is running; the list still begins with B. `Current` is now `NextRunnable()` — the job the queue
+would actually serve — so the head of the list and the job being worked on are no longer confused.
+
+That mattered in a second place nobody had reported: `abort` stops `Tasks.Current`, so after any
+task finished out of order there was a running copy that `abort` would not stop.
+
+The throbber needed the opposite question and had been getting the right answer by accident. It
+shows `#` when work is paused, which `Current` can no longer say — a paused task is skipped in the
+search for a runnable one. It now asks directly: work left, and none of it runnable.
+
+## Pasting order: ranger's, and there is already a binding for the other one
+
+Also asked: whether a second paste should wait rather than pushing the first aside. It pushes
+because ranger does — `Loader.add` is `appendleft` unless told otherwise
+(`core/loader.py:353-366`), and ranger's `paste` passes `append` straight through. Canger's `pp`
+matches it, and `pP` is already bound to `paste append=True`, which queues behind whatever is
+running. So both behaviours exist; the question is only which one `pp` should be.
+
+## `--config` accused a working binding of being broken
+
+`map fh zi` was reported as naming a command that does not exist. It does exist: the zoxide plugin
+creates it in `OnInit` with `Commands.Alias("zi", "z -i")`, and `OnInit` runs after this report —
+so the alias is genuinely absent *here* and genuinely present in a session.
+
+The report already said as much in a footnote. That is not enough: the headline still read "name a
+command that does not exist", and a check that cries wolf is one people stop reading. This same
+report once hid thirty-six genuinely dead bindings behind a whitespace fault, and the reason nobody
+noticed was that its output had stopped meaning anything.
+
+It now distinguishes what it knows from what it cannot know. With no plugin hooks pending, nothing
+can define the name later and the report says "does not exist" as confidently as before. With hooks
+pending it says "could not be checked here" and explains which way to read the list.
+
+Running the hooks and checking properly is not available: `OnInit` needs an `IFileManager`, the only
+one is `Browser`, and building one needs a `Terminal` — which requires a tty and enters the
+alternate screen. `--config` is routinely piped, so that would break the flag to improve a line of
+its output.
+
+The rule is a two-line function so it could be tested at all: `ReportConfiguration` is a private
+method that prints to the console and takes six collaborators, and none of that was ever going to
+be exercised.
+
+## The status bar's percentage restarted when a transfer finished
+
+Reported: with two films queued, the bar climbed while the first copied and went back to nothing
+the moment it finished.
+
+`OverallProgress` averaged the jobs that were **not complete**. Finishing one took it out of the
+reckoning, so the figure stopped describing the work and started describing whatever was left of
+it — which, with the second film untouched, was nothing.
+
+Ranger does the same: `_print_result` averages `self.fm.loader.queue`
+(`gui/widgets/statusbar.py:332-341`), and `_remove_current_process` takes a finished job out of
+that queue (`core/loader.py:480-486`). So the restart is ranger's behaviour too, and it is still
+wrong: a bar that speaks for a queue should speak for the whole of it.
+
+Finished jobs now count. They are swept only when the queue drains
+(`Browser.ReportFinishedWork`), so while anything is running they are exactly the part of the work
+that is done.
+
+### Weighting by size was the better idea and the worse figure
+
+The obvious refinement — weigh a four-gigabyte film above a hundred-megabyte one — was written,
+tested and reverted within the hour. A transfer does not know its total until it has walked its
+sources, which is work it deliberately does a piece at a time, so a job waiting its turn weighs
+almost nothing. The figure climbed to 0.9999 on the first film and **fell to 0.857** when the
+second started and its size arrived.
+
+That is the same defect as the one being fixed, arriving by a more sophisticated route. Equal
+weighting is only roughly right, and a number that goes backwards is worse than one that is
+roughly right — which is the whole complaint.
+
+The `Weight` member added for it was removed rather than left unused. This file has four entries
+about mechanisms nobody consumed; it did not need a fifth.
+
+## A copy within one USB disc was still sluggish
+
+Reported after the resumable copy landed: a film from the USB disc to the internal one kept the
+interface responsive, but the same film copied *within* the USB disc did not.
+
+The difference is which path the copy takes. Across filesystems the kernel refuses
+`copy_file_range` — `EXDEV` — so the copy falls back to sixteen-kilobyte blocks with the deadline
+checked between each, and stays responsive. Within one filesystem the kernel path is available, and
+it was being asked for eight megabytes at a time. `copy_file_range` does not return until it has
+moved what it was asked for, so on a spindle serving both the read and the write, one call was
+most of a second. Pausing between calls cannot help when a call is the problem.
+
+The run length now adapts: it starts at a quarter of a megabyte, halves when a call overruns the
+step budget and doubles when a call takes less than half of it, between one block and eight
+megabytes. A solid-state disc climbs to the ceiling in a few doublings; a slow one settles at
+whatever it can manage.
+
+The floor is one block, deliberately — the same amount the fallback path moves per read, and that
+path is the one reported as responsive on this very device. Going lower would spend more on
+syscalls than on copying; stopping higher would leave the kernel path coarser than the one already
+known to behave.
+
+Doubling and halving rather than solving for the budget directly: the measurement is noisy, and a
+rule that moves gently is easier to trust than one that swings.
+
+Six tests on the rule, and one that copies the same file at three run lengths and compares the
+bytes — the adjustment changes how much is asked for at a time and must change nothing else. The
+device that provokes it is a backup disc belonging to the user, so the real confirmation is theirs
+to make.
+
+## Checked: the time remaining across several files
+
+Asked to double-check the estimate when a transfer is more than one file. It is right, and now has
+tests saying so rather than a reading of the code.
+
+- **What is left is the whole transfer.** `ReviseTotal` sets `TotalBytes` once the sources have
+  been walked, and `Estimate` divides `TotalBytes - CompletedBytes` by the rate. Four files or one,
+  the remainder is the remainder.
+- **A file that finishes without moving data still shortens it.** A reflink or a rename adds its
+  size to `CompletedBytes`, so what is left drops and the estimate falls with it.
+- **That file does not reach the rate.** A hundred megabytes in no time would read as an impossible
+  speed and collapse the estimate for everything after it, so `CompleteWithoutTransfer` deliberately
+  does not sample.
+- **Moving to the next file keeps the rate.** `BeginFile` only records the name; nothing resets the
+  meter, so the estimate does not blank between every pair of files.
+- **The rate is smoothed and recent** — an exponential average of samples taken no oftener than
+  every hundred milliseconds, so time spent walking the sources or on instant files cannot drag it
+  down.
+
+### One inconsistency, introduced by the fix before it
+
+The status bar now carries two numbers that answer different questions. The tint behind the line is
+the whole queue — that was the point of the last change — while the text on it is the running
+job's: `copying film-a: 50% … ETA 00:30` with the bar at a quarter, because a second film is
+waiting.
+
+Both are correct and they disagree, which is worse than either. Ranger does not have the problem
+because it never puts the description in the status bar at all; that is Canger's addition. Not
+fixed, because which way to resolve it is a judgement: a queue-wide ETA is the honest companion to
+a queue-wide bar, but the per-file figure is the one that tells you whether to wait for *this* file.
+
+## Verified: measuring cannot be driven without also starting the copy
+
+Before building a queue-wide estimate, the thing to check was whether a transfer's measuring phase
+can be run on its own — because a queue-wide estimate needs the size of jobs that have not started.
+
+It cannot, as written. `CopyJob.Steps` walks the sources and sums their sizes, then falls straight
+into the copying loop in the same enumerator. Measured with three files: the total is complete at
+**step 3** and the first byte is written at **step 4**. Adjacent, with nothing announcing the
+boundary.
+
+Nor can a caller predict the step to stop at. Measuring yields once per file *found*, so a single
+directory source yields as many times as it holds files — the step count is exactly the thing being
+measured.
+
+So the design proposed for a queue-wide estimate needs one more piece than it appeared to: the two
+phases have to be separated first — a measuring pass the queue can run to completion for every
+queued job, and a copying pass that skips it when the total is already known. That is a change to
+`CopyJob`'s shape, not just an addition to the queue.
+
+Both facts are now tests: nothing is written until the whole transfer has been measured, and
+copying begins on the very next step. The first is an invariant worth keeping whatever happens to
+the estimate — a percentage against an unknown total is a lie — and the second is the one that
+would quietly stop being true if the phases were ever reordered.
+
+**Worth the check.** The claim was "I've read that it yields separately"; what it does is yield
+separately and then continue without pause, which reads the same in the source and is not the same
+thing at all.
+
+## The status bar now speaks for the whole queue
+
+Two films pasted one after the other showed the second one's percentage restarting from nothing.
+The bar had only ever described whichever film was moving, and it could not describe more than
+that: a job awaiting its turn had no size, and the previous section established that it could not
+be asked for one without also starting it.
+
+**Sizing is now separate from transferring.** `CopyJob` has a `SizingSteps()` walk that sums the
+sources and stops, and `Steps()` drains it first — so a job the queue sized while something else
+ran starts moving data on its first step, and a job driven directly still sizes itself. One walk
+either way; the iterator is shared, so the tree is never read twice.
+
+**The queue sizes what is waiting, in a tenth of each slice.** Not as a task in the task view,
+which is the obvious design and the wrong one: the queue serves one job at a time, so a sizing
+task at the front would take every slice until it finished and stop the copy behind it dead — for
+seconds, on a large tree. Three milliseconds of the thirty instead, which is around a fifth of a
+second of walking per second of real time. The one-job-at-a-time rule does not apply here because
+its reason does not: two walks read metadata and do not halve each other's throughput the way two
+copies do. On a spinning drive they do cost seeks, which is what the ceiling is for.
+
+**The percentage is byte-weighted again.** This was tried once and reverted, because a job waiting
+its turn weighed nothing until it started and the figure *fell* when its size arrived. What
+changed is that the size now arrives a frame or two after the paste rather than minutes later. The
+other half is the guard: until everything outstanding has a size, the old average is used, so the
+weighted figure never starts from a total it is about to revise. A job that cannot be sized at all
+— unpacking an archive, an external command — keeps the average for the whole queue, because a
+byte figure that quietly leaves work out is worse than none.
+
+Measured in a pty, two 1.5 G pastes: **5% → 100% without a step backwards**, `(1 of 2)` becoming
+`(2 of 2)` at the seam.
+
+### Two things the pty found that the unit tests could not
+
+**`387 k/s ETA 1:00:58`, for a second or so after the first film finished.** `CopyProgress` started
+its clock in its constructor — which is when paste is pressed, not when the job runs. A job that
+waited its turn divided its first real bytes by the whole wait. The clock now starts at the first
+file it touches. This was wrong before any of this work and nothing showed it, because with one
+job the wait is a few milliseconds.
+
+**The estimate blinked out at the handover.** A job that has just started has moved nothing and so
+has no rate. The queue keeps the last throughput it saw and uses it until the new job has its own,
+and forgets it when the queue empties — the next paste may be going to a memory stick.
+
+### What it still cannot do
+
+The figures cover the sized part of the queue and mark themselves with a `+` while anything is
+unsized. That window is a frame or two for files and as long as the walk takes for a large tree.
+
+One estimate, one rate. If the running job is going to the SSD and the queued one to a USB drive,
+the estimate assumes the SSD's speed for both and reads low until the second starts. Fixing that
+means measuring per destination, which is not worth it.
+
+A paused job is still counted as work to come. Pausing is deliberate and the user can see what
+they held.
+
+### One message for the whole run
+
+`ReportFinishedWork` notified once per finished job, and `Notify` replaces the message outright,
+so what survived was whatever finished last. The wrong count — `done: 1 files` after two
+transfers of one file each — was the visible half. The half worth fixing was that a transfer
+which had *lost* a file could be reported and then unreported within the same frame by a clean
+transfer finishing beside it. Nothing was lost but the telling, which is bad enough: the entire
+purpose of the notice is that a file which did not arrive should be noticed.
+
+`FinishedWork.Describe` now sums up the run and returns one message. Trouble outranks everything —
+a run with any problem in it says so and says how many; only a clean run says `done`. A run that
+was stopped says `stopped: n files copied` rather than congratulating the user who pressed abort.
+Being a pure function of the finished jobs, it is testable, which the loop inside the draw path
+was not.
+
+Confirmed live: two pastes of one file now report `done: 2 files`.
+
+## Figures that stay in their columns
+
+Every field on the transfer line changes width as it counts — `5%` to `48%` to `100%`, `159 M` to
+`1.08 G`, `671 M/s` to `1.18 G/s` — and each change shoved everything after it sideways. The rate
+and the time remaining, which are the two a person actually watches, jittered several times a
+second.
+
+Each field is now given a width wide enough for anything it can hold. The widths suit decimal
+prefixes, which is what this line uses: three significant figures and a one-letter unit reach six
+characters at their widest, `88.5 M`, because the count rolls over at a thousand rather than at
+1024. Padding only grows a field, so a value that somehow outgrew its column is still shown whole
+— untidy beats wrong. Whichever field comes last needs no width at all, since nothing follows it
+to be pushed along.
+
+It was written twice, once in `CopyProgress.Describe` and once in `QueueSummary.Describe`, so the
+line about one transfer and the line about all of them could drift apart. Both now go through
+`TransferFigures.Describe`.
+
+Measured in a pty across a two-job paste: every column held through the total being revised from
+900 M to 1.8 G, through the completed count rolling from M to G, and through the rate changing
+width.
+
+## Removable drives: list, mount, unmount, safely remove
+
+Thunar shows an external drive in its sidebar, mounts it on a click and ejects it from a menu.
+Canger had nothing: a USB drive could only be reached by knowing where udisks had put it, and
+mounting or ejecting one meant leaving the file manager.
+
+**Ranger has no equivalent, so for once there was nothing to match.** The design follows the shape
+of the nearest ranger-derived thing — the task view — so it reads as part of the program rather
+than bolted on: an overlay in the same place, `devices_open`/`devices_close` beside
+`taskview_open`/`taskview_close`, and a key map of its own bound with `dmap`. `<F9>` opens it and
+`:devices` is the same thing typed.
+
+### Two things about lsblk that reasoning gets wrong
+
+Both were found by looking at the drive on this machine rather than by thinking about it, and each
+would have shipped a feature that did nothing.
+
+**`RM` is not the removable flag.** It is the old removable-media bit and means floppies and
+optical drives; the WD USB disk here reports `RM=false`. The flag that matters is `HOTPLUG`,
+confirmed by the transport. Filtering the obvious way lists nothing at all.
+
+**Removability cannot be read off the volume.** The unlocked mapper inside an encrypted USB drive
+reports `HOTPLUG=false` and no transport, being a device-mapper node attached to nothing. It has
+to be inherited from the physical drive at the top of the tree.
+
+There is a third, which is that **this machine's only external drive is encrypted** — so unlock and
+lock had to be in the first cut rather than a later addition, or the feature would have been
+useless on the hardware it was written for.
+
+### Safety
+
+Everything goes through `udisksctl` and nothing else. No `mount(8)`, no `umount`, no `eject`,
+nothing as root — udisks mounts under `/media/$USER` the way the desktop does, so a drive mounted
+here behaves exactly as one mounted from Thunar.
+
+**Nothing is ever forced.** No `-f`, no lazy unmount anywhere. A busy filesystem must fail and say
+so. Removing a drive is one shell command with the steps joined by `&&`, which buys stop-on-failure
+for nothing: a filesystem that will not unmount fails the line and the power is never cut.
+
+**Four refusals, checked in order**: the list is re-read before acting, because what is on screen
+can be two seconds old and two seconds is long enough to unplug something; a drive that is no
+longer attached is refused; a drive holding `/`, `/boot`, `[SWAP]` and the rest never appears at
+all, re-checked at action time; and a drive Canger is itself copying to or from is refused.
+
+That last one is not redundant with the kernel. A transfer holds the file it is copying open, so
+the kernel refuses to unmount underneath it — but **between two files it holds nothing**, and an
+unmount landing in that gap succeeds and breaks the copy. Nothing already written is lost, but the
+transfer fails for a reason the user did not intend and cannot see.
+
+**The passphrase never passes through Canger.** Unlocking is the one action given the terminal,
+because udisksctl prompts for it itself with the echo off. Everything else runs on the task queue,
+told `--no-user-interaction` — a backgrounded udisksctl that raised a polkit prompt would wait
+forever with nothing on screen to type at. When one is refused for want of authorisation, and only
+then, the same command is run again with the terminal so `pkttyagent` can ask.
+
+### Testing something that cannot be tried out
+
+The cost of getting one of these commands wrong is a drive unplugged mid-write, so none of it can
+be tested by running it. Building the command is therefore separated from running it, and reading
+the drives is separated from parsing them: **every decision is a function of its arguments**.
+
+The fixtures are real `lsblk` output rather than something written to suit the parser — one
+captured from this machine, serials and UUIDs replaced, and one for the case that would otherwise
+never be thought of: an internal SATA bay reporting `HOTPLUG=true`, where the flag alone would
+offer the running system for ejection. 43 tests, none of which need a drive.
+
+Verified in a pty against the real hardware, read-only: `<F9>` lists the WD drive's container and
+the filesystem inside it, does not list the internal NVMe, and `<ESC>` closes it.
+
+### Two things the pty said that were not true
+
+A stray replacement character and a leftover column rule appeared on screen. Both were the probe
+decoding each read separately and splitting a UTF-8 sequence across the boundary. Worth writing
+down because the instinct was to go looking in `ScreenBuffer` — the same lesson as before, that
+*"I could not reproduce it" is a statement about the instrument*, in its other direction.
+
+### Known limits
+
+Only udisks2; a machine without it is told so and nothing else happens. No network shares, optical
+media or phones, and not the internal disks Thunar also lists. The size column follows
+`binary_size_prefix` like the rest of Canger, so it says `4 T` where lsblk says `3.6T` — the same
+4 000 752 599 040 bytes counted in thousands rather than in 1024s.
+
+## Every key in the device list ran twice
+
+`q` in the device list closed the list and then quit Canger. The key routing was a chain of
+`if`s, each ending in `continue`, and the branch added for the device view had no `continue` — so
+the key was handled by the device map and then handled again by the browser map. Both halves did
+exactly what they were bound to do. Nothing failed, nothing was logged, and the whole suite was
+green: 1703 tests, none of which can reach `Browser`'s input loop.
+
+`m` set a bookmark, `u` started an unmark, `<CR>` opened whatever the browser cursor was on. `q`
+is simply the one that was noticed, because quitting is hard to miss.
+
+**Fixed structurally rather than by adding the missing keyword.** The chain is now one
+`FocusedOn(...)` call and a `switch`, so "exactly one part of the interface gets the key" is
+decided in a function that can be stated and tested instead of being a property of a chain
+written in the right order and left in the right way. `InternalsVisibleTo` was already there for
+precisely this — Browser needs a real terminal to construct, so its decisions are tested apart
+from its drawing.
+
+Reproduced and fixed in a pty, both ways round: with the `continue` removed, `<F9>` then `q` exits;
+with it restored, it does not, while `q` in the browser still does.
+
+The pty probe had to be fixed first. It polled `waitpid` after a read loop that ends for its own
+reasons, and reported "still running" for a process that had plainly quit — so the first three
+attempts to reproduce this said the bug was not there. It now treats the pty closing as the exit,
+which is what actually happens. *Twice now the instrument has been the thing that was wrong.*
+
+## Ejecting a drive Canger is looking at
+
+`e` on a mounted drive reported `GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: target is
+busy`. A file manager showing a directory is a reason that directory cannot be unmounted, and
+Canger standing in the way of its own eject is no use to anybody — Thunar handles it by leaving
+first, which is why ejecting from Thunar lands you in your home directory.
+
+Unmount and eject now do the same: every tab looking at the drive is sent home, the cached
+listings for it are dropped, and any preview taken from it is thrown away. Anything **else** still
+holding the drive — a video playing, an editor with a file open — is beyond reach, and the unmount
+then fails and says so, which is the right answer.
+
+Not confirmed against the drive itself: it was unmounted by the time this was looked at, so what
+actually held it could not be established. What is established is that Canger is no longer a
+candidate.
+
+**And the error is now in English.** `Error unmounting /dev/dm-2:
+GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: Error unmounting /dev/dm-2: target is busy`
+says one thing three times, none of them in English and none of them what to do about it. Only
+failures a person can act on are translated — busy, wrong passphrase, already mounted, not
+mounted. Anything else is passed through untouched rather than paraphrased into vagueness: the raw
+text is at least the truth, and is what a search will match.
+
+## Measured: unmount is the sync, and no `sync` should be added
+
+Asked whether Canger runs `sync` before unmounting or ejecting. It does not, and adding one would
+be a pessimisation. Verified rather than asserted, on a loop-backed ext4 filesystem attached with
+`udisksctl loop-setup` — which mounts a real filesystem without root and without going near the
+real drive.
+
+512 MB written to the mounted filesystem, no sync anywhere:
+
+| | Dirty | unmount took |
+|---|---|---|
+| after writing 512 MB | **525 172 kB** | |
+| `udisksctl unmount --no-user-interaction` | | **0.544 s** |
+| after the unmount | **1 744 kB** | |
+| control: unmount again, nothing dirty | 436 kB | **0.071 s** |
+
+The unmount **blocks on the writeback**: half a second with 512 MB outstanding, a twentieth of
+that with none, and every dirty page gone afterwards. Remounted, the 512 MB checksums identically.
+
+The other half is documented rather than measured — `man 1 udisksctl` on `power-off`: *"requesting
+that in-flight buffers and caches are committed to stable storage"*, which also reaches the drive's
+own cache, where a bare `sync` does not.
+
+**Why adding `sync` would be worse.** `sync(1)` is global: it waits for dirty data on every
+mounted filesystem. Ejecting a stick during a large write to the internal disc would block until
+that finished, for no benefit to the stick. The targeted form is what unmount already does.
+
+The one case where none of this helps is unplugging without ejecting, and no code can fix that —
+which is the argument for the key existing.
+
+### Two things confirmed along the way
+
+**The busy refusal is real, and refuses rather than forces.** Holding a file open with `tail -f`
+and asking for the unmount: exit 1, data intact, and the error verbatim —
+`Error unmounting /dev/loop0: GDBus.Error:org.freedesktop.UDisks2.Error.DeviceBusy: Error
+unmounting /dev/loop0: target is busy`. The same shape reported from the real drive, and
+`DeviceActions.Explain` matches it.
+
+**A loop device is not offered as removable.** `lsblk` reports it `type=loop, hotplug=false,
+tran=null`, and the lister only considers `type=disk` with hotplug or a removable transport. An
+accidental confirmation of the filter from a direction the fixtures do not cover.
+
+### Still not verified
+
+`power-off` itself, which does not apply to a loop device — the eject chain has been run as far as
+`unmount`, and the last step is documented rather than measured. Everything was cleaned up:
+unmounted, `loop-delete`, image removed, nothing left in `/media`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

@@ -15,7 +15,7 @@ namespace Canger.Core.FileOperations;
 /// </remarks>
 public sealed class CopyProgress(long totalBytes, int totalFiles)
 {
-    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private readonly Stopwatch _clock = new();
     private readonly TransferRate _rate = new();
 
     private TimeSpan _lastSampleAt = TimeSpan.Zero;
@@ -56,7 +56,17 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
     /// <summary>Throughput, or <see langword="null"/> when nothing has moved yet.</summary>
     public double? BytesPerSecond => _rate.BytesPerSecond;
 
-    /// <summary>How long the operation has been running.</summary>
+    /// <summary>
+    /// How long the operation has been running.
+    /// </summary>
+    /// <remarks>
+    /// From the first file it touched, not from when it was set up. A transfer is built the
+    /// moment the user presses paste and may then sit in the queue behind another one for
+    /// minutes; timing from construction counted that wait as time spent transferring. The rate
+    /// is measured against this clock, so the first sample of a job that had waited its turn
+    /// divided real bytes by the whole wait — a second film starting behind a first reported
+    /// 387 k/s and an hour remaining, for as long as it took the average to recover.
+    /// </remarks>
     public TimeSpan Elapsed => _clock.Elapsed;
 
     /// <summary>
@@ -70,7 +80,19 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
 
     /// <summary>Notes which file is being worked on.</summary>
     /// <param name="path">The file.</param>
-    public void BeginFile(string path) => CurrentFile = path;
+    /// <remarks>
+    /// Where the clock starts, this being the first moment the transfer is doing anything rather
+    /// than waiting to be allowed to.
+    /// </remarks>
+    public void BeginFile(string path)
+    {
+        CurrentFile = path;
+
+        if (!_clock.IsRunning)
+        {
+            _clock.Start();
+        }
+    }
 
     /// <summary>
     /// Records progress within a file whose data is being copied.
@@ -81,6 +103,13 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
         if (bytes <= 0)
         {
             return;
+        }
+
+        // Also here, and not only in `BeginFile`: a caller that reports bytes without announcing
+        // a file would otherwise measure its rate against a clock that had never started.
+        if (!_clock.IsRunning)
+        {
+            _clock.Start();
         }
 
         CompletedBytes += bytes;
@@ -136,30 +165,13 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
     /// Describes the progress the way the task view shows it.
     /// </summary>
     /// <returns>A single line of text.</returns>
-    public string Describe()
-    {
-        System.Text.StringBuilder text = new();
-
-        text.Append(CultureInfo.InvariantCulture, $"{Fraction * 100:F0}%");
-
-        if (TotalBytes > 0)
-        {
-            text.Append(CultureInfo.InvariantCulture,
-                        $"  {FormatBytes(CompletedBytes)}/{FormatBytes(TotalBytes)}");
-        }
-
-        if (BytesPerSecond is { } rate)
-        {
-            text.Append(CultureInfo.InvariantCulture, $"  {FormatBytes((long)rate)}/s");
-        }
-
-        if (Estimate is { } estimate)
-        {
-            text.Append(CultureInfo.InvariantCulture, $"  ETA {FormatDuration(estimate)}");
-        }
-
-        return text.ToString();
-    }
+    /// <remarks>
+    /// The columns are the queue's, so that a line about one transfer and a line about all of
+    /// them are laid out alike — and so that neither jitters as its figures change width.
+    /// </remarks>
+    public string Describe() =>
+        Model.TransferFigures.Describe(Fraction, CompletedBytes, TotalBytes, BytesPerSecond,
+                                       Estimate);
 
     /// <summary>
     /// Describes how the files were handled, when that is worth saying.
@@ -168,23 +180,40 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
     /// A summary, or an empty string when nothing was reflinked or renamed and so there is
     /// nothing surprising to report.
     /// </returns>
-    public string DescribeStrategies()
+    public string DescribeStrategies() =>
+        DescribeStrategies(ReflinkedFiles, RenamedFiles, CopiedFiles);
+
+    /// <summary>
+    /// Describes how a set of files was handled, from the counts alone.
+    /// </summary>
+    /// <param name="reflinked">Files the filesystem shared rather than duplicated.</param>
+    /// <param name="renamed">Files moved by renaming, which copies nothing.</param>
+    /// <param name="copied">Files whose data was copied.</param>
+    /// <returns>
+    /// A summary, or an empty string when nothing was reflinked or renamed and so there is
+    /// nothing surprising to report.
+    /// </returns>
+    /// <remarks>
+    /// Separate from the instance so that a report covering several transfers at once can add
+    /// their counts together and word the result the same way a single transfer does.
+    /// </remarks>
+    public static string DescribeStrategies(int reflinked, int renamed, int copied)
     {
         List<string> parts = [];
 
-        if (ReflinkedFiles > 0)
+        if (reflinked > 0)
         {
-            parts.Add($"reflinked {ReflinkedFiles} (instant)");
+            parts.Add($"reflinked {reflinked} (instant)");
         }
 
-        if (RenamedFiles > 0)
+        if (renamed > 0)
         {
-            parts.Add($"renamed {RenamedFiles}");
+            parts.Add($"renamed {renamed}");
         }
 
-        if (CopiedFiles > 0 && parts.Count > 0)
+        if (copied > 0 && parts.Count > 0)
         {
-            parts.Add($"copied {CopiedFiles}");
+            parts.Add($"copied {copied}");
         }
 
         return string.Join(", ", parts);
@@ -220,15 +249,8 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
     /// <summary>Formats a duration as minutes and seconds, or hours when it is long.</summary>
     /// <param name="duration">The duration.</param>
     /// <returns>A short representation.</returns>
-    public static string FormatDuration(TimeSpan duration)
-    {
-        if (duration < TimeSpan.Zero)
-        {
-            return "--:--";
-        }
-
-        return duration.TotalHours >= 1
-            ? $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}"
-            : $"{duration.Minutes:D2}:{duration.Seconds:D2}";
-    }
+    /// <remarks>
+    /// The same formatting the queue's own figures use, rather than a second copy of it.
+    /// </remarks>
+    public static string FormatDuration(TimeSpan duration) => Model.HumanReadable.Duration(duration);
 }

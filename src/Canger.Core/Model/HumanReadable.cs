@@ -132,4 +132,23 @@ public static class HumanReadable
             ? timestamp.ToString("d MMM", CultureInfo.InvariantCulture)
             : timestamp.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
     }
+
+    /// <summary>Formats a duration as minutes and seconds, or hours when it is long.</summary>
+    /// <param name="duration">The duration.</param>
+    /// <returns>A short representation, such as <c>12:40</c> or <c>1:05:03</c>.</returns>
+    /// <remarks>
+    /// Here beside the byte formatter because both the figures for a single transfer and the
+    /// figures the queue reports for all of them need it, and they live in different places.
+    /// </remarks>
+    public static string Duration(TimeSpan duration)
+    {
+        if (duration < TimeSpan.Zero)
+        {
+            return "--:--";
+        }
+
+        return duration.TotalHours >= 1
+            ? $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}"
+            : $"{duration.Minutes:D2}:{duration.Seconds:D2}";
+    }
 }

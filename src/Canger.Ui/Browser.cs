@@ -54,6 +54,8 @@ public sealed class Browser : IFileManager, IDisposable
     private readonly Pager _pager;
     private readonly TaskView _taskView;
     private readonly KeyBuffer _taskViewKeys;
+    private readonly DeviceView _deviceView;
+    private readonly KeyBuffer _deviceKeys;
     private readonly CommandDispatcher _dispatcher;
     private readonly Dictionary<int, Tab> _tabs;
 
@@ -239,9 +241,12 @@ public sealed class Browser : IFileManager, IDisposable
         _console = new ConsoleWidget(colorScheme) { IsVisible = false };
         _pager = new Pager(colorScheme) { IsVisible = false };
         _taskView = new TaskView(colorScheme, Tasks) { IsVisible = false };
+        Devices = new Core.Devices.DeviceSession(Runner, Tasks);
+        _deviceView = new DeviceView(colorScheme, Devices) { IsVisible = false };
         _hints = new HintWindow(colorScheme) { IsVisible = false };
         _bookmarkWindow = new BookmarkWindow(colorScheme) { IsVisible = false };
         _taskViewKeys = new KeyBuffer(keyMaps.TaskView);
+        _deviceKeys = new KeyBuffer(keyMaps.Devices);
 
         _tabs = new Dictionary<int, Tab>
         {
@@ -1382,6 +1387,15 @@ public sealed class Browser : IFileManager, IDisposable
                 Handle(_decoder.Flush());
             }
 
+            // A drive plugged in while the list is on screen should appear on its own, as it
+            // does in a desktop file manager. Only while the list is showing, and only every two
+            // seconds: lsblk reads sysfs rather than the drives themselves, so it costs nothing
+            // and cannot wake one that has spun down.
+            if (_deviceView.IsVisible && Devices.ReloadIfStale())
+            {
+                Volatile.Write(ref _needsRedraw, true);
+            }
+
             if (Tasks.HasWork)
             {
                 _hadWork = true;
@@ -1414,23 +1428,13 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>Says how finished work turned out, then clears it from the queue.</summary>
     private void ReportFinishedWork()
     {
-        foreach (QueuedTask task in Tasks.Tasks.Where(t => t.IsComplete).ToList())
+        // One message for the whole run. Reporting each job in turn meant each report replacing
+        // the last, so a transfer that had lost a file was reported and then unreported in the
+        // same frame by a transfer that finished cleanly beside it.
+        if (Core.FileOperations.FinishedWork.Describe(
+                [.. Tasks.Tasks.Where(t => t.IsComplete)]) is var (message, isError))
         {
-            if (task.State == TaskState.Failed && task.Error is { } error)
-            {
-                Notify($"{task.Description}: {error.Message}", isError: true);
-            }
-            else if (task.Work is Core.FileOperations.CopyJob { Errors.Count: > 0 } job)
-            {
-                Notify($"{job.Errors.Count} problem(s): {job.Errors[0]}", isError: true);
-            }
-            else if (task.Work is Core.FileOperations.CopyJob finished)
-            {
-                string strategies = finished.Progress.DescribeStrategies();
-                Notify(strategies.Length > 0
-                    ? $"done: {finished.Progress.CompletedFiles} files, {strategies}"
-                    : $"done: {finished.Progress.CompletedFiles} files");
-            }
+            Notify(message, isError);
         }
 
         Tasks.RemoveCompleted();
@@ -1496,23 +1500,32 @@ public sealed class Browser : IFileManager, IDisposable
 
             _message = null;
 
-            if (_console.IsOpen)
+            // Whichever of these is up takes the key, and only it. Written as one choice and a
+            // switch rather than a chain of ifs because the chain needed a `continue` in every
+            // branch to be correct, and the day one was left out every keystroke in the device
+            // list ran twice: `q` closed the list and then quit Canger. Nothing failed, because
+            // both halves did exactly what they were bound to do.
+            switch (FocusedOn(_console.IsOpen, _pager.IsVisible, _deviceView.IsVisible,
+                              _taskView.IsVisible))
             {
-                HandleConsoleKey(key.Key);
-                continue;
-            }
+                case KeyTarget.Console:
+                    HandleConsoleKey(key.Key);
+                    continue;
 
-            // The pager and the task view take the whole screen, so they take the keys too.
-            if (_pager.IsVisible)
-            {
-                HandlePagerKey(key.Key);
-                continue;
-            }
+                case KeyTarget.Pager:
+                    HandlePagerKey(key.Key);
+                    continue;
 
-            if (_taskView.IsVisible)
-            {
-                HandleTaskViewKey(key.Key);
-                continue;
+                case KeyTarget.Devices:
+                    HandleDeviceKey(key.Key);
+                    continue;
+
+                case KeyTarget.TaskView:
+                    HandleTaskViewKey(key.Key);
+                    continue;
+
+                default:
+                    break;
             }
 
             string? command = _keys.Add(key.Key);
@@ -1565,6 +1578,136 @@ public sealed class Browser : IFileManager, IDisposable
 
     /// <summary>Whether the task view is showing.</summary>
     public bool IsTaskViewOpen => _taskView.IsVisible;
+
+    /// <inheritdoc />
+    public Core.Devices.DeviceSession Devices { get; }
+
+    /// <inheritdoc />
+    public void OpenDevices()
+    {
+        // Read before it appears rather than after, so the list is never briefly blank and never
+        // briefly wrong. It costs one lsblk, which reads sysfs and does not touch the drives.
+        Devices.Reload();
+        _deviceView.IsVisible = true;
+        _deviceKeys.Clear();
+    }
+
+    /// <inheritdoc />
+    public void CloseDevices() => _deviceView.IsVisible = false;
+
+    /// <summary>Whether the device list is showing.</summary>
+    public bool IsDevicesOpen => _deviceView.IsVisible;
+
+    /// <summary>Routes a key while the device list has focus.</summary>
+    private void HandleDeviceKey(int key)
+    {
+        string? action = _deviceKeys.Add(key);
+
+        if (action is not null)
+        {
+            RunDeviceAction(action);
+        }
+
+        if (_deviceKeys.IsFinished || _deviceKeys.HasFailed)
+        {
+            _deviceKeys.Clear();
+        }
+    }
+
+    /// <summary>Carries out a device list binding.</summary>
+    /// <remarks>
+    /// Only the two that need the screen are handled here — moving the cursor has to know how
+    /// tall the window is. Everything else is an ordinary command, so it can equally be typed at
+    /// the console or bound anywhere else.
+    /// </remarks>
+    private void RunDeviceAction(string action)
+    {
+        string[] parts = action.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+        switch (parts.Length > 0 ? parts[0] : action)
+        {
+            case "devices_move":
+                MoveDeviceCursor(parts.Length > 1 ? parts[1] : string.Empty);
+                break;
+
+            case "redraw_window":
+                Redraw();
+                break;
+
+            default:
+                _dispatcher.Execute(action);
+                break;
+        }
+    }
+
+    /// <summary>Moves the device list cursor according to a movement command's arguments.</summary>
+    private void MoveDeviceCursor(string arguments)
+    {
+        Dictionary<string, string> named = new(StringComparer.Ordinal);
+
+        foreach (string part in arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int equals = part.IndexOf('=', StringComparison.Ordinal);
+            if (equals > 0)
+            {
+                named[part[..equals]] = part[(equals + 1)..];
+            }
+        }
+
+        Direction direction = Direction.FromArguments(named);
+
+        if (direction.IsAbsolute)
+        {
+            Devices.MoveCursorToEdge(toEnd: direction.Down < 0);
+            return;
+        }
+
+        double amount = direction.Down;
+        Devices.MoveCursor((int)(direction.Pages
+                                     ? amount * Math.Max(_screen.Height - 3, 1)
+                                     : amount));
+    }
+
+    /// <summary>Which part of the interface a keystroke belongs to.</summary>
+    internal enum KeyTarget
+    {
+        /// <summary>The file browser, which is where keys go when nothing is over it.</summary>
+        Browser,
+
+        /// <summary>The command line.</summary>
+        Console,
+
+        /// <summary>The file pager.</summary>
+        Pager,
+
+        /// <summary>The list of removable drives.</summary>
+        Devices,
+
+        /// <summary>The list of background work.</summary>
+        TaskView,
+    }
+
+    /// <summary>
+    /// Decides which part of the interface a keystroke belongs to.
+    /// </summary>
+    /// <param name="console">Whether the command line is open.</param>
+    /// <param name="pager">Whether the pager is showing.</param>
+    /// <param name="devices">Whether the device list is showing.</param>
+    /// <param name="taskView">Whether the task view is showing.</param>
+    /// <returns>The one part that gets the key.</returns>
+    /// <remarks>
+    /// A function so that the ordering is a thing that can be stated and tested, rather than a
+    /// property of a chain of <c>if</c>s that happens to be written in the right order and to
+    /// leave each branch in the right way. Everything here draws over the browser, so it takes
+    /// the browser's keys with it: two of them acting on one keystroke means a key doing its job
+    /// twice over, in two different places, with nothing to show that anything went wrong.
+    /// </remarks>
+    internal static KeyTarget FocusedOn(bool console, bool pager, bool devices, bool taskView) =>
+        console ? KeyTarget.Console
+        : pager ? KeyTarget.Pager
+        : devices ? KeyTarget.Devices
+        : taskView ? KeyTarget.TaskView
+        : KeyTarget.Browser;
 
     /// <summary>Routes a key while the task view has focus.</summary>
     private void HandleTaskViewKey(int key)
@@ -2218,7 +2361,7 @@ public sealed class Browser : IFileManager, IDisposable
         _view.WrapPreviews = Settings.WrapPlaintextPreviews;
         _view.ClearPendingImage();
 
-        if (!_pager.IsVisible && !_taskView.IsVisible)
+        if (!_pager.IsVisible && !_taskView.IsVisible && !_deviceView.IsVisible)
         {
             if (Settings.Viewmode is "multipane")
             {
@@ -2232,7 +2375,13 @@ public sealed class Browser : IFileManager, IDisposable
         }
 
         // The task view and the pager each take the whole area between the bars.
-        if (_taskView.IsVisible)
+        if (_deviceView.IsVisible)
+        {
+            _deviceView.BinaryPrefix = Settings.BinarySizePrefix;
+            _deviceView.Layout(BrowserBounds());
+            _deviceView.Render(_screen);
+        }
+        else if (_taskView.IsVisible)
         {
             _taskView.Layout(BrowserBounds());
             _taskView.Render(_screen);
@@ -2315,9 +2464,9 @@ public sealed class Browser : IFileManager, IDisposable
             _statusBar.VcsMessageLength = Math.Max(Settings.VcsMessageLength, 1);
             _statusBar.ShowProgressBar = Settings.DrawProgressBarInStatusBar;
             _statusBar.Progress = Tasks.OverallProgress();
-            _statusBar.TaskDescription = Tasks.Current is { IsComplete: false } task
-                ? task.Description
-                : null;
+            // The queue's line, not the running job's: with more than one thing queued the bar
+            // speaks for all of it, and with one it is the job's own line unchanged.
+            _statusBar.TaskDescription = Tasks.Summary()?.Describe();
             _statusBar.FreeBytes = FreeSpace();
             _statusBar.Render(_screen);
         }

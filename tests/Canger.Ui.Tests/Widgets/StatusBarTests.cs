@@ -339,4 +339,63 @@ public class StatusBarTests
         Assert.StartsWith("something happened", Line(screen), StringComparison.Ordinal);
         Assert.DoesNotContain("free", Line(screen), StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Progress_TintsTheBarWhileWorkIsOutstanding()
+    {
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ShowProgressBar = true;
+        bar.Progress = 0.5;
+
+        bar.Render(screen);
+
+        // Half the width recoloured, as ranger tints it (statusbar.py:330-336).
+        Assert.Equal(Color.Blue, screen[0, 0].Style.Background);
+        Assert.NotEqual(Color.Blue, screen[Width - 1, 0].Style.Background);
+    }
+
+    [Fact]
+    public void Progress_TintsUnderTheTaskLineToo()
+    {
+        // The defect. While a transfer runs its description fills the bar, and that path wrote
+        // the line and returned — so the one moment the bar had progress to show was the moment
+        // it was skipped. The tint goes underneath the words, not instead of them.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ShowProgressBar = true;
+        bar.Progress = 0.5;
+        bar.TaskDescription = "copying src: 50%";
+
+        bar.Render(screen);
+
+        Assert.StartsWith("copying", screen.TextAt(0), StringComparison.Ordinal);
+        Assert.Equal(Color.Blue, screen[0, 0].Style.Background);
+        Assert.NotEqual(Color.Blue, screen[Width - 1, 0].Style.Background);
+    }
+
+    [Fact]
+    public void Progress_DoesNotTintUnderAMessageTheUserAskedFor()
+    {
+        // Ranger draws those through `_draw_message`, which does no tinting, and a notice about
+        // something that has already happened is not progress.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ShowProgressBar = true;
+        bar.Progress = 0.5;
+        bar.Message = "12 files copied";
+
+        bar.Render(screen);
+
+        Assert.NotEqual(Color.Blue, screen[0, 0].Style.Background);
+    }
+
+    [Fact]
+    public void Progress_LeavesTheBarAloneWhenNothingIsRunning()
+    {
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ShowProgressBar = true;
+        bar.Progress = null;
+
+        bar.Render(screen);
+
+        Assert.NotEqual(Color.Blue, screen[0, 0].Style.Background);
+    }
 }

@@ -205,7 +205,15 @@ public static class LinemodeText
 
             if (directory.IsLoaded)
             {
-                return directory.Count.ToString(CultureInfo.InvariantCulture);
+                // `Size`, not `Count`. `Count` is how many rows the listing shows, which is what
+                // the cursor and the position indicator need and is not what this column means:
+                // a directory holding two hidden files is not empty. Reading `Count` here also
+                // made the number change when the directory was loaded — 2 from the shallow count
+                // below until you looked inside it, 0 afterwards. Ranger takes `len(filelist)`
+                // from `os.listdir` and filters nothing (`container/directory.py:391`).
+                return directory.Size is { } total
+                    ? total.ToString(CultureInfo.InvariantCulture)
+                    : string.Empty;
             }
 
             // Not opened yet, so the count has to be read. Only when asked for: on a slow or

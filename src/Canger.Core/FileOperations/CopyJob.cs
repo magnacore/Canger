@@ -41,7 +41,7 @@ public enum ClashPolicy
 /// one file could not be read would be worse than finishing and saying what was missed.
 /// </para>
 /// </remarks>
-public sealed class CopyJob : ILoadable
+public sealed class CopyJob : ILoadable, ISizedWork
 {
     private readonly IFileSystem _fileSystem;
     private readonly CopyEngine _engine;
@@ -51,6 +51,9 @@ public sealed class CopyJob : ILoadable
     private readonly ClashPolicy _clashPolicy;
     private readonly CancellationToken _cancellationToken;
     private readonly List<string> _errors = [];
+
+    /// <summary>The sizing walk, kept so it is resumed rather than restarted.</summary>
+    private IEnumerator<Unit>? _sizing;
 
     /// <summary>Prepares a transfer.</summary>
     /// <param name="fileSystem">The filesystem to work against.</param>
@@ -78,6 +81,12 @@ public sealed class CopyJob : ILoadable
     /// <summary>How far along the transfer is.</summary>
     public CopyProgress Progress { get; }
 
+    /// <summary>What is being copied or moved.</summary>
+    public IReadOnlyList<string> Sources => _sources;
+
+    /// <summary>The directory it is going to.</summary>
+    public string Destination => _destination;
+
     /// <summary>Files that could not be transferred, and why.</summary>
     public IReadOnlyList<string> Errors => _errors;
 
@@ -85,7 +94,7 @@ public sealed class CopyJob : ILoadable
     public bool IsFinished { get; private set; }
 
     /// <inheritdoc />
-    public string Description
+    public string Subject
     {
         get
         {
@@ -94,12 +103,21 @@ public sealed class CopyJob : ILoadable
                 ? Path.GetFileName(_sources[0])
                 : $"{_sources.Count} items";
 
+            return $"{verb} {what}";
+        }
+    }
+
+    /// <inheritdoc />
+    public string Description
+    {
+        get
+        {
             string detail = Progress.Describe();
             string strategies = Progress.DescribeStrategies();
 
             return strategies.Length > 0
-                ? $"{verb} {what}: {detail}  [{strategies}]"
-                : $"{verb} {what}: {detail}";
+                ? $"{Subject}: {detail}  [{strategies}]"
+                : $"{Subject}: {detail}";
         }
     }
 
@@ -111,22 +129,71 @@ public sealed class CopyJob : ILoadable
     double? ILoadable.Progress => Progress.Fraction;
 
     /// <inheritdoc />
-    public IEnumerator<Unit> Steps()
+    public bool IsSized { get; private set; }
+
+    /// <inheritdoc />
+    public long? TotalBytes => IsSized ? Progress.TotalBytes : null;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Measured the same way the transfer's own estimate is, so the figure the queue reports for
+    /// everything and the figure a single transfer reports for itself cannot disagree.
+    /// </remarks>
+    public long? RemainingBytes =>
+        IsSized ? Math.Max(Progress.TotalBytes - Progress.CompletedBytes, 0) : null;
+
+    /// <inheritdoc />
+    public double? BytesPerSecond => Progress.BytesPerSecond;
+
+    /// <inheritdoc />
+    public IEnumerator<Unit> SizingSteps() => _sizing ??= Size();
+
+    /// <summary>
+    /// Walks the sources and adds up what there is to transfer, a little at a time.
+    /// </summary>
+    /// <remarks>
+    /// Only metadata is read, so this can run while another job is copying without the two
+    /// competing for the disc — which is the whole reason it is separable from the transfer.
+    /// Nothing here writes, renames or deletes anything.
+    /// </remarks>
+    /// <returns>One element per file examined.</returns>
+    private IEnumerator<Unit> Size()
     {
-        // The total is measured first so the percentage and the estimate mean something from the
-        // start. Measuring yields as it goes, because walking a large tree is itself slow.
         long total = 0;
+
         foreach (string source in _sources)
         {
             foreach (long measured in Measure(source))
             {
                 total += measured;
+
+                // Revised as it goes rather than only at the end, so a transfer that starts
+                // before the walk finishes still has a percentage to show.
                 Progress.ReviseTotal(total);
                 yield return Unit.Value;
             }
         }
 
         Progress.ReviseTotal(total);
+        IsSized = true;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The size is established first, so the percentage and the estimate mean something from the
+    /// first byte — a percentage against an unknown total is a lie. The queue usually has this
+    /// done already, having sized the job while something else was running, in which case the
+    /// loop below finds nothing left to do and the transfer starts immediately. When nothing did
+    /// it in advance, this does it here, which is what keeps the job correct when it is driven
+    /// directly rather than through the queue.
+    /// </remarks>
+    public IEnumerator<Unit> Steps()
+    {
+        IEnumerator<Unit> sizing = SizingSteps();
+        while (sizing.MoveNext())
+        {
+            yield return Unit.Value;
+        }
 
         foreach (string source in _sources)
         {
@@ -285,8 +352,25 @@ public sealed class CopyJob : ILoadable
             }
         }
 
-        FileCopyResult result = _engine.CopyFile(
-            source, target, Progress.AdvanceTransferred, _cancellationToken);
+        // A piece at a time, handing control back between pieces. Copying a file used to be one
+        // call that returned when the file was done, so the queue's time slice only fell between
+        // files: one large file from a slow disc took the whole interface with it — nothing drawn,
+        // no keys read, no way to cancel, and no progress bar at the one moment there was
+        // progress. Ranger's copy yields inside its byte loop for the same reason
+        // (`core/loader.py:120-160`).
+        FileCopyResult result = default;
+
+        foreach (FileCopyResult? step in _engine.CopyFileSteps(
+                     source, target, Progress.AdvanceTransferred, _cancellationToken))
+        {
+            if (step is { } finished)
+            {
+                result = finished;
+                break;
+            }
+
+            yield return Unit.Value;
+        }
 
         if (!result.Succeeded)
         {

@@ -76,6 +76,20 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
                             .With(!MessageIsError, ContextKey.Good));
 
             screen.Write(Bounds.X, Bounds.Y, new WideString(message).Truncate(Bounds.Width), style);
+
+            // Underneath the line, not instead of it. This returned here, so the one moment the
+            // bar had something to say — a copy running, its description filling the bar — was
+            // the moment it was skipped. Ranger tints after printing, over whatever is there
+            // (`gui/widgets/statusbar.py:332-341`).
+            //
+            // Not under a message the user asked for, though: ranger draws those through
+            // `_draw_message`, which does no tinting, and a notice about something that has
+            // already happened is not progress.
+            if (Message is not { Length: > 0 })
+            {
+                DrawProgress(screen);
+            }
+
             return;
         }
 

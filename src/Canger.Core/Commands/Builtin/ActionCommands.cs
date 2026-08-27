@@ -140,6 +140,14 @@ public sealed class GetCumulativeSizeCommand : CangerCommand
             node.CumulativeSize = node.IsDirectory
                 ? DirectorySize.Measure(FileManager.FileSystem, node.Path)
                 : node.Size ?? 0;
+
+            // The figure has just been taken, so the `?` that says it might be out of date has
+            // to go with it. Without this the marker was permanent: a listing re-read after a
+            // measurement set the flag and nothing ever cleared it, so `dc` on a directory that
+            // had changed reported the new size still wearing the doubt about the old one.
+            // Ranger clears it by rewriting the infostring with a plain separator
+            // (`container/directory.py:582-585`).
+            node.CumulativeSizeStale = false;
         }
 
         // Nothing is announced. Each measured row shows its own size in the size column, and the

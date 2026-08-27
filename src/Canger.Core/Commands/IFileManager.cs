@@ -263,6 +263,15 @@ public interface IFileManager
     /// <summary>Closes the task view.</summary>
     void CloseTaskView();
 
+    /// <summary>The removable drives, their cursor, and the checks that guard them.</summary>
+    Devices.DeviceSession Devices { get; }
+
+    /// <summary>Shows the removable drives.</summary>
+    void OpenDevices();
+
+    /// <summary>Closes the device list.</summary>
+    void CloseDevices();
+
     /// <summary>
     /// Switches to a tab, creating it if there is none with that number.
     /// </summary>

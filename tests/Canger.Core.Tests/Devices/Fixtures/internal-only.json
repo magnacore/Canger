@@ -1,0 +1,26 @@
+{
+   "blockdevices": [
+      {
+         "name": "nvme0n1", "path": "/dev/nvme0n1", "type": "disk",
+         "size": 1024209543168, "fstype": null, "label": null, "partlabel": null,
+         "uuid": null, "mountpoint": null, "hotplug": false, "tran": "nvme",
+         "vendor": null, "model": "WD PC SN740", "rm": false, "ro": false,
+         "children": [
+            {
+               "name": "nvme0n1p1", "path": "/dev/nvme0n1p1", "type": "part",
+               "size": 1024208494592, "fstype": "btrfs", "label": "root", "partlabel": null,
+               "uuid": "00000001-0000-4000-8000-000000000001", "mountpoint": "/",
+               "hotplug": false, "tran": null, "vendor": null, "model": null,
+               "rm": false, "ro": false
+            }
+         ]
+      },
+      {
+         "name": "zram0", "path": "/dev/zram0", "type": "disk",
+         "size": 24461180928, "fstype": "swap", "label": null, "partlabel": null,
+         "uuid": "00000002-0000-4000-8000-000000000002", "mountpoint": "[SWAP]",
+         "hotplug": false, "tran": null, "vendor": null, "model": null,
+         "rm": false, "ro": false
+      }
+   ]
+}

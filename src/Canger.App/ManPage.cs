@@ -99,6 +99,22 @@ public static class ManPage
                    space until one of the copies is written to. The task view reports which files
                    were cloned and which were copied, along with a rate and an estimate of the time
                    remaining for the latter.
+                   .SS Removable drives
+                   .B <F9>
+                   lists the drives that can be unplugged, with
+                   .BR m " to mount, " u " to unmount, " l " to unlock an encrypted one, " e
+                   to remove it safely, and
+                   .B Enter
+                   to mount it and go there.
+                   .PP
+                   Safely removing a drive unmounts everything on it, locks every encrypted
+                   container on it, and then cuts its power, stopping at the first step that
+                   fails. Everything is done through
+                   .BR udisksctl (1),
+                   so a drive mounted here behaves exactly as one mounted from a desktop file
+                   manager, and a passphrase is typed to udisks rather than to Canger. Nothing is
+                   ever forced: a filesystem in use fails to unmount and says so. Ranger has no
+                   equivalent.
                    .SS Version control
                    With
                    .B vcs_aware
@@ -149,6 +165,7 @@ public static class ManPage
                      (KeyContext.Console, "Console"),
                      (KeyContext.Pager, "Pager"),
                      (KeyContext.TaskView, "Task view"),
+                     (KeyContext.Devices, "Devices"),
                  ])
         {
             man.Append(CultureInfo.InvariantCulture, $".SS {title}\n");
@@ -260,7 +277,8 @@ public static class ManPage
                    .BR XDG_CONFIG_HOME ", " XDG_DATA_HOME ", " XDG_CACHE_HOME
                    Where configuration, state and cached data live.
                    .SH SEE ALSO
-                   .BR rifle (1)
+                   .BR rifle (1),
+                   .BR udisksctl (1)
                    .SH LICENSE
                    GNU General Public License version 3 or later.
 
