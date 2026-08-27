@@ -3192,18 +3192,23 @@ Nothing from ranger. Possible directions from here:
 
 ### Watch these in daily use
 
-Everything below landed on the same day and has had no living-with. They are not suspected of
-being wrong — each is tested and was verified in a pty — but they are the least-exercised things
-in the tree, and two of them touch something that matters:
+Refreshed at 0.3.0. The previous batch — `unload-idle-directories`, `numbered-clash-suffixes`,
+`reload-visible-directories` — has now had a day of real use with nothing reported, so it comes off
+this list.
 
-- **`unload-idle-directories`** only fires after twenty minutes idle, so at its real threshold it
-  has effectively never run. It was verified by shortening the interval to seconds, which is not
-  the same as living with it. It drops listings silently; the sign of it going wrong would be a
-  selection or a cursor row lost on returning to a directory left alone for a while.
-- **`numbered-clash-suffixes`** changes what a pasted file is named. Well tested, but the kind of
-  change where being wrong touches files rather than pixels.
-- **`reload-visible-directories`** now re-reads every column after a command rather than one, and
-  after background work finishes.
+What is new and least exercised:
+
+- **Devicons leaving the core.** The failure mode is silent: a generator emitting code that does
+  not compile leaves the linemode simply absent, and `default_linemode devicons` falls back to
+  plain names with no complaint anyone would notice. `ShippedDeviconsTests` compiles the shipped
+  plugin for exactly this reason, and it is a day old.
+- **The preview-collapse fix.** The only change here that was never seen working in a terminal —
+  it was demonstrated by forcing forty redraws inside a two-hundred-millisecond window, against a
+  control. It should show as the preview column no longer twitching while a PDF is generated.
+- **The version-control marks.** Four changes in a row over the same twenty lines: the glyph
+  table, the colours, which side of the row they sit on, and the reserved columns. Each was
+  confirmed by eye, but they interact, and one of the four was a mistake I made and had to undo
+  within the hour.
 
 ### Verifying by driving the real binary
 
