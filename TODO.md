@@ -3377,6 +3377,39 @@ Seven new tests, and the step size is a seam so they exercise the pausing on any
 budget means a fast one finishes a test file inside a single piece, which is right for the program
 and useless for a test.
 
+## The resumed transfer lost its name in the status bar
+
+Reported: two films pasted one after the other. The second ran, the first paused; when the second
+finished the first resumed — and its description and time remaining disappeared from the status
+bar, though the task view still showed both.
+
+`TaskQueue.Current` was `_tasks[0]`, the head of the list. That is the running job only while
+nothing finishes out of order. A paste goes to the front, so:
+
+| | list | `Current` | status bar |
+|---|---|---|---|
+| first paste | `[A]` | A | A |
+| second paste | `[B, A]` | B | B |
+| B finishes | `[B✔, A]` | **B, complete** | **nothing** |
+
+A is running; the list still begins with B. `Current` is now `NextRunnable()` — the job the queue
+would actually serve — so the head of the list and the job being worked on are no longer confused.
+
+That mattered in a second place nobody had reported: `abort` stops `Tasks.Current`, so after any
+task finished out of order there was a running copy that `abort` would not stop.
+
+The throbber needed the opposite question and had been getting the right answer by accident. It
+shows `#` when work is paused, which `Current` can no longer say — a paused task is skipped in the
+search for a runnable one. It now asks directly: work left, and none of it runnable.
+
+## Pasting order: ranger's, and there is already a binding for the other one
+
+Also asked: whether a second paste should wait rather than pushing the first aside. It pushes
+because ranger does — `Loader.add` is `appendleft` unless told otherwise
+(`core/loader.py:353-366`), and ranger's `paste` passes `append` straight through. Canger's `pp`
+matches it, and `pP` is already bound to `paste append=True`, which queues behind whatever is
+running. So both behaviours exist; the question is only which one `pp` should be.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

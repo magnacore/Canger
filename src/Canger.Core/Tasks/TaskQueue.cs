@@ -94,8 +94,16 @@ public sealed class TaskQueue
     /// <summary>The queued jobs, in the order they will run.</summary>
     public IReadOnlyList<QueuedTask> Tasks => _tasks;
 
-    /// <summary>The job currently at the front, or <see langword="null"/> when the queue is empty.</summary>
-    public QueuedTask? Current => _tasks.Count > 0 ? _tasks[0] : null;
+    /// <summary>The job being worked on, or <see langword="null"/> when nothing is.</summary>
+    /// <remarks>
+    /// The one the queue would serve next, not simply the first in the list. Those differ as soon
+    /// as anything finishes out of order: a second paste goes to the front and runs, and when it
+    /// finishes the first is picked up again — but the list still begins with the completed one.
+    /// Reading the list's head then said "nothing is running" while a copy was plainly running,
+    /// which took the description and its time remaining out of the status bar and left
+    /// <c>abort</c> with nothing to stop.
+    /// </remarks>
+    public QueuedTask? Current => NextRunnable();
 
     /// <summary>
     /// How long the main loop may wait for input before the queue wants another turn.
@@ -118,7 +126,11 @@ public sealed class TaskQueue
     /// Ranger's, characters and all (<c>core/loader.py:333-351</c>).
     /// </remarks>
     public char Throbber =>
-        Current is { State: TaskState.Paused } ? ThrobberPaused : ThrobberChars[_throbber];
+        // Paused when there is work left and none of it is runnable — which is not the same
+        // question `Current` answers, since that skips a paused task to find one that can run.
+        Current is null && _tasks.Exists(t => t is { IsComplete: false, State: TaskState.Paused })
+            ? ThrobberPaused
+            : ThrobberChars[_throbber];
 
     /// <summary>Advances the spinner.</summary>
     private void Rotate() => _throbber = (_throbber + 1) % ThrobberChars.Length;
