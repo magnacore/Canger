@@ -111,9 +111,11 @@ public sealed class LinemodeRegistry
         new HumanReadableTimeLinemode(),
         new SizeAndHumanReadableTimeLinemode(),
 
-        // Built in rather than left to a plugin: in ranger this is a Python plugin, so a
-        // configuration carried over from ranger asks for a linemode Canger could not load.
-        new DeviconsLinemode(),
+        // `devicons` is deliberately absent: it is a plugin, as it is in ranger, generated from
+        // ranger_devicons' own tables into `config/plugins/devicons.cs` and shipped there. Having
+        // it here as well meant two copies of the same four hundred glyphs, generated from one
+        // source by two scripts, and one of them silently shadowed by the other whenever the
+        // plugin was present.
     ];
 
     /// <summary>The mode used when nothing selects another.</summary>

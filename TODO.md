@@ -3154,13 +3154,23 @@ the private-use codepoints present is indifferent to where they were written.
 reads as evidence. The check that saved it was asking whether the thing being compared was there
 at all.
 
-### Still built in as well
+### And the core copy is gone
 
-The core `DeviconsLinemode` remains, so devicons works without the plugin. That is a divergence
-from ranger, where no plugin means no icons, and it is now duplication: two copies of the same
-table, generated from the same source by two scripts. Whether to delete the core one is a real
-decision — it would match ranger and remove the duplication, and it would mean a `cc.conf` asking
-for `devicons` gets nothing unless the plugin ships in `config/plugins/` too.
+`DeviconsLinemode`, `DeviconTables.g.cs`, its registration and `tools/generate-devicons.py` are
+all deleted. The plugin is generated into `config/plugins/devicons.cs` instead, which the app
+project already ships wholesale (`Content Include="../../config/**"`) and which
+`PluginHost.LoadFrom` already reads — so it travels in the `dist` tarballs and works out of the
+box without being built in.
+
+That is ranger's arrangement: a plugin, and no icons without it. It also ends the duplication —
+two copies of the same four hundred glyphs, generated from one source by two scripts, one silently
+shadowing the other whenever the plugin was present.
+
+The test moved with it. `DeviconsLinemodeTests` tested a class; `ShippedDeviconsTests` compiles
+the shipped plugin and asks the registered linemode for glyphs, which is the same shape as
+`ShippedCommandsTests` and covers the thing that can now actually break: a generator emitting code
+that does not build would leave the linemode simply absent, and `default_linemode devicons` would
+fall back with no complaint anyone would notice.
 
 ## What is left
 
