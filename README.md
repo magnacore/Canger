@@ -25,27 +25,36 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | | |
 |---|---|
 | Settings | 82, with ranger's global / path-regex / tag scopes |
-| Commands | 105 built in, plus whatever `commands.cs` adds |
-| Key bindings | 294 in the browser, 36 console, 35 pager, 33 task view |
+| Commands | 113 built in, plus whatever `commands.cs` adds |
+| Key bindings | 295 in the browser, 36 console, 35 pager, 33 task view, 29 devices |
 | Colour contexts | 82, matching ranger's names exactly |
 | Colourschemes | `default`, `jungle`, `snow`, `solarized` |
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 1319 |
+| Tests | 1717 |
 
-Two things go deliberately beyond ranger:
+Three things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
   `copy_file_range(2)`, and failing that a buffered copy.
-- **Copy progress with an ETA** — percentage, bytes, live throughput and time remaining. Reflinked
-  files are excluded from the throughput estimate, since counting them would make the ETA collapse
-  to zero.
+- **Copy progress with an ETA for the whole queue** — percentage, bytes, live throughput and time
+  remaining, covering everything outstanding rather than the file currently moving. Paste two
+  films and the bar runs once from nothing to full, instead of restarting when the first
+  finishes. Reflinked files are excluded from the throughput estimate, since counting them would
+  make the ETA collapse to zero.
+- **Removable drives** (`<F9>`, or `:devices`). A list of what is plugged in, with mount, unmount,
+  unlock, lock and safely-remove — the last of which unmounts everything on the drive, locks what
+  is encrypted, and cuts the power, stopping at the first step that fails. Everything goes through
+  `udisksctl`, so a drive mounted here behaves exactly like one mounted from a desktop file
+  manager, and a passphrase is typed to `udisksctl` rather than to Canger. Ranger has no
+  equivalent; see **Removable drives** below.
 
 Known gaps: five of ranger's eight image protocols (w3m, iterm2, sixel, terminology, urxvt) are
-not implemented and fall back to no image; there is no packaging yet. `TODO.md` is the honest
-record of what is done, what was measured, and what is known to be missing.
+not implemented and fall back to no image; there is no distribution packaging (no `.deb`, no AUR
+entry) beyond the tarballs `./build.sh dist` writes. `TODO.md` is the honest record of what is
+done, what was measured, and what is known to be missing.
 
 
 Design goals
@@ -200,6 +209,60 @@ canger --config       # what the configuration produced: settings, binding count
 canger --list [path]  # a listing with the configured sort and filters, no terminal takeover
 canger --key-probe    # what each key decodes to and which command it resolves to
 ```
+
+
+Removable drives
+----------------
+
+Ranger has nothing of this kind; it is Canger's own. Press **`<F9>`** — or type `:devices` — for a
+list of what is plugged in:
+
+```
+Devices
+  My Passport       4 T  LUKS      unlocked                  (WDC WD40NMZW-59GX6S1)
+  BACKUP_01_A       4 T  ext4      /media/manuj/BACKUP_01_A   (WDC WD40NMZW-59GX6S1)
+
+  <CR> mount and enter   m mount   u unmount   l unlock   L lock   e eject   r reload   q close
+```
+
+`<CR>` does what clicking a drive does in a desktop file manager: mounts it if it needs mounting,
+unlocking it first if it is encrypted, and then goes there. The list re-reads itself every two
+seconds while it is open, so a drive plugged in appears on its own. Its keys are bound with
+`dmap`, the same way the task view's are bound with `tmap`.
+
+**`e` is safely remove**: unmount every filesystem on the drive, lock every encrypted container on
+it, then power the drive off. The steps are joined with `&&`, so it stops at the first one that
+fails — a filesystem that will not unmount means the power is never cut.
+
+Everything runs through **`udisksctl`** and nothing else: no `mount(8)`, no `umount`, no `eject`,
+nothing as root. That is what makes a drive mounted here behave exactly like one mounted from
+Thunar or Nautilus — same `/media/$USER` location, same polkit rules. Unlocking is the one action
+given the terminal, because `udisksctl` prompts for the passphrase itself with the echo off: the
+passphrase goes from your keyboard to udisks without passing through Canger.
+
+Four things it will refuse to do:
+
+* **Force anything.** There is no `-f` and no lazy unmount anywhere. A busy filesystem fails and
+  says so.
+* **Act on a stale row.** The list is read again before every action, because what is on screen
+  can be two seconds old.
+* **Show, or touch, anything holding `/`, `/boot`, `/home` or swap** — even a drive that reports
+  itself hot-pluggable, which internal hot-swap bays and eSATA do.
+* **Unmount a drive Canger is itself copying to or from.** The kernel refuses while a file is
+  open, but a transfer between two files holds nothing, and an unmount landing in that gap would
+  break the copy.
+
+Unmount and eject step off the drive first — every tab looking at it goes home and its cached
+listings are dropped — since a file manager showing a directory is a reason that directory cannot
+be unmounted.
+
+**No `sync` is needed and none is called.** The unmount is the flush and blocks on it: measured
+here, 512 MB written with no sync leaves 525 MB dirty, and `udisksctl unmount` takes 0.54 s and
+leaves none, against 0.07 s for the same unmount with nothing outstanding. `sync(1)` is global, so
+adding one would make ejecting a memory stick wait on dirty data belonging to every other
+filesystem.
+
+Needs **udisks2** installed. Without it the list says so and does nothing else.
 
 
 Contributing
