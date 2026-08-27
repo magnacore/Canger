@@ -3260,6 +3260,28 @@ and what `ScreenBuffer.Write` returns are the same number or the model of the sc
 the screen. There is now a test that says so, which is the one that would have caught the original
 report and the hang I added on top of it.
 
+## The `?` on a measured size never went away
+
+Reported: `dc` measures a directory, deleting something inside it makes the figure stale so a `?`
+appears against it, and `dc` again leaves the `?` there — on a figure that had just been taken.
+
+`GetCumulativeSizeCommand` set `CumulativeSize` and never touched `CumulativeSizeStale`. The flag
+had exactly one writer that cleared it — the reload path, and only when
+`autoupdate_cumulative_size` is on. So once anything set it, the marker was permanent: `dc`
+reported a new size still wearing the doubt about the old one.
+
+Ranger has no flag to forget, which is why it cannot have this bug: `look_up_cumulative_size`
+rewrites the whole infostring with a plain separator (`container/directory.py:582-585`), so the
+`?` is not cleared, it simply is not written again. Canger split the figure and its uncertainty
+into two fields, and then updated one of them.
+
+Worth keeping: **a flag that qualifies a value has to be written wherever the value is.** Storing
+"is this stale" apart from the thing it is about means every writer of the thing is a writer of the
+flag, and the compiler will not say so.
+
+Verified in a pty: `2`, then `700 k`, then `700? k` after a deletion, then the new figure with no
+marker.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

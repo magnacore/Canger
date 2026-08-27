@@ -108,4 +108,57 @@ public class CumulativeSizeTests
     public void Format_PutsTheSeparatorBetweenTheNumberAndTheUnit(
         long bytes, string separator, string expected) =>
         Assert.Equal(expected, HumanReadable.Format(bytes, binary: false, separator));
+
+    [Fact]
+    public void MeasuringAgain_ClearsTheDoubtAboutTheOldFigure()
+    {
+        // The reported sequence: `dc`, delete something, the `?` appears because the listing was
+        // re-read, `dc` again — and the `?` stayed. `get_cumulative_size` set the new figure and
+        // left the flag alone, so the marker was permanent once anything had set it.
+        InMemoryFileSystem fs = new InMemoryFileSystem()
+            .AddDirectory("/home/sub")
+            .AddFileOfSize("/home/sub/a.bin", 4096, DateTimeOffset.UnixEpoch);
+
+        FakeFileManager manager = new(fs, "/home");
+        manager.CurrentTab.MoveCursorTo(
+            manager.CurrentTab.Current.Entries.First(e => e.Basename == "sub"));
+
+        manager.Execute("get_cumulative_size");
+        FsNode sub = manager.CurrentTab.Current.Entries.First(e => e.Basename == "sub");
+
+        Assert.Equal(4096L, sub.CumulativeSize);
+
+        // What a re-read after a change does.
+        sub.CumulativeSizeStale = true;
+
+        manager.Execute("get_cumulative_size");
+
+        Assert.False(sub.CumulativeSizeStale, "the figure was just taken; the doubt is not about it");
+    }
+
+    [Fact]
+    public void MeasuringAgain_ReportsTheNewSize()
+    {
+        // And it is a new figure, not the old one with the marker rubbed off.
+        InMemoryFileSystem fs = new InMemoryFileSystem()
+            .AddDirectory("/home/sub")
+            .AddFileOfSize("/home/sub/a.bin", 4096, DateTimeOffset.UnixEpoch)
+            .AddFileOfSize("/home/sub/b.bin", 1024, DateTimeOffset.UnixEpoch);
+
+        FakeFileManager manager = new(fs, "/home");
+        manager.CurrentTab.MoveCursorTo(
+            manager.CurrentTab.Current.Entries.First(e => e.Basename == "sub"));
+
+        manager.Execute("get_cumulative_size");
+        FsNode sub = manager.CurrentTab.Current.Entries.First(e => e.Basename == "sub");
+        Assert.Equal(5120L, sub.CumulativeSize);
+
+        fs.Delete("/home/sub/b.bin");
+        sub.CumulativeSizeStale = true;
+
+        manager.Execute("get_cumulative_size");
+
+        Assert.Equal(4096L, sub.CumulativeSize);
+        Assert.False(sub.CumulativeSizeStale);
+    }
 }
