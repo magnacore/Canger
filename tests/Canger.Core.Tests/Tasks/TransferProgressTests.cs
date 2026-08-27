@@ -176,4 +176,32 @@ public class TransferProgressTests
         Assert.InRange(queue.OverallProgress() ?? -1, 0.4, 0.75);
     }
 
+    [Fact]
+    public void TheClockDoesNotRunWhileATransferIsWaitingItsTurn()
+    {
+        // A transfer is built the moment paste is pressed and may then sit behind another for
+        // minutes. Timing from construction counted that wait as time spent transferring, so the
+        // first rate sample of a job that had queued divided real bytes by the whole wait: a
+        // second film starting behind a first reported 387 k/s and an hour remaining.
+        CopyProgress progress = new(1000, 1);
+
+        Assert.Equal(TimeSpan.Zero, progress.Elapsed);
+
+        progress.BeginFile("/src/film.mp4");
+
+        Assert.True(SpinWait.SpinUntil(() => progress.Elapsed > TimeSpan.Zero,
+                                       TimeSpan.FromSeconds(5)),
+                    "the clock should start when the transfer touches its first file");
+    }
+
+    [Fact]
+    public void BytesReportedWithoutAFileStillStartTheClock()
+    {
+        CopyProgress progress = new(1000, 1);
+
+        progress.AdvanceTransferred(100);
+
+        Assert.True(SpinWait.SpinUntil(() => progress.Elapsed > TimeSpan.Zero,
+                                       TimeSpan.FromSeconds(5)));
+    }
 }

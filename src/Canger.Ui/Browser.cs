@@ -2315,9 +2315,9 @@ public sealed class Browser : IFileManager, IDisposable
             _statusBar.VcsMessageLength = Math.Max(Settings.VcsMessageLength, 1);
             _statusBar.ShowProgressBar = Settings.DrawProgressBarInStatusBar;
             _statusBar.Progress = Tasks.OverallProgress();
-            _statusBar.TaskDescription = Tasks.Current is { IsComplete: false } task
-                ? task.Description
-                : null;
+            // The queue's line, not the running job's: with more than one thing queued the bar
+            // speaks for all of it, and with one it is the job's own line unchanged.
+            _statusBar.TaskDescription = Tasks.Summary()?.Describe();
             _statusBar.FreeBytes = FreeSpace();
             _statusBar.Render(_screen);
         }
