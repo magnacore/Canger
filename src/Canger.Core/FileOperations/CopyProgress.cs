@@ -197,23 +197,40 @@ public sealed class CopyProgress(long totalBytes, int totalFiles)
     /// A summary, or an empty string when nothing was reflinked or renamed and so there is
     /// nothing surprising to report.
     /// </returns>
-    public string DescribeStrategies()
+    public string DescribeStrategies() =>
+        DescribeStrategies(ReflinkedFiles, RenamedFiles, CopiedFiles);
+
+    /// <summary>
+    /// Describes how a set of files was handled, from the counts alone.
+    /// </summary>
+    /// <param name="reflinked">Files the filesystem shared rather than duplicated.</param>
+    /// <param name="renamed">Files moved by renaming, which copies nothing.</param>
+    /// <param name="copied">Files whose data was copied.</param>
+    /// <returns>
+    /// A summary, or an empty string when nothing was reflinked or renamed and so there is
+    /// nothing surprising to report.
+    /// </returns>
+    /// <remarks>
+    /// Separate from the instance so that a report covering several transfers at once can add
+    /// their counts together and word the result the same way a single transfer does.
+    /// </remarks>
+    public static string DescribeStrategies(int reflinked, int renamed, int copied)
     {
         List<string> parts = [];
 
-        if (ReflinkedFiles > 0)
+        if (reflinked > 0)
         {
-            parts.Add($"reflinked {ReflinkedFiles} (instant)");
+            parts.Add($"reflinked {reflinked} (instant)");
         }
 
-        if (RenamedFiles > 0)
+        if (renamed > 0)
         {
-            parts.Add($"renamed {RenamedFiles}");
+            parts.Add($"renamed {renamed}");
         }
 
-        if (CopiedFiles > 0 && parts.Count > 0)
+        if (copied > 0 && parts.Count > 0)
         {
-            parts.Add($"copied {CopiedFiles}");
+            parts.Add($"copied {copied}");
         }
 
         return string.Join(", ", parts);

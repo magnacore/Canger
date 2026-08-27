@@ -3611,10 +3611,22 @@ means measuring per destination, which is not worth it.
 A paused job is still counted as work to come. Pausing is deliberate and the user can see what
 they held.
 
-### Noticed and not fixed
+### One message for the whole run
 
-`ReportFinishedWork` notifies once per finished job, and each notification overwrites the last, so
-finishing two jobs at once shows `done: 1 files` and nothing about the other. Predates this work.
+`ReportFinishedWork` notified once per finished job, and `Notify` replaces the message outright,
+so what survived was whatever finished last. The wrong count — `done: 1 files` after two
+transfers of one file each — was the visible half. The half worth fixing was that a transfer
+which had *lost* a file could be reported and then unreported within the same frame by a clean
+transfer finishing beside it. Nothing was lost but the telling, which is bad enough: the entire
+purpose of the notice is that a file which did not arrive should be noticed.
+
+`FinishedWork.Describe` now sums up the run and returns one message. Trouble outranks everything —
+a run with any problem in it says so and says how many; only a clean run says `done`. A run that
+was stopped says `stopped: n files copied` rather than congratulating the user who pressed abort.
+Being a pure function of the finished jobs, it is testable, which the loop inside the draw path
+was not.
+
+Confirmed live: two pastes of one file now report `done: 2 files`.
 
 ## What is left
 
