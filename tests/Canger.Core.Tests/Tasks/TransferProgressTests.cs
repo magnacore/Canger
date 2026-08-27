@@ -129,4 +129,51 @@ public class TransferProgressTests
 
         Assert.Null(queue.Current);
     }
+
+    [Fact]
+    public void TheOverallFigureNeverGoesBackwards()
+    {
+        // The reported defect: the bar spoke for whatever was left, so finishing a transfer took
+        // it out of the reckoning and the figure fell back to where the next one had got to —
+        // starting again from zero with two films queued one behind the other.
+        InMemoryFileSystem fs = new();
+        TaskQueue queue = new();
+        queue.Add(Job(fs, "/a", "/dest-a", 6));
+        queue.Add(Job(fs, "/b", "/dest-b", 6), atFront: false);
+
+        double highest = 0;
+
+        while (queue.HasWork)
+        {
+            queue.Work(TimeSpan.Zero);
+
+            if (queue.OverallProgress() is { } now)
+            {
+                Assert.True(now >= highest, $"the figure fell from {highest} to {now}");
+                highest = now;
+            }
+        }
+
+        Assert.True(highest > 0.99, $"it never reached the end: {highest}");
+    }
+
+    [Fact]
+    public void AFinishedTransferStillCountsWhileOthersRun()
+    {
+        // What makes the figure monotonic: a completed job is part of the work the bar speaks
+        // for until the queue drains, rather than dropping out of it the moment it finishes.
+        InMemoryFileSystem fs = new();
+        TaskQueue queue = new();
+        QueuedTask first = queue.Add(Job(fs, "/a", "/dest-a", 4));
+        queue.Add(Job(fs, "/b", "/dest-b", 4), atFront: false);
+
+        while (!first.IsComplete)
+        {
+            queue.Work(TimeSpan.Zero);
+        }
+
+        // Half the work is done, so the figure is about a half — not the second job's nothing.
+        Assert.InRange(queue.OverallProgress() ?? -1, 0.4, 0.75);
+    }
+
 }

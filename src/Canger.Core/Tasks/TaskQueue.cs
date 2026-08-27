@@ -331,12 +331,17 @@ public sealed class TaskQueue
     /// <returns>A value from 0 to 1, or <see langword="null"/> when nothing reports progress.</returns>
     public double? OverallProgress()
     {
-        double[] values =
-        [
-            .. _tasks.Where(t => !t.IsComplete)
-                     .Select(t => t.Progress)
-                     .OfType<double>(),
-        ];
+        // Finished jobs included. They are swept only once the whole queue drains, so while
+        // anything is still running they are part of the work this figure speaks for — and
+        // leaving them out was what made it fall back: two films queued, and the bar returned to
+        // nothing the moment the first one finished, because it had begun describing only the
+        // second.
+        //
+        // Equally, not by size. Weighting by bytes is the more accurate idea and a worse figure:
+        // a transfer does not know its total until it has walked its sources, so a job waiting
+        // its turn weighs nothing, and the figure *falls* when that job starts and its size
+        // arrives. A number that goes backwards is worse than one that is only roughly right.
+        double[] values = [.. _tasks.Select(t => t.Progress).OfType<double>()];
 
         return values.Length == 0 ? null : values.Average();
     }
