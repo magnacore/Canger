@@ -53,20 +53,8 @@ public sealed record QueueSummary(string Subject, string RunningDescription, int
 
         System.Text.StringBuilder text = new();
         text.Append(CultureInfo.InvariantCulture, $"{Subject} ({Position} of {Count}): ");
-        text.Append(CultureInfo.InvariantCulture,
-                    $"{(double)completed / total * 100:F0}%");
-        text.Append(CultureInfo.InvariantCulture,
-                    $"  {HumanReadable.Format(completed)}/{HumanReadable.Format(total)}");
-
-        if (BytesPerSecond is { } rate)
-        {
-            text.Append(CultureInfo.InvariantCulture, $"  {HumanReadable.Format((long)rate)}/s");
-        }
-
-        if (Estimate is { } estimate)
-        {
-            text.Append(CultureInfo.InvariantCulture, $"  ETA {HumanReadable.Duration(estimate)}");
-        }
+        text.Append(TransferFigures.Describe((double)completed / total, completed, total,
+                                             BytesPerSecond, Estimate));
 
         // A quiet mark rather than a sentence. Something queued has not been sized yet, so the
         // figures cover part of the queue; it is gone within a frame or two for files, and lasts
