@@ -3650,6 +3650,89 @@ Measured in a pty across a two-job paste: every column held through the total be
 900 M to 1.8 G, through the completed count rolling from M to G, and through the rate changing
 width.
 
+## Removable drives: list, mount, unmount, safely remove
+
+Thunar shows an external drive in its sidebar, mounts it on a click and ejects it from a menu.
+Canger had nothing: a USB drive could only be reached by knowing where udisks had put it, and
+mounting or ejecting one meant leaving the file manager.
+
+**Ranger has no equivalent, so for once there was nothing to match.** The design follows the shape
+of the nearest ranger-derived thing — the task view — so it reads as part of the program rather
+than bolted on: an overlay in the same place, `devices_open`/`devices_close` beside
+`taskview_open`/`taskview_close`, and a key map of its own bound with `dmap`. `<F9>` opens it and
+`:devices` is the same thing typed.
+
+### Two things about lsblk that reasoning gets wrong
+
+Both were found by looking at the drive on this machine rather than by thinking about it, and each
+would have shipped a feature that did nothing.
+
+**`RM` is not the removable flag.** It is the old removable-media bit and means floppies and
+optical drives; the WD USB disk here reports `RM=false`. The flag that matters is `HOTPLUG`,
+confirmed by the transport. Filtering the obvious way lists nothing at all.
+
+**Removability cannot be read off the volume.** The unlocked mapper inside an encrypted USB drive
+reports `HOTPLUG=false` and no transport, being a device-mapper node attached to nothing. It has
+to be inherited from the physical drive at the top of the tree.
+
+There is a third, which is that **this machine's only external drive is encrypted** — so unlock and
+lock had to be in the first cut rather than a later addition, or the feature would have been
+useless on the hardware it was written for.
+
+### Safety
+
+Everything goes through `udisksctl` and nothing else. No `mount(8)`, no `umount`, no `eject`,
+nothing as root — udisks mounts under `/media/$USER` the way the desktop does, so a drive mounted
+here behaves exactly as one mounted from Thunar.
+
+**Nothing is ever forced.** No `-f`, no lazy unmount anywhere. A busy filesystem must fail and say
+so. Removing a drive is one shell command with the steps joined by `&&`, which buys stop-on-failure
+for nothing: a filesystem that will not unmount fails the line and the power is never cut.
+
+**Four refusals, checked in order**: the list is re-read before acting, because what is on screen
+can be two seconds old and two seconds is long enough to unplug something; a drive that is no
+longer attached is refused; a drive holding `/`, `/boot`, `[SWAP]` and the rest never appears at
+all, re-checked at action time; and a drive Canger is itself copying to or from is refused.
+
+That last one is not redundant with the kernel. A transfer holds the file it is copying open, so
+the kernel refuses to unmount underneath it — but **between two files it holds nothing**, and an
+unmount landing in that gap succeeds and breaks the copy. Nothing already written is lost, but the
+transfer fails for a reason the user did not intend and cannot see.
+
+**The passphrase never passes through Canger.** Unlocking is the one action given the terminal,
+because udisksctl prompts for it itself with the echo off. Everything else runs on the task queue,
+told `--no-user-interaction` — a backgrounded udisksctl that raised a polkit prompt would wait
+forever with nothing on screen to type at. When one is refused for want of authorisation, and only
+then, the same command is run again with the terminal so `pkttyagent` can ask.
+
+### Testing something that cannot be tried out
+
+The cost of getting one of these commands wrong is a drive unplugged mid-write, so none of it can
+be tested by running it. Building the command is therefore separated from running it, and reading
+the drives is separated from parsing them: **every decision is a function of its arguments**.
+
+The fixtures are real `lsblk` output rather than something written to suit the parser — one
+captured from this machine, serials and UUIDs replaced, and one for the case that would otherwise
+never be thought of: an internal SATA bay reporting `HOTPLUG=true`, where the flag alone would
+offer the running system for ejection. 43 tests, none of which need a drive.
+
+Verified in a pty against the real hardware, read-only: `<F9>` lists the WD drive's container and
+the filesystem inside it, does not list the internal NVMe, and `<ESC>` closes it.
+
+### Two things the pty said that were not true
+
+A stray replacement character and a leftover column rule appeared on screen. Both were the probe
+decoding each read separately and splitting a UTF-8 sequence across the boundary. Worth writing
+down because the instinct was to go looking in `ScreenBuffer` — the same lesson as before, that
+*"I could not reproduce it" is a statement about the instrument*, in its other direction.
+
+### Known limits
+
+Only udisks2; a machine without it is told so and nothing else happens. No network shares, optical
+media or phones, and not the internal disks Thunar also lists. The size column follows
+`binary_size_prefix` like the rest of Canger, so it says `4 T` where lsblk says `3.6T` — the same
+4 000 752 599 040 bytes counted in thousands rather than in 1024s.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

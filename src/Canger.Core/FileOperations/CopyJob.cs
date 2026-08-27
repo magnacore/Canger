@@ -81,6 +81,12 @@ public sealed class CopyJob : ILoadable, ISizedWork
     /// <summary>How far along the transfer is.</summary>
     public CopyProgress Progress { get; }
 
+    /// <summary>What is being copied or moved.</summary>
+    public IReadOnlyList<string> Sources => _sources;
+
+    /// <summary>The directory it is going to.</summary>
+    public string Destination => _destination;
+
     /// <summary>Files that could not be transferred, and why.</summary>
     public IReadOnlyList<string> Errors => _errors;
 

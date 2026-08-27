@@ -570,7 +570,8 @@ internal static class Program
         Console.WriteLine($"key bindings: browser {keyMaps.Browser.Enumerate().Count()}, " +
                           $"console {keyMaps.Console.Enumerate().Count()}, " +
                           $"pager {keyMaps.Pager.Enumerate().Count()}, " +
-                          $"taskview {keyMaps.TaskView.Enumerate().Count()}");
+                          $"taskview {keyMaps.TaskView.Enumerate().Count()}, " +
+                          $"devices {keyMaps.Devices.Enumerate().Count()}");
 
         Console.WriteLine($"commands: {commands.Count}");
 

@@ -291,6 +291,20 @@ public sealed class FakeFileManager : IFileManager
     /// <inheritdoc />
     public void CloseTaskView() => TaskViewOpen = false;
 
+    /// <summary>Whether a command asked for the device list.</summary>
+    public bool DevicesOpen { get; private set; }
+
+    /// <inheritdoc />
+    public Canger.Core.Devices.DeviceSession Devices => _devices ??= new(Runner, Tasks);
+
+    private Canger.Core.Devices.DeviceSession? _devices;
+
+    /// <inheritdoc />
+    public void OpenDevices() => DevicesOpen = true;
+
+    /// <inheritdoc />
+    public void CloseDevices() => DevicesOpen = false;
+
     /// <inheritdoc />
     public Bookmarks Bookmarks { get; }
 
