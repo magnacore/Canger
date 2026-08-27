@@ -285,8 +285,25 @@ public sealed class CopyJob : ILoadable
             }
         }
 
-        FileCopyResult result = _engine.CopyFile(
-            source, target, Progress.AdvanceTransferred, _cancellationToken);
+        // A piece at a time, handing control back between pieces. Copying a file used to be one
+        // call that returned when the file was done, so the queue's time slice only fell between
+        // files: one large file from a slow disc took the whole interface with it — nothing drawn,
+        // no keys read, no way to cancel, and no progress bar at the one moment there was
+        // progress. Ranger's copy yields inside its byte loop for the same reason
+        // (`core/loader.py:120-160`).
+        FileCopyResult result = default;
+
+        foreach (FileCopyResult? step in _engine.CopyFileSteps(
+                     source, target, Progress.AdvanceTransferred, _cancellationToken))
+        {
+            if (step is { } finished)
+            {
+                result = finished;
+                break;
+            }
+
+            yield return Unit.Value;
+        }
 
         if (!result.Succeeded)
         {
