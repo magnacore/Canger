@@ -3282,6 +3282,44 @@ flag, and the compiler will not say so.
 Verified in a pty: `2`, then `700 k`, then `700? k` after a deletion, then the new figure with no
 marker.
 
+## No progress bar behind the status line during a copy
+
+Reported: ranger tints the status bar as a copy runs; Canger did not.
+
+Every piece was there. `CopyProgress.Fraction`, `QueuedTask.Progress`, `TaskQueue.OverallProgress`
+averaging across the queue exactly as ranger does (`sum(states) / len(states)`,
+`gui/widgets/statusbar.py:334-338`), the setting, the colour, and `DrawProgress` recolouring the
+left of the bar. All of it correct and none of it reached.
+
+`StatusBar.Draw` writes the headline — a message, or the running task's description — and
+**returns**. During a transfer the headline is the task description, so the one moment the bar had
+progress to show was the moment it stopped before showing it. Ranger tints after printing, over
+whatever is there (`statusbar.py:332-341`).
+
+The tint now runs in that path too, but not under a message the user asked for: ranger draws those
+through `_draw_message`, which does no tinting, and a notice about something that has already
+happened is not progress.
+
+### Four measurements, three of them wrong
+
+The first pty test copied 859 MB and reported no colour — and never checked that anything had been
+copied. The second copied 1500 files, confirmed all 1500 arrived, and reported no colour, which was
+true and told me nothing about why. The third grepped for a background code that would have matched
+had one been emitted. Only the fourth — sampling the status row itself every 50 ms — showed
+`copying src: 6% … 30% … 65% … 89%`, which proved the progress was live, the bar was redrawn, and
+the fault was in the drawing rather than the arithmetic.
+
+**A test on the mechanism passed while the feature was broken.** `Progress = 0.5` tinted the bar
+correctly, because that path is the one nothing takes during a copy. The test that catches this
+sets `TaskDescription` as well, which is the state the bar is actually in.
+
+### Two transfers at once: already correct
+
+Checked because it was asked about. Two pastes queue as two tasks, the task view lists both with
+their own percentages — `76% copying aaa` above `0% copying aaa` — and the queue runs them one at a
+time, as ranger's loader does. The status bar averages them, so a second transfer starting pulls the
+bar back rather than restarting it.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
