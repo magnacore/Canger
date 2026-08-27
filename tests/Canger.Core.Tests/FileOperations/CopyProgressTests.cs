@@ -194,4 +194,78 @@ public class TransferRateTests
 
         Assert.Equal(TimeSpan.Zero, rate.Estimate(0));
     }
+
+    // ---- the time remaining, when a transfer is more than one file ------------------
+
+    /// <summary>Gets a rate on the clock: samples are taken no oftener than every 100 ms.</summary>
+    private static CopyProgress Moving(long total, int files, long bytes)
+    {
+        CopyProgress progress = new(0, files);
+        progress.ReviseTotal(total);
+
+        progress.AdvanceTransferred(bytes / 2);
+        Thread.Sleep(130);
+        progress.AdvanceTransferred(bytes / 2);
+
+        return progress;
+    }
+
+    [Fact]
+    public void Estimate_CountsEveryFileLeftInTheTransferAndNotJustThisOne()
+    {
+        // What the estimate is for: `TotalBytes` is revised to the whole transfer once its
+        // sources have been walked, so what is left is the whole of what is left — four files or
+        // one.
+        CopyProgress progress = Moving(total: 1_000_000, files: 4, bytes: 200_000);
+
+        Assert.NotNull(progress.BytesPerSecond);
+        Assert.Equal(800_000, progress.TotalBytes - progress.CompletedBytes);
+
+        TimeSpan? estimate = progress.Estimate;
+        Assert.NotNull(estimate);
+        Assert.True(estimate > TimeSpan.Zero, "with most of the transfer left it is not nearly over");
+    }
+
+    [Fact]
+    public void Estimate_FallsWhenAFileFinishesWithoutItsDataMoving()
+    {
+        // A reflinked or renamed file counts as done without moving a byte, so what is left drops
+        // and the estimate with it. Counting only the file in hand would leave it unchanged.
+        CopyProgress progress = Moving(total: 1_000_000, files: 4, bytes: 200_000);
+
+        TimeSpan before = progress.Estimate!.Value;
+        progress.CompleteWithoutTransfer(600_000, CopyStrategy.Reflink);
+        TimeSpan after = progress.Estimate!.Value;
+
+        Assert.True(after < before, $"the estimate did not fall: {before} then {after}");
+        Assert.Equal(200_000, progress.TotalBytes - progress.CompletedBytes);
+    }
+
+    [Fact]
+    public void Estimate_IsNotThrownOffByAFileThatMovedNoBytes()
+    {
+        // The instant file must not be fed to the rate — a hundred megabytes in no time would
+        // read as an impossible speed and collapse the estimate for everything after it.
+        CopyProgress progress = Moving(total: 1_000_000, files: 4, bytes: 200_000);
+
+        double before = progress.BytesPerSecond!.Value;
+        progress.CompleteWithoutTransfer(600_000, CopyStrategy.Reflink);
+
+        Assert.Equal(before, progress.BytesPerSecond!.Value);
+    }
+
+    [Fact]
+    public void Estimate_SurvivesMovingOnToTheNextFile()
+    {
+        // The rate is the transfer's, not the file's. Starting a new file must not throw away
+        // what has been learnt about the device, or the estimate would blank between every pair
+        // of files.
+        CopyProgress progress = Moving(total: 1_000_000, files: 4, bytes: 200_000);
+
+        double before = progress.BytesPerSecond!.Value;
+        progress.BeginFile("/somewhere/next.bin");
+
+        Assert.Equal(before, progress.BytesPerSecond!.Value);
+        Assert.NotNull(progress.Estimate);
+    }
 }

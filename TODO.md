@@ -3497,6 +3497,37 @@ bytes — the adjustment changes how much is asked for at a time and must change
 device that provokes it is a backup disc belonging to the user, so the real confirmation is theirs
 to make.
 
+## Checked: the time remaining across several files
+
+Asked to double-check the estimate when a transfer is more than one file. It is right, and now has
+tests saying so rather than a reading of the code.
+
+- **What is left is the whole transfer.** `ReviseTotal` sets `TotalBytes` once the sources have
+  been walked, and `Estimate` divides `TotalBytes - CompletedBytes` by the rate. Four files or one,
+  the remainder is the remainder.
+- **A file that finishes without moving data still shortens it.** A reflink or a rename adds its
+  size to `CompletedBytes`, so what is left drops and the estimate falls with it.
+- **That file does not reach the rate.** A hundred megabytes in no time would read as an impossible
+  speed and collapse the estimate for everything after it, so `CompleteWithoutTransfer` deliberately
+  does not sample.
+- **Moving to the next file keeps the rate.** `BeginFile` only records the name; nothing resets the
+  meter, so the estimate does not blank between every pair of files.
+- **The rate is smoothed and recent** — an exponential average of samples taken no oftener than
+  every hundred milliseconds, so time spent walking the sources or on instant files cannot drag it
+  down.
+
+### One inconsistency, introduced by the fix before it
+
+The status bar now carries two numbers that answer different questions. The tint behind the line is
+the whole queue — that was the point of the last change — while the text on it is the running
+job's: `copying film-a: 50% … ETA 00:30` with the bar at a quarter, because a second film is
+waiting.
+
+Both are correct and they disagree, which is worse than either. Ranger does not have the problem
+because it never puts the description in the status bar at all; that is Canger's addition. Not
+fixed, because which way to resolve it is a judgement: a queue-wide ETA is the honest companion to
+a queue-wide bar, but the per-file figure is the one that tells you whether to wait for *this* file.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
