@@ -26,8 +26,15 @@ public class PassphraseTests
                                     .AddDirectory("/home/manuj"),
             "/home/manuj");
 
-        ((FakeFileManager.RecordingProcessRunner)manager.Runner).Result =
-            new ProcessResult(0, Fixture(fixture));
+        FakeFileManager.RecordingProcessRunner runner =
+            (FakeFileManager.RecordingProcessRunner)manager.Runner;
+
+        runner.Result = new ProcessResult(0, Fixture(fixture));
+
+        // Nothing is in the keyring unless a test puts it there. Without this the runner answers
+        // every command with the same canned result, so `secret-tool lookup` would hand back a
+        // page of lsblk output and Canger would try to unlock a drive with it.
+        runner.InputResults["secret-tool lookup"] = new ProcessResult(1);
 
         manager.SettingsStore.SetFromText("unlock_prompt", unlockPrompt);
         manager.Devices.Reload();
@@ -184,6 +191,37 @@ public class PassphraseTests
     }
 
     [Fact]
+    public void APassphraseAlreadyInTheKeyringIsUsedWithoutAsking()
+    {
+        // The point of the whole exercise: a drive whose passphrase Thunar saved simply opens.
+        FakeFileManager manager = Manager("locked-luks-stick.json");
+        Runner(manager).InputResults["secret-tool lookup"] = new ProcessResult(0, "from-thunar");
+
+        manager.Execute("devices_unlock");
+
+        Assert.Null(manager.PendingPrompt);
+        Assert.Contains(Runner(manager).Fed,
+                        f => f.Command.Contains("udisksctl unlock", StringComparison.Ordinal)
+                             && f.Input == "from-thunar");
+    }
+
+    [Fact]
+    public void WithoutLibsecretOnlyTheSessionIsOffered()
+    {
+        // Offering the keyring on a machine that has no keyring tool would be offering something
+        // that cannot happen.
+        FakeFileManager manager = Manager("locked-luks-stick.json");
+        manager.SecretToolAvailable = false;
+
+        manager.Execute("devices_unlock");
+        manager.Type("hunter2");
+
+        Assert.DoesNotContain("keyring", manager.PendingQuestion!.Value.Question,
+                              StringComparison.Ordinal);
+        Assert.DoesNotContain('k', manager.PendingQuestion!.Value.Choices);
+    }
+
+    [Fact]
     public void TheKeyringIsTheDesktopsAndNotCangersOwn()
     {
         // A passphrase saved in Thunar must unlock the drive here, and one saved here must work
@@ -218,10 +256,35 @@ public class PassphraseTests
         BlockDevice drive = new("/dev/sda1", VolumeKind.Encrypted, 4_000_752_599_040L,
                                 "crypto_LUKS", null, null, "/dev/sda",
                                 "WDC WD40NMZW-59GX6S1", "usb", ReadOnly: false,
-                                ClearTextPath: null, Uuid: "61858679-035e-4001-94c3-0e6946fc85df");
+                                ClearTextPath: null, Uuid: "61858679-035e-4001-94c3-0e6946fc85df",
+                                Rotational: true);
 
         Assert.Equal("Encryption passphrase for WDC WD40NMZW-59GX6S1 (4.0 TB Hard Disk)",
                      PassphraseStore.LabelFor(drive));
+    }
+
+    [Fact]
+    public void SomethingSolidStateIsCalledADiskAndNotAHardDisk()
+    {
+        // The distinction the existing entries make: a TOSHIBA MQ01ABD100 is a "1.0 TB Hard Disk"
+        // and a SanDisk Extreme beside it is a "1.0 TB Disk".
+        BlockDevice stick = new("/dev/sdb1", VolumeKind.Encrypted, 1_000_204_886_016L,
+                                "crypto_LUKS", null, null, "/dev/sdb", "SanDisk Extreme 55DD",
+                                "usb", ReadOnly: false, ClearTextPath: null, Uuid: "x",
+                                Rotational: false);
+
+        Assert.Equal("Encryption passphrase for SanDisk Extreme 55DD (1.0 TB Disk)",
+                     PassphraseStore.LabelFor(stick));
+    }
+
+    [Fact]
+    public void ASmallVolumeIsNotDescribedAsATenthOfAGigabyte()
+    {
+        BlockDevice small = new("/dev/loop0", VolumeKind.Encrypted, 67_108_864, "crypto_LUKS",
+                                null, null, "/dev/loop0", "thing", null, ReadOnly: false,
+                                ClearTextPath: null, Uuid: "x");
+
+        Assert.Contains("(67 MB Disk)", PassphraseStore.LabelFor(small), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -316,7 +316,18 @@ public sealed class FakeFileManager : IFileManager
     public bool DevicesOpen { get; private set; }
 
     /// <inheritdoc />
-    public Canger.Core.Devices.DeviceSession Devices => _devices ??= new(Runner, Tasks);
+    public Canger.Core.Devices.DeviceSession Devices =>
+        _devices ??= new(Runner, Tasks, () => SecretToolAvailable);
+
+    /// <summary>
+    /// Whether tests should behave as though libsecret's command is installed.
+    /// </summary>
+    /// <remarks>
+    /// Fixed rather than probed, so a test means the same thing on every machine. It was probed
+    /// once, and the passphrase tests passed only on machines without libsecret — which was all
+    /// of them until one had it.
+    /// </remarks>
+    public bool SecretToolAvailable { get; set; } = true;
 
     private Canger.Core.Devices.DeviceSession? _devices;
 

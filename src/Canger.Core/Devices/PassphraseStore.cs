@@ -33,7 +33,12 @@ namespace Canger.Core.Devices;
 /// </para>
 /// </remarks>
 /// <param name="runner">Runs <c>secret-tool</c>.</param>
-public sealed class PassphraseStore(IProcessRunner runner)
+/// <param name="available">
+/// Whether the tool can be found. Injectable because otherwise every test of the prompt would
+/// depend on whether the machine running it happens to have libsecret installed — which is how
+/// this was written, and the tests passed only until it was.
+/// </param>
+public sealed class PassphraseStore(IProcessRunner runner, Func<bool>? available = null)
 {
     /// <summary>The program everything goes through.</summary>
     public const string Tool = "secret-tool";
@@ -54,7 +59,7 @@ public sealed class PassphraseStore(IProcessRunner runner)
     /// False on a machine without libsecret's tools installed, where the feature simply is not
     /// offered rather than failing when it is used.
     /// </remarks>
-    public static bool IsAvailable => Executables.Exists(Tool);
+    public bool IsAvailable => (available ?? (() => Executables.Exists(Tool)))();
 
     /// <summary>
     /// Finds the saved passphrase for a volume.
@@ -86,10 +91,14 @@ public sealed class PassphraseStore(IProcessRunner runner)
             return null;
         }
 
-        // secret-tool prints the secret with no terminator of its own, but a passphrase that
-        // arrived with a trailing newline would be the wrong key — cryptsetup counts it as part
-        // of the passphrase. Measured: `printf 'x'` unlocks where `echo 'x'` does not.
-        return result.Output.TrimEnd('\n');
+        // Exactly what came back, with nothing trimmed. This did trim a trailing newline, on the
+        // assumption that one could only have got there by accident — and that was wrong in both
+        // directions. Measured against libsecret itself: `lookup` adds no terminator of its own
+        // (a 63-byte passphrase arrives as 63 bytes, no newline), and `store` keeps a newline
+        // that was piped into it (4 bytes in, 4 bytes out). So a passphrase whose last character
+        // is a newline is a passphrase that can be stored, and trimming it would hand cryptsetup
+        // the wrong key while looking like the right one.
+        return result.Output;
     }
 
     /// <summary>
@@ -138,15 +147,25 @@ public sealed class PassphraseStore(IProcessRunner runner)
     {
         ArgumentNullException.ThrowIfNull(device);
 
-        // Decimal, one place, as udisks describes a drive: "4.0 TB", not Canger's "4 T".
-        double terabytes = device.SizeBytes / 1_000_000_000_000d;
-        double gigabytes = device.SizeBytes / 1_000_000_000d;
+        // Decimal, one place, as udisks describes a drive: "4.0 TB", not Canger's "4 T". Down to
+        // megabytes because stopping at gigabytes called a 64 MB volume "0.1 GB", which is both
+        // ugly and wrong-looking beside the real ones.
+        string size = device.SizeBytes switch
+        {
+            >= 1_000_000_000_000L =>
+                $"{device.SizeBytes / 1_000_000_000_000d:0.0} TB",
+            >= 1_000_000_000L =>
+                $"{device.SizeBytes / 1_000_000_000d:0.0} GB",
+            _ =>
+                $"{device.SizeBytes / 1_000_000d:0} MB",
+        };
 
-        string size = terabytes >= 1
-            ? $"{terabytes:0.0} TB"
-            : $"{gigabytes:0.0} GB";
+        // "Hard Disk" for spinning platters and plain "Disk" for anything else, which is the
+        // distinction the existing entries make: a TOSHIBA MQ01ABD100 is a "1.0 TB Hard Disk"
+        // and a SanDisk Extreme is a "1.0 TB Disk".
+        string kind = device.Rotational ? "Hard Disk" : "Disk";
 
-        return $"Encryption passphrase for {device.DiskName} ({size} Hard Disk)";
+        return $"Encryption passphrase for {device.DiskName} ({size} {kind})";
     }
 
     /// <summary>Quotes an argument for the shell.</summary>

@@ -313,11 +313,11 @@ public abstract class DeviceActionCommand : CangerCommand
     {
         // Only when there is somewhere to put it. Offering the keyring on a machine without
         // libsecret would be offering something that cannot happen.
-        string question = PassphraseStore.IsAvailable
+        string question = FileManager.Devices.Passphrases.IsAvailable
             ? "Remember this passphrase? (n)ever, this (s)ession, in the (k)eyring"
             : "Remember this passphrase for this session?";
 
-        IReadOnlyList<char> choices = PassphraseStore.IsAvailable
+        IReadOnlyList<char> choices = FileManager.Devices.Passphrases.IsAvailable
             ? ['n', 's', 'k']
             : ['n', 's'];
 

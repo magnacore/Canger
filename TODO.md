@@ -3892,12 +3892,47 @@ RIGHT  succeeded=True   out=Unlocked /dev/loop0 as /dev/dm-2.
 An accidental confirmation on the way: Canger correctly refuses to list the loop device as
 removable, which is why it had to be driven directly rather than through `<F9>`.
 
-### Not verified
+### The keyring half, once libsecret-tools was installed
 
-**The keyring half.** `secret-tool` is not installed on this machine, so lookup and save have
-never run — only the command shapes are tested. The schema and attributes are read from real
-entries, but whether `secret-tool store` accepts exactly these arguments is unconfirmed until
-`libsecret-tools` is installed.
+Run for real, against the actual keyring and a real LUKS volume:
+
+```
+secret-tool available: True
+lookup before save:    nothing
+save:                  ok
+lookup after save:     15 bytes
+round-trip exact:      True
+unlock with it:        succeeded=True Unlocked /dev/loop0 as /dev/dm-2.
+```
+
+Saved, read back byte-exact, and used to unlock without anything being typed. The existing entry
+for the real drive was also confirmed reachable by the attributes Canger sends — a `SearchItems`
+call with `gvfs-luks-uuid` and the gvfs schema returns the very item Thunar wrote, in the unlocked
+collection.
+
+**And it found a bug in the code.** `Lookup` trimmed a trailing newline, on the assumption that
+one could only be there by accident. Measured against libsecret: `lookup` adds no terminator of
+its own (a 63-byte passphrase arrives as 63 bytes with no newline), and `store` *keeps* a newline
+piped into it (4 bytes in, 4 bytes out). So a passphrase whose last character is a newline is one
+that can be stored, and trimming it would have handed cryptsetup the wrong key while looking like
+the right one. The trim is gone; the pipe is exact in both directions.
+
+**And a flaw in the tests.** `PassphraseStore.IsAvailable` probed the machine, so every test of
+the save prompt depended on whether libsecret happened to be installed — and they passed only
+because it was not. Installing it turned nine of them red at once: the fake runner answered
+`secret-tool lookup` with the same canned result as everything else, which is a page of lsblk
+output, and Canger duly tried to unlock a drive with it. Availability is injected now and the fake
+answers lookup distinctly, so a test means the same thing on every machine.
+
+*A test that passes only on the machines where the feature cannot run is not testing the feature.*
+
+### The label, corrected by looking at the real ones
+
+`(0.1 GB Hard Disk)` for a 64 MB volume, and "Hard Disk" for everything. The existing entries make
+a distinction — a `TOSHIBA MQ01ABD100` is a `1.0 TB Hard Disk` and a `SanDisk Extreme` beside it
+is a `1.0 TB Disk` — so `ROTA` is now read from lsblk and megabytes are spelled as megabytes.
+Cosmetic, since lookup goes by attributes; but the point of using the desktop's schema is that a
+row in Seahorse should not read as a stranger.
 
 Unlocking is run and waited for rather than queued, because the queue starts a program with an
 empty standard input by design. It is a key derivation — a second or two at worst on LUKS2 — and

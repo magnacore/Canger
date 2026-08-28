@@ -35,11 +35,16 @@ public sealed class DeviceSession
     /// <param name="tasks">
     /// The work queue, consulted so that a drive Canger is itself writing to is not unmounted.
     /// </param>
-    public DeviceSession(IProcessRunner runner, TaskQueue tasks)
+    /// <param name="secretToolAvailable">
+    /// Whether libsecret's command can be found, for a test that must not depend on the machine
+    /// it runs on. Left unset in a real session, where it is probed.
+    /// </param>
+    public DeviceSession(IProcessRunner runner, TaskQueue tasks,
+                         Func<bool>? secretToolAvailable = null)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
-        Passphrases = new PassphraseStore(_runner);
+        Passphrases = new PassphraseStore(_runner, secretToolAvailable);
     }
 
     /// <summary>Saved passphrases, in the desktop's keyring.</summary>
