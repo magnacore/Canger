@@ -36,6 +36,14 @@ internal sealed class RecordingRunner : IProcessRunner
     }
 
     /// <inheritdoc />
+    /// <remarks>Rifle never feeds a program anything; recorded so nothing goes unnoticed.</remarks>
+    public ProcessResult RunWithInput(ProcessRequest request, string input)
+    {
+        Requests.Add(request);
+        return Result;
+    }
+
+    /// <inheritdoc />
     /// <remarks>Rifle never runs anything in the background; recorded like the rest.</remarks>
     public IBackgroundProcess? StartInBackground(ProcessRequest request)
     {

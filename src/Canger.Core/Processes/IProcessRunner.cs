@@ -101,6 +101,35 @@ public interface IProcessRunner
     ProcessResult RunCapturingOutput(ProcessRequest request);
 
     /// <summary>
+    /// Runs a program, writing something to its standard input, and captures what it printed.
+    /// </summary>
+    /// <param name="request">What to run. Flags other than the working directory are ignored.</param>
+    /// <param name="input">
+    /// What to write to the program's standard input. Written exactly, with nothing appended.
+    /// </param>
+    /// <returns>What happened, with the output filled in.</returns>
+    /// <remarks>
+    /// <para>
+    /// This exists for one thing: handing a passphrase to a program without it ever being written
+    /// to a file or appearing in a command line. <c>udisksctl unlock --key-file /dev/stdin</c> and
+    /// <c>secret-tool store</c> both take their secret this way, and both are the reason the
+    /// interface needs a shape it did not have — <see cref="Run"/> gives the program the terminal
+    /// or nothing, and neither can carry an argument the user must not see afterwards.
+    /// </para>
+    /// <para>
+    /// <paramref name="input"/> is written verbatim. It must not be a line: a trailing newline is
+    /// part of the passphrase as far as <c>cryptsetup</c> is concerned, and a key file ending in
+    /// one is simply the wrong key. Measured — <c>printf 'x'</c> unlocks where <c>echo 'x'</c>
+    /// reports an incorrect passphrase.
+    /// </para>
+    /// <para>
+    /// The terminal is not given away and nothing is drawn, so this is safe to call while the
+    /// interface is up.
+    /// </para>
+    /// </remarks>
+    ProcessResult RunWithInput(ProcessRequest request, string input);
+
+    /// <summary>
     /// Starts a program in the background, without giving it the terminal.
     /// </summary>
     /// <param name="request">What to run. Only the working directory is taken from the flags.</param>

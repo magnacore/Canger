@@ -3830,6 +3830,80 @@ accidental confirmation of the filter from a direction the fixtures do not cover
 `unmount`, and the last step is documented rather than measured. Everything was cleaned up:
 unmounted, `loop-delete`, image removed, nothing left in `/media`.
 
+## Passphrases: ask inside Canger, and share the desktop's keyring
+
+Thunar asks for a LUKS passphrase in a dialog, offers to remember it, and next time the drive just
+mounts. Canger handed the screen to `udisksctl` and there was nothing to remember with.
+
+**The keyring is the desktop's, not Canger's.** This is the whole point, and it was worth reading a
+real entry to be sure of rather than inventing a schema:
+
+```
+gvfs-luks-uuid : 61858679-035e-4001-94c3-0e6946fc85df
+xdg:schema     : org.gnome.GVfs.Luks.Password
+label          : Encryption passphrase for WDC WD40NMZW-59GX6S1 (4.0 TB Hard Disk)
+```
+
+That UUID is `/dev/sda1` on the drive on this machine — and `lsblk` was **already** being asked for
+`UUID`, so nothing new had to be read to connect a row on screen to an entry in the keyring. A
+passphrase saved in Thunar now unlocks the drive in Canger without being typed, and one saved here
+works in Thunar.
+
+`set unlock_prompt builtin` turns it on; `terminal` is the default and is exactly what happened
+before. It is the first setting Canger has that ranger does not, so the catalogue test now carries
+a written-down list of those — one entry — and a setting cannot be added without either matching
+ranger or being put on it.
+
+### Where a passphrase goes, and does not
+
+* To udisks down a **pipe**: `udisksctl unlock --key-file /dev/stdin`. Never a file, never a
+  command line where `ps` would show it. This needed a shape `IProcessRunner` did not have —
+  `Run` gives a program the terminal or nothing, and neither can carry an argument the user must
+  not see afterwards.
+* To libsecret on **`secret-tool`'s standard input**, for the same reason.
+* **Not** into the command history, which is written to `~/.local/share/canger`. `Accept()` added
+  every line to it; a passphrase would have been a passphrase in a plain file, and would have come
+  back on the next Up arrow.
+* Not into a completion, and Up at a passphrase prompt recalls nothing — either would put
+  something into the line that was not typed there.
+
+### The trap, found by measuring rather than by thinking
+
+**A trailing newline is part of the passphrase.** `printf 'x'` unlocks a real LUKS volume where
+`echo 'x'` reports `Incorrect passphrase`. So the pipe is written with `Write`, never `WriteLine`,
+and what comes back from `secret-tool` is trimmed of exactly one newline. This would have been an
+hour of blaming the keyring.
+
+Measured too: udisks distinguishes a **wrong** passphrase (`Incorrect passphrase`) from **no**
+passphrase (`No key available`). Those were being translated to the same words, which would have
+told a user who typed nothing that what they typed was wrong.
+
+### Verified against a real LUKS volume
+
+Not the real drive — a 64 MB image, `cryptsetup luksFormat`, attached with `udisksctl loop-setup`,
+which gives a genuine LUKS volume without root. Driven through the production path
+(`DeviceSession.UnlockWith` → `TerminalProcessRunner.RunWithInput` → udisksctl):
+
+```
+WRONG  succeeded=False  explain=wrong passphrase
+RIGHT  succeeded=True   out=Unlocked /dev/loop0 as /dev/dm-2.
+```
+
+An accidental confirmation on the way: Canger correctly refuses to list the loop device as
+removable, which is why it had to be driven directly rather than through `<F9>`.
+
+### Not verified
+
+**The keyring half.** `secret-tool` is not installed on this machine, so lookup and save have
+never run — only the command shapes are tested. The schema and attributes are read from real
+entries, but whether `secret-tool store` accepts exactly these arguments is unconfirmed until
+`libsecret-tools` is installed.
+
+Unlocking is run and waited for rather than queued, because the queue starts a program with an
+empty standard input by design. It is a key derivation — a second or two at worst on LUKS2 — and
+the alternative is a second mechanism for feeding a secret to a background process, for one
+caller.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

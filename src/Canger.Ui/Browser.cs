@@ -61,6 +61,16 @@ public sealed class Browser : IFileManager, IDisposable
 
     private CangerCommand? _pendingCommand;
     private Action<char>? _questionCallback;
+
+    /// <summary>
+    /// What to do with a hidden line once it has been typed, or cancelled.
+    /// </summary>
+    /// <remarks>
+    /// Called with <see langword="null"/> when the user gave up, so the caller can say nothing
+    /// rather than treat an empty line as an answer — an empty passphrase and a cancelled prompt
+    /// are different things, and udisks reports them differently.
+    /// </remarks>
+    private Action<string?>? _promptCallback;
     private string? _message;
     private bool _messageIsError;
 
@@ -1261,6 +1271,15 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void Prompt(string question, Action<string?> callback, bool hidden = false)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+
+        _promptCallback = callback;
+        _console.Open(prompt: question + " ", hidden: hidden);
+    }
+
+    /// <inheritdoc />
     public void Ask(string question, Action<char> callback, IReadOnlyList<char>? choices = null)
     {
         _questionCallback = callback;
@@ -1934,6 +1953,18 @@ public sealed class Browser : IFileManager, IDisposable
         {
             case "console_accept":
                 {
+                    // A hidden line is an answer to whoever asked, never a command. Running it
+                    // would put a passphrase through the dispatcher, the macro expander and the
+                    // message log on its way to failing.
+                    if (_promptCallback is { } answered)
+                    {
+                        string secret = _console.Accept();
+                        _promptCallback = null;
+                        _consoleKeys.Clear();
+                        answered(secret);
+                        break;
+                    }
+
                     string line = _console.Accept();
                     _pendingCommand = null;
                     _consoleKeys.Clear();
@@ -1947,10 +1978,18 @@ public sealed class Browser : IFileManager, IDisposable
                 }
 
             case "console_close":
-                _pendingCommand?.Cancel();
-                _pendingCommand = null;
-                _console.Close();
-                break;
+                {
+                    // Told, rather than left waiting. A cancelled prompt and an empty passphrase
+                    // are different answers, and something is expecting one of them.
+                    Action<string?>? cancelled = _promptCallback;
+                    _promptCallback = null;
+
+                    _pendingCommand?.Cancel();
+                    _pendingCommand = null;
+                    _console.Close();
+                    cancelled?.Invoke(null);
+                    break;
+                }
 
             case "console_complete":
             case "console_complete_back":

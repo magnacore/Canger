@@ -115,6 +115,20 @@ public static class ManPage
                    manager, and a passphrase is typed to udisks rather than to Canger. Nothing is
                    ever forced: a filesystem in use fails to unmount and says so. Ranger has no
                    equivalent.
+                   .PP
+                   An encrypted drive is unlocked by
+                   .BR udisksctl (1),
+                   which prompts for the passphrase itself. With
+                   .B unlock_prompt
+                   set to
+                   .BR builtin ,
+                   Canger asks instead, with the typing hidden, and offers to remember the answer
+                   for the session or in the desktop keyring \(em under the same schema Thunar and
+                   GNOME Disks use, so a passphrase saved in either unlocks the drive in the
+                   other. The passphrase reaches udisks down a pipe and is kept out of the command
+                   history.
+                   .B :forget_passphrases
+                   drops what is held in memory without touching the keyring.
                    .SS Version control
                    With
                    .B vcs_aware

@@ -39,6 +39,16 @@ public enum VolumeKind
 /// For a container that has been unlocked, the device node of what is inside it. This is what has
 /// to be unmounted before the container can be locked again.
 /// </param>
+/// <param name="Uuid">
+/// The filesystem or container UUID.
+/// </param>
+/// <remarks>
+/// <see cref="Uuid"/> is how a saved passphrase is found again. The desktop files a LUKS
+/// passphrase under the container's UUID, so this is the one field that connects a drive on
+/// screen to an entry in the keyring — and it survives the device node changing from
+/// <c>/dev/sdb1</c> to <c>/dev/sdc1</c> between one plugging-in and the next, which a path
+/// does not.
+/// </remarks>
 public sealed record BlockDevice(
     string Path,
     VolumeKind Kind,
@@ -50,7 +60,8 @@ public sealed record BlockDevice(
     string DiskName,
     string? Transport,
     bool ReadOnly,
-    string? ClearTextPath = null)
+    string? ClearTextPath = null,
+    string? Uuid = null)
 {
     /// <summary>Whether it is mounted somewhere.</summary>
     public bool IsMounted => MountPoint is { Length: > 0 };
