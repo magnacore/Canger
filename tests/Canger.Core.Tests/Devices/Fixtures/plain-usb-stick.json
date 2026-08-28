@@ -1,41 +1,95 @@
 {
    "blockdevices": [
       {
-         "name": "nvme0n1", "path": "/dev/nvme0n1", "type": "disk",
-         "size": 1024209543168, "fstype": null, "label": null, "partlabel": null,
-         "uuid": null, "mountpoint": null, "hotplug": false, "tran": "nvme",
-         "vendor": null, "model": "WD PC SN740", "rm": false, "ro": false,
+         "name": "nvme0n1",
+         "path": "/dev/nvme0n1",
+         "type": "disk",
+         "size": 1024209543168,
+         "fstype": null,
+         "label": null,
+         "partlabel": null,
+         "uuid": null,
+         "mountpoint": null,
+         "hotplug": false,
+         "tran": "nvme",
+         "vendor": null,
+         "model": "WD PC SN740",
+         "rm": false,
+         "ro": false,
          "children": [
             {
-               "name": "nvme0n1p1", "path": "/dev/nvme0n1p1", "type": "part",
-               "size": 314572800, "fstype": "vfat", "label": null, "partlabel": "EFI",
-               "uuid": "00000001-0000-4000-8000-000000000001", "mountpoint": "/boot/efi",
-               "hotplug": false, "tran": null, "vendor": null, "model": null,
-               "rm": false, "ro": false
+               "name": "nvme0n1p1",
+               "path": "/dev/nvme0n1p1",
+               "type": "part",
+               "size": 314572800,
+               "fstype": "vfat",
+               "label": null,
+               "partlabel": "EFI",
+               "uuid": "00000001-0000-4000-8000-000000000001",
+               "mountpoint": "/boot/efi",
+               "hotplug": false,
+               "tran": null,
+               "vendor": null,
+               "model": null,
+               "rm": false,
+               "ro": false
             },
             {
-               "name": "nvme0n1p2", "path": "/dev/nvme0n1p2", "type": "part",
-               "size": 1014293463040, "fstype": "ext4", "label": "root", "partlabel": null,
-               "uuid": "00000002-0000-4000-8000-000000000002", "mountpoint": "/",
-               "hotplug": false, "tran": null, "vendor": null, "model": null,
-               "rm": false, "ro": false
+               "name": "nvme0n1p2",
+               "path": "/dev/nvme0n1p2",
+               "type": "part",
+               "size": 1014293463040,
+               "fstype": "ext4",
+               "label": "root",
+               "partlabel": null,
+               "uuid": "00000002-0000-4000-8000-000000000002",
+               "mountpoint": "/",
+               "hotplug": false,
+               "tran": null,
+               "vendor": null,
+               "model": null,
+               "rm": false,
+               "ro": false
             }
-         ]
+         ],
+         "rota": false
       },
       {
-         "name": "sdb", "path": "/dev/sdb", "type": "disk",
-         "size": 16008609792, "fstype": null, "label": null, "partlabel": null,
-         "uuid": null, "mountpoint": null, "hotplug": true, "tran": "usb",
-         "vendor": "Verbatim", "model": "STORE N GO", "rm": true, "ro": false,
+         "name": "sdb",
+         "path": "/dev/sdb",
+         "type": "disk",
+         "size": 16008609792,
+         "fstype": null,
+         "label": null,
+         "partlabel": null,
+         "uuid": null,
+         "mountpoint": null,
+         "hotplug": true,
+         "tran": "usb",
+         "vendor": "Verbatim",
+         "model": "STORE N GO",
+         "rm": true,
+         "ro": false,
          "children": [
             {
-               "name": "sdb1", "path": "/dev/sdb1", "type": "part",
-               "size": 16007561216, "fstype": "vfat", "label": "VERBATIM", "partlabel": null,
-               "uuid": "00000003-0000-4000-8000-000000000003", "mountpoint": null,
-               "hotplug": true, "tran": null, "vendor": null, "model": null,
-               "rm": true, "ro": false
+               "name": "sdb1",
+               "path": "/dev/sdb1",
+               "type": "part",
+               "size": 16007561216,
+               "fstype": "vfat",
+               "label": "VERBATIM",
+               "partlabel": null,
+               "uuid": "00000003-0000-4000-8000-000000000003",
+               "mountpoint": null,
+               "hotplug": true,
+               "tran": null,
+               "vendor": null,
+               "model": null,
+               "rm": true,
+               "ro": false
             }
-         ]
+         ],
+         "rota": false
       }
    ]
 }

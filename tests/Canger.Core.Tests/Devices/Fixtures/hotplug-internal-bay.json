@@ -1,19 +1,41 @@
 {
    "blockdevices": [
       {
-         "name": "sda", "path": "/dev/sda", "type": "disk",
-         "size": 512110190592, "fstype": null, "label": null, "partlabel": null,
-         "uuid": null, "mountpoint": null, "hotplug": true, "tran": "sata",
-         "vendor": "ATA", "model": "Samsung SSD 860", "rm": false, "ro": false,
+         "name": "sda",
+         "path": "/dev/sda",
+         "type": "disk",
+         "size": 512110190592,
+         "fstype": null,
+         "label": null,
+         "partlabel": null,
+         "uuid": null,
+         "mountpoint": null,
+         "hotplug": true,
+         "tran": "sata",
+         "vendor": "ATA",
+         "model": "Samsung SSD 860",
+         "rm": false,
+         "ro": false,
          "children": [
             {
-               "name": "sda1", "path": "/dev/sda1", "type": "part",
-               "size": 512109142016, "fstype": "ext4", "label": "system", "partlabel": null,
-               "uuid": "00000001-0000-4000-8000-000000000001", "mountpoint": "/",
-               "hotplug": true, "tran": null, "vendor": null, "model": null,
-               "rm": false, "ro": false
+               "name": "sda1",
+               "path": "/dev/sda1",
+               "type": "part",
+               "size": 512109142016,
+               "fstype": "ext4",
+               "label": "system",
+               "partlabel": null,
+               "uuid": "00000001-0000-4000-8000-000000000001",
+               "mountpoint": "/",
+               "hotplug": true,
+               "tran": null,
+               "vendor": null,
+               "model": null,
+               "rm": false,
+               "ro": false
             }
-         ]
+         ],
+         "rota": false
       }
    ]
 }

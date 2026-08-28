@@ -40,7 +40,7 @@ public static class DeviceLister
     public const string Arguments =
         "--json --bytes --output "
         + "NAME,PATH,TYPE,SIZE,FSTYPE,LABEL,PARTLABEL,UUID,MOUNTPOINT,HOTPLUG,TRAN,"
-        + "VENDOR,MODEL,RM,RO";
+        + "VENDOR,MODEL,RM,RO,ROTA";
 
     /// <summary>Transports that only ever carry something the user can unplug.</summary>
     private static readonly HashSet<string> RemovableTransports =
@@ -195,7 +195,8 @@ public static class DeviceLister
             Text(disk, "tran"),
             Flag(node, "ro"),
             clearTextPath,
-            Text(node, "uuid"));
+            Text(node, "uuid"),
+            Flag(disk, "rota"));
 
     /// <summary>
     /// Names a drive the way it is printed on the case.

@@ -42,6 +42,10 @@ public enum VolumeKind
 /// <param name="Uuid">
 /// The filesystem or container UUID.
 /// </param>
+/// <param name="Rotational">
+/// Whether the drive it sits on has spinning platters. Only used to name it the way the desktop
+/// names it — a "Hard Disk" against a plain "Disk" for anything solid-state.
+/// </param>
 /// <remarks>
 /// <see cref="Uuid"/> is how a saved passphrase is found again. The desktop files a LUKS
 /// passphrase under the container's UUID, so this is the one field that connects a drive on
@@ -61,7 +65,8 @@ public sealed record BlockDevice(
     string? Transport,
     bool ReadOnly,
     string? ClearTextPath = null,
-    string? Uuid = null)
+    string? Uuid = null,
+    bool Rotational = false)
 {
     /// <summary>Whether it is mounted somewhere.</summary>
     public bool IsMounted => MountPoint is { Length: > 0 };
