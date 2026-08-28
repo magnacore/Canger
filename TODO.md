@@ -3939,6 +3939,46 @@ empty standard input by design. It is a key derivation — a second or two at wo
 the alternative is a second mechanism for feeding a secret to a background process, for one
 caller.
 
+## ` did not survive quitting
+
+Ranger's `` ` `` returns you to where you were — including yesterday. Quit inside a folder, reopen,
+press `` ` `` twice, and you are back in it. Canger put you one level up.
+
+Everything for it was already there: the bookmark is set on every move, `` ` `` and `'` are aliases
+of one key, and the file is written on the way out. **The one thing missing was the call ranger
+makes as it exits** — `bookmarks.remember(thisdir)` immediately before `bookmarks.save()`
+(`core/fm.py:547-548`). Without it, what gets written is the directory most recently *left*, which
+is right for toggling back and forth within a session and wrong for coming back later.
+
+**The sixth instance of the same shape**: the mechanism exists and something does not feed it.
+
+Extracted as `Program.RememberWhereTheUserEnded` rather than left as two lines inline, because the
+bug *was* the absence of a call in the middle of a startup routine — which no test could see. Now
+it is four, one of them asserting the wrong behaviour explicitly so the difference is written down.
+
+### Four instrument errors in one sitting
+
+Measuring this took five attempts, and every failure was in the instrument rather than in Canger.
+Worth recording as a set, because the shape recurs:
+
+1. **Read the title bar for the current directory.** It shows *directory plus selected item*, so
+   sitting in `home` with `AAA` selected renders identically to standing inside `AAA`. Two
+   different states, one string.
+2. **Added a marker file to tell them apart.** Better, but still read through the same ambiguous
+   line — the fix addressed the symptom rather than the instrument.
+3. **Ran a control after the test.** Every quit rewrites the bookmark, so the control destroyed the
+   state the test had depended on, and a passing case turned into a failing one for reasons that
+   had nothing to do with the code. *A control that runs after the measurement is not a control.*
+4. **Believed a single positive result.** The first `--choosedir` reading said the fix worked. It
+   was right, but only by luck: with no control it could not tell "jumped to AAA" from "was in AAA
+   all along".
+
+What finally worked: `--choosedir`, which exists precisely to answer "where did this end up", with
+the state rebuilt from scratch before *each* case and a do-nothing control alongside. Then the fix
+was removed and the whole thing re-run to see it fail.
+
+*The flag that answers the question directly beats any amount of reading the screen.*
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

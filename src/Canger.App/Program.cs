@@ -305,7 +305,7 @@ internal static class Program
             // once on the way out, rather than on every navigation.
             if (!options.Clean)
             {
-                bookmarks.Save();
+                RememberWhereTheUserEnded(bookmarks, browser.CurrentTab.Path);
 
                 if (settings.SaveTabsOnExit)
                 {
@@ -539,6 +539,42 @@ internal static class Program
     /// This is how to answer "did my cc.conf take effect?" without hunting through a full-screen
     /// interface for the evidence.
     /// </remarks>
+    /// <summary>
+    /// Files the directory the user was in when they quit under the previous-directory bookmark,
+    /// and writes the bookmarks out.
+    /// </summary>
+    /// <param name="bookmarks">The bookmarks.</param>
+    /// <param name="finalDirectory">Where the user was when they quit.</param>
+    /// <remarks>
+    /// <para>
+    /// This is what makes <c>`</c> return you to where you were yesterday. During a session that
+    /// bookmark holds the directory most recently <em>left</em>, which is right for toggling back
+    /// and forth and wrong for coming back later: without the first call here, quitting inside a
+    /// directory left the bookmark pointing at its parent, and <c>`</c> went one level up from
+    /// where the user had actually been.
+    /// </para>
+    /// <para>
+    /// Ranger does exactly this on the way out, in this order — <c>bookmarks.remember(thisdir)</c>
+    /// then <c>bookmarks.save()</c> (<c>core/fm.py:547-548</c>).
+    /// </para>
+    /// <para>
+    /// A method rather than two lines inline because the bug was the <em>absence</em> of the
+    /// first call, and a call missing from the middle of a startup routine is not something any
+    /// test could see.
+    /// </para>
+    /// </remarks>
+    internal static void RememberWhereTheUserEnded(Bookmarks bookmarks, string finalDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(bookmarks);
+
+        if (finalDirectory is { Length: > 0 })
+        {
+            bookmarks.RememberPrevious(finalDirectory);
+        }
+
+        bookmarks.Save();
+    }
+
     /// <summary>The headline for the binding check.</summary>
     /// <param name="unresolved">How many bound commands the registry could not find.</param>
     /// <param name="hooksPending">Whether any plugin's <c>OnInit</c> is still to run.</param>
