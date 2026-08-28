@@ -38,6 +38,17 @@ public sealed class ConsoleWidget(IColorScheme colorScheme) : Widget
     /// <summary>Whether the console is taking input.</summary>
     public bool IsOpen { get; private set; }
 
+    /// <summary>
+    /// Whether what is typed is hidden, for a passphrase.
+    /// </summary>
+    /// <remarks>
+    /// Hidden rather than merely unechoed: the characters are drawn as bullets so the line still
+    /// shows that something is being typed and how much. Nothing else changes — the same editor
+    /// handles it, so backspace and the rest work — except that the line is kept out of the
+    /// command history, which is written to disc.
+    /// </remarks>
+    public bool IsHidden { get; private set; }
+
     /// <summary>What has been typed.</summary>
     public string Text => _text;
 
@@ -99,18 +110,21 @@ public sealed class ConsoleWidget(IColorScheme colorScheme) : Widget
 
     /// <summary>Where the hardware cursor should sit, so the terminal shows it in the right place.</summary>
     public int ScreenCursorX =>
-        Bounds.X + CellWidth.Of(Prompt) + CellWidth.Of(_text[.._cursor]);
+        Bounds.X + CellWidth.Of(Prompt) + CellWidth.Of(Shown(_text[.._cursor]));
 
     /// <summary>Opens the console.</summary>
     /// <param name="text">What to pre-fill the line with.</param>
     /// <param name="cursorPosition">Where to put the cursor, or -1 for the end.</param>
     /// <param name="prompt">What to show before the input.</param>
-    public void Open(string text = "", int cursorPosition = -1, string prompt = ":")
+    /// <param name="hidden">Whether to draw the line as bullets, for a passphrase.</param>
+    public void Open(string text = "", int cursorPosition = -1, string prompt = ":",
+                     bool hidden = false)
     {
         ArgumentNullException.ThrowIfNull(text);
 
         IsOpen = true;
         IsVisible = true;
+        IsHidden = hidden;
         Question = null;
         Prompt = prompt;
         _text = text;
@@ -142,6 +156,7 @@ public sealed class ConsoleWidget(IColorScheme colorScheme) : Widget
     {
         IsOpen = false;
         IsVisible = false;
+        IsHidden = false;
         Question = null;
         _text = string.Empty;
         _cursor = 0;
@@ -328,6 +343,12 @@ public sealed class ConsoleWidget(IColorScheme colorScheme) : Widget
     /// <param name="direction">Which way, negative for older entries.</param>
     public void HistoryMove(int direction)
     {
+        // Nothing to browse into a passphrase, and nothing worth putting there.
+        if (IsHidden)
+        {
+            return;
+        }
+
         ResetCompletions();
 
         if (CommandHistory.IsEmpty)
@@ -368,6 +389,11 @@ public sealed class ConsoleWidget(IColorScheme colorScheme) : Widget
     /// <param name="direction">Which way to cycle.</param>
     public void CycleCompletions(IReadOnlyList<string> candidates, int direction)
     {
+        if (IsHidden)
+        {
+            return;
+        }
+
         ArgumentNullException.ThrowIfNull(candidates);
 
         // Only a *new* cycle needs candidates. Once one is running the list is already held, and
@@ -404,7 +430,10 @@ public sealed class ConsoleWidget(IColorScheme colorScheme) : Widget
     {
         string line = _text;
 
-        if (line.Trim().Length > 0)
+        // Never a hidden line. The history is written to
+        // `~/.local/share/canger/history`, so a passphrase reaching it would be a passphrase in
+        // a plain file — and would come back on the next Up arrow for anyone at the keyboard.
+        if (!IsHidden && line.Trim().Length > 0)
         {
             CommandHistory.Add(line);
         }
@@ -461,12 +490,25 @@ public sealed class ConsoleWidget(IColorScheme colorScheme) : Widget
         int available = Math.Max(Bounds.Right - x, 0);
 
         // Scroll the line so the cursor stays visible on a long command.
-        WideString wide = new(_text);
-        int cursorColumn = CellWidth.Of(_text[.._cursor]);
+        string visible = Shown(_text);
+        WideString wide = new(visible);
+        int cursorColumn = CellWidth.Of(Shown(_text[.._cursor]));
         int offset = Math.Max(cursorColumn - available, 0);
 
         screen.Write(x, Bounds.Y, wide.Slice(offset, available), style);
     }
+
+    /// <summary>
+    /// What a stretch of the line looks like on screen.
+    /// </summary>
+    /// <param name="text">The characters.</param>
+    /// <returns>The same text, or one bullet per character when the line is hidden.</returns>
+    /// <remarks>
+    /// One bullet per character rather than per cell, so the count on screen is the count typed
+    /// and a passphrase's length is not leaked as a different number by a wide character in it.
+    /// </remarks>
+    private string Shown(string text) =>
+        IsHidden ? new string('\u2022', text.Length) : text;
 
     private void ResetCompletions()
     {

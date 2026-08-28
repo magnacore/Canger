@@ -27,6 +27,27 @@ public sealed class DevicesReloadCommand : CangerCommand
     public override void Execute() => FileManager.Devices.Reload();
 }
 
+/// <summary>Forgets every passphrase held in memory for this sitting.</summary>
+[Command("forget_passphrases",
+         Summary = "Forget passphrases kept in memory; the keyring is untouched.")]
+public sealed class ForgetPassphrasesCommand : CangerCommand
+{
+    /// <inheritdoc />
+    /// <remarks>
+    /// So that keeping a passphrase for a sitting is a decision that can be undone without
+    /// quitting — leaving a terminal unattended being the reason anyone would want to. It does
+    /// not touch the keyring: what was deliberately saved is removed in Seahorse, deliberately.
+    /// </remarks>
+    public override void Execute()
+    {
+        int held = FileManager.Devices.Forget();
+
+        FileManager.Notify(held == 1
+            ? "forgot 1 passphrase"
+            : $"forgot {held} passphrases");
+    }
+}
+
 /// <summary>
 /// What every command that acts on a drive has in common.
 /// </summary>
@@ -200,6 +221,138 @@ public abstract class DeviceActionCommand : CangerCommand
         return [.. affected.Select(d => d.MountPoint).OfType<string>()];
     }
 
+    /// <summary>
+    /// Opens an encrypted container, however the user has asked to be asked.
+    /// </summary>
+    /// <param name="device">The container.</param>
+    /// <param name="then">What to do once it is open.</param>
+    /// <remarks>
+    /// <para>
+    /// With <c>unlock_prompt</c> at its default, this hands the screen to <c>udisksctl</c> and
+    /// lets it ask, as it always has: no passphrase passes through Canger and none is kept.
+    /// </para>
+    /// <para>
+    /// Set to <c>builtin</c>, three places are tried in turn — what was kept for this sitting,
+    /// what the desktop's keyring holds, and finally the user. Only the last of those asks, which
+    /// is the point: a drive whose passphrase Thunar saved simply opens.
+    /// </para>
+    /// </remarks>
+    protected void Unlock(BlockDevice device, Action? then = null)
+    {
+        // No UUID means nothing to look a passphrase up by, so there is nothing the builtin
+        // prompt can do that udisksctl cannot do better.
+        if (FileManager.Settings.UnlockPrompt is not "builtin"
+            || device.Uuid is not { Length: > 0 } uuid)
+        {
+            Run(DeviceActions.Unlock(device), then);
+            return;
+        }
+
+        if (FileManager.Devices.Remembered(uuid) is { } kept)
+        {
+            Open(device, uuid, kept, mayOfferToSave: false, then);
+            return;
+        }
+
+        if (FileManager.Devices.Passphrases.Lookup(uuid) is { } saved)
+        {
+            Open(device, uuid, saved, mayOfferToSave: false, then);
+            return;
+        }
+
+        FileManager.Prompt($"Passphrase for {device.DisplayName}:", typed =>
+        {
+            if (typed is null)
+            {
+                FileManager.Notify($"{device.DisplayName} was left locked");
+                return;
+            }
+
+            Open(device, uuid, typed, mayOfferToSave: true, then);
+        }, hidden: true);
+    }
+
+    /// <summary>Tries a passphrase, and offers to keep one that worked.</summary>
+    private void Open(BlockDevice device, string uuid, string passphrase,
+                      bool mayOfferToSave, Action? then)
+    {
+        Processes.ProcessResult result = FileManager.Devices.UnlockWith(device, passphrase);
+        string trouble = result.Error ?? result.Output;
+
+        if (!result.Succeeded || DeviceActions.Explain(trouble) is not null)
+        {
+            FileManager.Notify(
+                $"{device.DisplayName}: {DeviceActions.Explain(trouble) ?? trouble.Trim()}",
+                isError: true);
+
+            // A saved passphrase that no longer works is worse than none: it fails silently on
+            // every attempt and the user cannot see why. Said plainly so it can be fixed.
+            if (!mayOfferToSave)
+            {
+                FileManager.Notify(
+                    $"{device.DisplayName}: the remembered passphrase did not work. "
+                    + "Remove it in Seahorse, or run :forget_passphrases.", isError: true);
+            }
+
+            return;
+        }
+
+        FileManager.Devices.Reload();
+
+        if (mayOfferToSave)
+        {
+            OfferToSave(device, uuid, passphrase, then);
+            return;
+        }
+
+        then?.Invoke();
+    }
+
+    /// <summary>Asks whether to keep a passphrase that worked, and where.</summary>
+    private void OfferToSave(BlockDevice device, string uuid, string passphrase, Action? then)
+    {
+        // Only when there is somewhere to put it. Offering the keyring on a machine without
+        // libsecret would be offering something that cannot happen.
+        string question = PassphraseStore.IsAvailable
+            ? "Remember this passphrase? (n)ever, this (s)ession, in the (k)eyring"
+            : "Remember this passphrase for this session?";
+
+        IReadOnlyList<char> choices = PassphraseStore.IsAvailable
+            ? ['n', 's', 'k']
+            : ['n', 's'];
+
+        FileManager.Ask(question, answer =>
+        {
+            switch (answer)
+            {
+                case 's':
+                    FileManager.Devices.Remember(uuid, passphrase);
+                    FileManager.Notify("kept until Canger closes");
+                    break;
+
+                case 'k':
+                    FileManager.Devices.Remember(uuid, passphrase);
+
+                    if (FileManager.Devices.Passphrases.Save(
+                            uuid, PassphraseStore.LabelFor(device), passphrase) is { } why)
+                    {
+                        FileManager.Notify($"could not save it: {why}", isError: true);
+                    }
+                    else
+                    {
+                        FileManager.Notify("saved in the keyring");
+                    }
+
+                    break;
+
+                default:
+                    break;
+            }
+
+            then?.Invoke();
+        }, choices);
+    }
+
     /// <summary>Finds a volume again by its device path, after the list has been re-read.</summary>
     /// <param name="path">The device node.</param>
     /// <returns>The volume, or <see langword="null"/> when it is no longer there.</returns>
@@ -223,9 +376,13 @@ public sealed class DevicesMountCommand : DeviceActionCommand
 
         // An encrypted drive has to be opened before there is a filesystem to mount, and asking
         // for the passphrase is the same thing the user would do next anyway.
-        Run(device.Kind == VolumeKind.Encrypted && !device.IsUnlocked
-                ? DeviceActions.Unlock(device)
-                : DeviceActions.Mount(device));
+        if (device.Kind == VolumeKind.Encrypted && !device.IsUnlocked)
+        {
+            Unlock(device);
+            return;
+        }
+
+        Run(DeviceActions.Mount(device));
     }
 }
 
@@ -266,7 +423,7 @@ public sealed class DevicesUnlockCommand : DeviceActionCommand
             return;
         }
 
-        Run(DeviceActions.Unlock(device));
+        Unlock(device);
     }
 }
 
@@ -371,7 +528,7 @@ public sealed class DevicesEnterCommand : DeviceActionCommand
                 return;
             }
 
-            Run(DeviceActions.Unlock(device), () => Follow(path, steps - 1));
+            Unlock(device, () => Follow(path, steps - 1));
             return;
         }
 

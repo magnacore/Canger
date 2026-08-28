@@ -25,14 +25,14 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | | |
 |---|---|
 | Settings | 82, with ranger's global / path-regex / tag scopes |
-| Commands | 113 built in, plus whatever `commands.cs` adds |
+| Commands | 114 built in, plus whatever `commands.cs` adds |
 | Key bindings | 295 in the browser, 36 console, 35 pager, 33 task view, 29 devices |
 | Colour contexts | 82, matching ranger's names exactly |
 | Colourschemes | `default`, `jungle`, `snow`, `solarized` |
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 1717 |
+| Tests | 1740 |
 
 Three things go deliberately beyond ranger:
 
@@ -261,6 +261,44 @@ here, 512 MB written with no sync leaves 525 MB dirty, and `udisksctl unmount` t
 leaves none, against 0.07 s for the same unmount with nothing outstanding. `sync(1)` is global, so
 adding one would make ejecting a memory stick wait on dirty data belonging to every other
 filesystem.
+
+### Remembering a passphrase
+
+By default an encrypted drive is unlocked the way it always was: `udisksctl` is given the screen
+and prompts for the passphrase itself, nothing of it passes through Canger, and nothing is kept.
+
+`set unlock_prompt builtin` moves the prompt inside Canger, drawn as bullets, and three places
+are then tried in turn before you are asked — what you chose to keep for this sitting, what the
+desktop's keyring holds, and only then the keyboard. After a passphrase works you are offered
+**never**, **this session**, or **the keyring**.
+
+The keyring is the desktop's, not Canger's. Thunar, Nautilus and GNOME Disks all file a LUKS
+passphrase through libsecret under `org.gnome.GVfs.Luks.Password`, keyed by the volume's LUKS
+UUID, and Canger uses exactly that:
+
+```
+gvfs-luks-uuid : 61858679-035e-4001-94c3-0e6946fc85df
+xdg:schema     : org.gnome.GVfs.Luks.Password
+label          : Encryption passphrase for WDC WD40NMZW-59GX6S1 (4.0 TB Hard Disk)
+```
+
+So **a passphrase saved in Thunar unlocks the drive in Canger without being typed again**, and one
+saved here works in Thunar. There is one entry per drive, and it is visible and removable in
+Seahorse like any other.
+
+Where the passphrase goes, and does not:
+
+* To udisks down a **pipe** — `udisksctl unlock --key-file /dev/stdin` — so it is never written to
+  a file and never appears in a command line where `ps` would show it.
+* To libsecret on **`secret-tool`'s standard input**, for the same reason.
+* **Not** into the command history, which is written to disc; not into a completion; and an Up
+  arrow at a passphrase prompt recalls nothing.
+
+`:forget_passphrases` drops whatever is being kept in memory without touching the keyring, for
+when you are about to leave the terminal.
+
+The keyring half needs **libsecret-tools** (`secret-tool`) installed. Without it the "keyring"
+option is not offered and the other two still work.
 
 Needs **udisks2** installed. Without it the list says so and does nothing else.
 

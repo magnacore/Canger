@@ -194,7 +194,8 @@ public static class DeviceLister
             DescribeDisk(disk),
             Text(disk, "tran"),
             Flag(node, "ro"),
-            clearTextPath);
+            clearTextPath,
+            Text(node, "uuid"));
 
     /// <summary>
     /// Names a drive the way it is printed on the case.

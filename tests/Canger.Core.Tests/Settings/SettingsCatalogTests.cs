@@ -95,8 +95,15 @@ public partial class SettingsCatalogTests
     /// Every setting ranger knows about must exist in Canger, and vice versa.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The two names that differ do so on purpose: ranger's <c>nested_ranger_warning</c> is
     /// Canger's <c>nested_canger_warning</c>, since it names the program.
+    /// </para>
+    /// <para>
+    /// <see cref="CangerOnlySettings"/> is the list of everything Canger has that ranger does
+    /// not, and it is meant to be short. A setting is added to it deliberately, in the knowledge
+    /// that a configuration using it will not be understood by ranger.
+    /// </para>
     /// </remarks>
     [Fact]
     public void CatalogCoversEverySettingRangerDefines()
@@ -118,12 +125,24 @@ public partial class SettingsCatalogTests
         ];
         expected.Remove("nested_ranger_warning");
         expected.Add("nested_canger_warning");
+        expected.UnionWith(CangerOnlySettings);
 
         HashSet<string> actual = [.. SettingsCatalog.Names];
 
         Assert.Empty(expected.Except(actual, StringComparer.Ordinal));
         Assert.Empty(actual.Except(expected, StringComparer.Ordinal));
     }
+
+    /// <summary>
+    /// Settings Canger has and ranger does not.
+    /// </summary>
+    /// <remarks>
+    /// <c>unlock_prompt</c> governs a feature ranger has no counterpart for at all — removable
+    /// drives — so there is nothing for it to match. Everything else in the catalogue is
+    /// ranger's, and this list existing is what keeps that true: a setting cannot be added
+    /// without either matching ranger or being written down here.
+    /// </remarks>
+    private static readonly string[] CangerOnlySettings = ["unlock_prompt"];
 
     [GeneratedRegex("""["']([a-z_0-9]+)["']\s*:""")]
     private static partial Regex SettingNameInDict();

@@ -99,6 +99,56 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
         }
     }
 
+    /// <inheritdoc />
+    public ProcessResult RunWithInput(ProcessRequest request, string input)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(request.Command);
+        ArgumentNullException.ThrowIfNull(input);
+
+        try
+        {
+            ProcessStartInfo start = new()
+            {
+                FileName = Shell,
+                UseShellExecute = false,
+                WorkingDirectory = request.WorkingDirectory ?? Environment.CurrentDirectory,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add(request.Command);
+
+            using Process? process = Process.Start(start);
+
+            if (process is null)
+            {
+                return new ProcessResult(error: "could not start the program");
+            }
+
+            // Verbatim, and then the pipe is closed so the program stops waiting. Not
+            // `WriteLine`: a trailing newline is part of a passphrase as far as cryptsetup is
+            // concerned, and a key file ending in one is the wrong key.
+            process.StandardInput.Write(input);
+            process.StandardInput.Close();
+
+            // Both pipes drained before waiting, or a program that fills either would block for
+            // ever with nothing reading it.
+            string output = process.StandardOutput.ReadToEnd();
+            string error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            return new ProcessResult(process.ExitCode, output,
+                                     error.Length > 0 ? error : null);
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception
+                                      or InvalidOperationException or IOException)
+        {
+            return new ProcessResult(error: e.Message);
+        }
+    }
+
     /// <summary>Runs a program that takes over the terminal, such as an editor.</summary>
     /// <inheritdoc />
     public IBackgroundProcess? StartInBackground(ProcessRequest request)

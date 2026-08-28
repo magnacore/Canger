@@ -59,6 +59,18 @@ public sealed class CangerSettings(ISettings settings)
     /// <summary>The <c>viewmode</c> setting.</summary>
     public string Viewmode => Required<string>("viewmode");
 
+    /// <summary>
+    /// Where an encrypted drive asks for its passphrase.
+    /// </summary>
+    /// <remarks>
+    /// <c>terminal</c>, the default, hands the screen to <c>udisksctl</c> and lets it prompt, as
+    /// it always has: nothing of the passphrase passes through Canger, and nothing is kept.
+    /// <c>builtin</c> asks inside Canger, which is what makes it possible to offer to remember
+    /// the answer — in the desktop's own keyring, under the same schema Thunar and GNOME Disks
+    /// use, so a passphrase saved in either works in the other.
+    /// </remarks>
+    public string UnlockPrompt => Required<string>("unlock_prompt");
+
     /// <summary>The <c>column_ratios</c> setting.</summary>
     public IReadOnlyList<int> ColumnRatios => Required<IReadOnlyList<int>>("column_ratios");
 
