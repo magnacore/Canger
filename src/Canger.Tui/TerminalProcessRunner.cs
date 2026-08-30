@@ -68,6 +68,49 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
         }
     }
 
+    /// <summary>
+    /// Points a process at a command line, through a shell only when one is needed.
+    /// </summary>
+    /// <param name="start">What to fill in.</param>
+    /// <param name="command">The line to run.</param>
+    /// <remarks>
+    /// <para>
+    /// <c>sh -c "the whole line"</c> makes the line a single argument, and Linux caps one
+    /// argument at 131 072 bytes however much room <c>argv</c> has in total — two megabytes on an
+    /// ordinary system. Numbering 2 561 files built a line of 380 530 bytes and failed with
+    /// "Argument list too long" before the program was even reached, though the same paths as
+    /// separate arguments are a fifth of what <c>argv</c> would allow.
+    /// </para>
+    /// <para>
+    /// So a line that needs nothing from a shell is not given one, which raises the ceiling
+    /// roughly sixteenfold. <see cref="CommandLine.TrySplit"/> decides, and refuses to decide
+    /// whenever there is any doubt — a pipe, a redirection, a variable, a glob — in which case
+    /// this is exactly what it always was.
+    /// </para>
+    /// <para>
+    /// .NET looks along <c>PATH</c> for a program named without a directory, as a shell would, so
+    /// <c>file-number</c> is found in <c>~/.local/bin</c> either way.
+    /// </para>
+    /// </remarks>
+    private static void Aim(ProcessStartInfo start, string command)
+    {
+        if (CommandLine.TrySplit(command) is { Count: > 0 } words)
+        {
+            start.FileName = words[0];
+
+            for (int i = 1; i < words.Count; i++)
+            {
+                start.ArgumentList.Add(words[i]);
+            }
+
+            return;
+        }
+
+        start.FileName = Shell;
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add(command);
+    }
+
     /// <summary>The shell that interprets command lines.</summary>
     private static string Shell =>
         Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } shell &&
@@ -155,7 +198,6 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
         {
             ProcessStartInfo start = new()
             {
-                FileName = Shell,
                 UseShellExecute = false,
                 WorkingDirectory = request.WorkingDirectory ?? Here,
                 RedirectStandardInput = true,
@@ -163,8 +205,7 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
                 RedirectStandardError = true,
             };
 
-            start.ArgumentList.Add("-c");
-            start.ArgumentList.Add(request.Command);
+            Aim(start, request.Command);
 
             using Process? process = Process.Start(start);
 
@@ -201,7 +242,6 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
     {
         ProcessStartInfo start = new()
         {
-            FileName = Shell,
             UseShellExecute = false,
             WorkingDirectory = request.WorkingDirectory ?? Here,
             RedirectStandardOutput = true,
@@ -212,8 +252,7 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
             RedirectStandardInput = true,
         };
 
-        start.ArgumentList.Add("-c");
-        start.ArgumentList.Add(request.Command);
+        Aim(start, request.Command);
 
         try
         {
@@ -357,15 +396,13 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
     {
         ProcessStartInfo start = new()
         {
-            FileName = Shell,
             UseShellExecute = false,
             WorkingDirectory = workingDirectory ?? Here,
             RedirectStandardOutput = captureOutput || discardOutput,
             RedirectStandardError = discardOutput,
         };
 
-        start.ArgumentList.Add("-c");
-        start.ArgumentList.Add(command);
+        Aim(start, command);
 
         Process? process = Process.Start(start);
 
