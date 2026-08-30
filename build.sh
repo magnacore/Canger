@@ -105,17 +105,27 @@ case "$target" in
                 exit 1
             fi
 
-            tar -czf "$out/$name.tar.gz" -C "$out" "$name"
+            # lzip rather than gzip: smaller, and its container carries a CRC of the
+            # uncompressed data plus the original size, so a truncated or corrupted archive is
+            # detected rather than silently unpacked short. The cost is that the recipient needs
+            # lzip installed — `tar xf` alone will not do it — which is why the .deb and the
+            # AppImage exist for people who would rather not.
+            command -v lzip >/dev/null || {
+                echo "canger: lzip is not installed; the tarballs need it (apt install lzip)" >&2
+                exit 1
+            }
+
+            tar --lzip -cf "$out/$name.tar.lz" -C "$out" "$name"
             rm -rf "$staging"
         done
 
         rm -rf "$artifacts"
 
         echo
-        ls -lh "$out"/*.tar.gz | awk '{ printf "  %-52s %s\n", $9, $5 }'
+        ls -lh "$out"/*.tar.lz | awk '{ printf "  %-52s %s\n", $9, $5 }'
         echo
-        echo "  Unpack and run ./canger. The directory has to stay together: config/ holds the"
-        echo "  key bindings, and doc/canger.1 is the page to install as man canger."
+        echo "  tar --lzip -xf <file>, then run ./canger. The directory has to stay together:"
+        echo "  config/ holds the key bindings, and doc/canger.1 installs as man canger."
         ;;
     deb)
         # A Debian package, because a tarball cannot do the three things that make a terminal
