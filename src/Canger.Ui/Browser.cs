@@ -1406,6 +1406,8 @@ public sealed class Browser : IFileManager, IDisposable
                 Handle(_decoder.Flush());
             }
 
+            LeaveIfTheDirectoryHasGone();
+
             // A drive plugged in while the list is on screen should appear on its own, as it
             // does in a desktop file manager. Only while the list is showing, and only every two
             // seconds: lsblk reads sysfs rather than the drives themselves, so it costs nothing
@@ -1617,6 +1619,51 @@ public sealed class Browser : IFileManager, IDisposable
 
     /// <inheritdoc />
     public void CloseDevices() => _deviceView.IsVisible = false;
+
+    /// <summary>
+    /// Steps out of the current directory once it has been removed from underneath.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Another instance deleting the folder this one is standing in used to leave a listing of
+    /// files that were no longer there, and opening one reported that it did not exist. Ranger
+    /// behaves the same way and recovers only when asked, with a reset; there is no reason a
+    /// person should have to know that.
+    /// </para>
+    /// <para>
+    /// The noticing costs nothing new. <c>LoadIfOutdated</c> already stats the directory on every
+    /// draw to see whether it needs re-reading, and it now records the one case it used to treat
+    /// as merely unreadable. Only a directory that is genuinely gone moves anybody: one that
+    /// cannot be read for a moment — a network share, a permission taken away — is left alone,
+    /// because it will come back and being moved out of it would be the surprise.
+    /// </para>
+    /// <para>
+    /// Only the tab the user is looking at. Another tab standing somewhere deleted recovers when
+    /// it is next drawn, which is when its own listing would have gone stale anyway.
+    /// </para>
+    /// </remarks>
+    private void LeaveIfTheDirectoryHasGone()
+    {
+        if (!CurrentTab.Current.HasVanished)
+        {
+            return;
+        }
+
+        string gone = CurrentTab.Path;
+
+        // `Enter` walks up to the nearest directory that is really there, which is the same
+        // route `reset` takes.
+        Directories.Evict(gone);
+        CurrentTab.Enter(gone, recordHistory: false);
+
+        // Said out loud. A browser that moves on its own without explaining looks broken, and
+        // the explanation is the whole story: the directory went, so you are somewhere else now.
+        //
+        // What happened first, and the paths after it. Led by the deleted path, the sentence
+        // began with a hundred characters of directory and the news fell off the end of the
+        // screen — which is the same as not saying it.
+        Notify($"directory deleted — moved to {CurrentTab.Path} (was {gone})");
+    }
 
     /// <summary>Whether the device list is showing.</summary>
     public bool IsDevicesOpen => _deviceView.IsVisible;
