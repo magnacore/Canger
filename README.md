@@ -25,7 +25,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 
 | | |
 |---|---|
-| Settings | 82, with ranger's global / path-regex / tag scopes |
+| Settings | 83, with ranger's global / path-regex / tag scopes |
 | Commands | 114 built in, plus whatever `commands.cs` adds |
 | Key bindings | 295 in the browser, 36 console, 35 pager, 33 task view, 29 devices |
 | Colour contexts | 82, matching ranger's names exactly |
@@ -33,9 +33,9 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 1740 |
+| Tests | 1830 |
 
-Three things go deliberately beyond ranger:
+Four things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -49,13 +49,20 @@ Three things go deliberately beyond ranger:
   unlock, lock and safely-remove — the last of which unmounts everything on the drive, locks what
   is encrypted, and cuts the power, stopping at the first step that fails. Everything goes through
   `udisksctl`, so a drive mounted here behaves exactly like one mounted from a desktop file
-  manager, and a passphrase is typed to `udisksctl` rather than to Canger. Ranger has no
+  manager. It can also remember an encrypted drive's passphrase in the desktop's own keyring, the
+  one Thunar and GNOME Disks use, so a drive unlocked in either opens in the other. Ranger has no
   equivalent; see **Removable drives** below.
+- **It leaves a directory that has been deleted.** Another program removing the folder you are
+  standing in used to leave a listing of files that are no longer there, and opening one reported
+  that it did not exist. Canger steps up to the nearest directory that is really there and says
+  so. Ranger recovers only when asked, with a reset; a drive that has merely stopped answering for
+  a moment still moves nobody.
 
 Known gaps: five of ranger's eight image protocols (w3m, iterm2, sixel, terminology, urxvt) are
-not implemented and fall back to no image; there is no distribution packaging (no `.deb`, no AUR
-entry) beyond the tarballs `./build.sh dist` writes. `TODO.md` is the honest record of what is
-done, what was measured, and what is known to be missing.
+not implemented and fall back to no image; nothing is published anywhere, so there is no
+repository to install from — `./build.sh` makes a `.deb`, an AppImage and two tarballs, and you
+fetch them yourself. `TODO.md` is the honest record of what is done, what was measured, and what
+is known to be missing.
 
 
 Design goals
@@ -119,7 +126,7 @@ no .NET runtime at all, so a framework-dependent package would depend on somethi
 exist outside Microsoft's own apt repository.
 
 ```
-sudo apt install ./dist/canger_0.4.0_amd64.deb
+sudo apt install ./dist/canger_0.5.0_amd64.deb
 ```
 
 `appimage` writes `dist/Canger-VERSION-x86_64.AppImage` — one already-executable file that needs
@@ -132,13 +139,14 @@ AppImages are famous for wanting; this runtime bundles libfuse statically. `fuse
 default nearly everywhere, and where it is not:
 
 ```
-./Canger-0.4.0-x86_64.AppImage --appimage-extract-and-run
+./Canger-0.5.0-x86_64.AppImage --appimage-extract-and-run
 ```
 
 Building one needs `appimagetool`, which Debian does not package — take the `x86_64` build from
 [the AppImage project](https://github.com/AppImage/appimagetool/releases) and put it on your PATH.
 
-`dist` is for giving Canger to someone else. It writes two tarballs into `dist/`: a
+`dist` is for giving Canger to someone else. It writes two lzip tarballs into `dist/` — unpack
+with `tar --lzip -xf`, which needs `lzip` installed — a
 framework-dependent one for a machine that already has .NET 10, and a self-contained one that
 needs nothing installed at all. Both are ReadyToRun, both leave out the debug symbols, the API
 documentation and the Roslyn translations that `publish` keeps, and both carry `config/` — without
