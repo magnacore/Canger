@@ -4341,6 +4341,28 @@ the real case. The program receives all 2 561 paths and no error is reported. Wi
 disabled it never runs at all. Checked both by name on `PATH`, which is what `cfn` does, and by
 absolute path; and redirection, pipes and builtins still go to the shell and still work.
 
+## 0.5.0, and lzip tarballs
+
+Tagged and merged to `main`. Four artifacts now, each started before it is packaged and each run
+again after: two lzip tarballs, a `.deb` and an AppImage.
+
+**tar.lz rather than tar.gz.** Smaller — the framework-dependent tarball went from 13 MB to 9.6 MB
+and the self-contained one from 61 MB to 42 MB — and lzip's container carries a CRC of the
+uncompressed data along with its original size, so a truncated or corrupted archive is detected
+rather than unpacked short in silence. The cost is real and worth stating: the recipient needs
+lzip, and `tar xf` alone will not do it. That is what the `.deb` and the AppImage are for.
+
+**Verified as four separate deliveries, not one build.** Both tarballs unpacked and run; the `.deb`
+extracted and run through its `/usr/bin` symlink with `DOTNET_ROOT` unset, with `man canger`
+rendering from where it was installed; the AppImage renamed to `canger`, run with a minimal PATH,
+and run again with `--appimage-extract-and-run` for a machine with no FUSE. Every one answers
+`canger 0.5.0` and loads 295 browser bindings rather than zero.
+
+The README's status table was three releases stale again — 1740 tests where there are 1830, and a
+known-gaps line still saying there is no `.deb`. There is one; what there is not is anywhere to
+install it from. And "three things beyond ranger" was four: leaving a directory that has been
+deleted had never been written down.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
