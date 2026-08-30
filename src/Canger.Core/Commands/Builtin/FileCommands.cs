@@ -145,6 +145,13 @@ public sealed class RenameCommand : CangerCommand
         try
         {
             FileManager.FileSystem.Rename(file.Path, destination);
+
+            // The tag follows the file, and so do the tags of everything inside a renamed
+            // directory. Ranger does the same (`config/commands.py:1139`), and `bulkrename` here
+            // already did — so renaming one file was the one way to leave a tag pointing at a
+            // name that no longer existed.
+            FileManager.Tags.MovePath(file.RealPath, destination);
+
             FileManager.ReloadCurrentDirectory();
             FileManager.CurrentTab.MoveCursorTo(
                 FileManager.CurrentDirectory.Entries.FirstOrDefault(

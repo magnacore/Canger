@@ -4021,6 +4021,61 @@ check must be that the build *succeeded* before the measurement runs, and the re
 
 *Verify the mutation took, or the negative control is testing the thing it was meant to disable.*
 
+## Tags outliving the files they were about
+
+Tag a file, delete it, and the line stayed in `~/.local/share/canger/tagged` pointing at nothing.
+Delete a tagged *folder* and every tag inside it was stranded at once — the worst kind, because
+nothing on screen ever refers to them again.
+
+Ranger clears them as part of deleting (`core/actions.py:1687-1690`): for each path being removed,
+every tag whose path starts with it goes too. Canger deleted the files and left the tags. Eighth
+instance of the shape — `Tags.Remove` existed and was called by exactly one thing, the untag
+command.
+
+**One deliberate divergence.** Ranger compares with `startswith`, which is a comparison of text
+rather than of paths: deleting `/home/manuj/folder` there also untags `/home/manuj/folderly`, a
+different directory that merely begins the same way. `Tags.RemoveUnder` asks whether one path is
+really inside the other, which is what `startswith` was reaching for. A test covers the
+neighbour.
+
+**And one on purpose in the other direction.** Ranger untags *before* deleting, so a delete that
+fails loses the tag anyway. Here the untagging follows the delete and only covers what actually
+went: a tag is something the user put there by hand, and discarding it for a file still on disc is
+a small loss of their work for nothing.
+
+Both spellings of each path go — a tag is filed under the file's real path, and what was deleted
+is the name it was reached by; for a symbolic link those are two different things and only one has
+gone.
+
+**Never a sweep.** Nothing tidies tags whose files are merely absent. A tag on a file on a drive
+that is not plugged in is not a stale tag, and a tidy-up that could not tell the difference would
+empty the file the first time somebody browsed without their external disc. Confirmed live:
+removing a tagged file from outside Canger leaves its tag alone.
+
+### Renaming lost them too
+
+Ranger's rename carries the tag across (`config/commands.py:1139`), and Canger's `bulkrename`
+already did — but plain `rename` did not, so renaming one file was the one way to leave a tag
+pointing at a name that no longer existed. `Tags.MovePath` already handled directories and their
+contents; it simply was not called.
+
+### Found and not fixed: cut-and-paste
+
+Ranger carries tags across a *move* as well (`core/loader.py:116-124`), rewriting each tag's path
+as the file lands. Canger does not, so cutting a tagged file and pasting it elsewhere strands the
+tag and leaves the file untagged at its new home.
+
+Left alone deliberately: doing it properly needs the transfer to report where each source actually
+ended up, since the clash policy can rename what it moves, and inventing that from the source name
+would file the tag under a path that may not exist. Not a line; a change to what a `CopyJob`
+reports.
+
+### Test support gained a fault
+
+`InMemoryFileSystem.Delete` always succeeded, so "a delete that failed leaves the tag alone" could
+not be written — it would have quietly asserted the successful case. `FailToDelete(path)` makes a
+path refuse, as a read-only mount or a missing permission would.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
