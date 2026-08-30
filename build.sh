@@ -115,7 +115,7 @@ case "$target" in
         ls -lh "$out"/*.tar.gz | awk '{ printf "  %-52s %s\n", $9, $5 }'
         echo
         echo "  Unpack and run ./canger. The directory has to stay together: config/ holds the"
-        echo "  key bindings, and doc/canger.1 is what ? -> m opens."
+        echo "  key bindings, and doc/canger.1 is the page to install as man canger."
         ;;
     Debug|Release)
         exec "$DOTNET_ROOT/dotnet" build Canger.slnx -c "$target" "$@"

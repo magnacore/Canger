@@ -40,9 +40,7 @@ public sealed class HelpCommand : CangerCommand
         switch (answer)
         {
             case 'm':
-                // The manual is a real man page, so let man format and page it. Failing that,
-                // there is nothing useful to put in the pager instead.
-                FileManager.RunProgram("man canger");
+                ShowManual();
                 break;
 
             case 'k':
@@ -61,6 +59,47 @@ public sealed class HelpCommand : CangerCommand
                 // 'q', or anything else: the question is abandoned.
                 break;
         }
+    }
+
+    /// <summary>
+    /// Shows the manual, formatted and paged by <c>man</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This was <c>man canger</c>, which asks the system for an <em>installed</em> page. Canger is
+    /// normally run from wherever it was unpacked or built, nothing installs a page there, and
+    /// <c>man</c> answers with exit 16 — its code for "no such page". So the one key whose whole
+    /// job is to explain the program failed for anybody who had not packaged it.
+    /// </para>
+    /// <para>
+    /// Canger writes its own manual instead, with <c>--man</c>, and hands that to <c>man</c> to
+    /// format. The page is generated from the same binary that is running, so it describes the
+    /// bindings and settings actually in force rather than whichever version was installed last —
+    /// and it needs no installation at all.
+    /// </para>
+    /// <para>
+    /// Through a file rather than a pipe: <c>man -l -</c> reads standard input on man-db but not
+    /// everywhere, while <c>man -l FILE</c> is understood by every implementation. The file is
+    /// named <c>canger.1</c> so that the header reads <c>CANGER(1)</c> rather than a temporary
+    /// name, and the directory holding it goes as soon as the pager exits.
+    /// </para>
+    /// </remarks>
+    private void ShowManual() =>
+        // The running binary, whatever it is called and wherever it was unpacked. Falling back to
+        // the name only if the runtime cannot say, in which case the PATH is the best guess left.
+        FileManager.RunProgram(ManualCommand(Environment.ProcessPath ?? "canger"));
+
+    /// <summary>Builds the line that renders and pages the manual.</summary>
+    /// <param name="executable">The Canger binary to ask for the page.</param>
+    /// <returns>A shell command.</returns>
+    internal static string ManualCommand(string executable)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(executable);
+
+        string self = MacroExpander.ShellQuote(executable);
+
+        return $"d=$(mktemp -d) && {self} --man > \"$d/canger.1\" && man -l \"$d/canger.1\"; "
+               + "rm -rf \"$d\"";
     }
 
     private string DescribeBindings()
