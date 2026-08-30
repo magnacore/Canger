@@ -4225,6 +4225,41 @@ putting the paths after it is the difference between saying something and not.
 
 *A message that does not fit is a message that was not sent.*
 
+## A Debian package
+
+`./build.sh deb` writes `dist/canger_VERSION_amd64.deb`. The tarballs stay: they are what a
+packager or a non-Debian machine wants, and the framework-dependent one is the 13 MB download for
+somebody who already has .NET.
+
+A package does three things a tarball cannot, and one of them was a bug fixed here recently:
+`canger` on the PATH, the manual where **`man canger`** finds it, and `apt remove` to undo it.
+
+**Self-contained, because there is no alternative.** `apt-cache search ^dotnet-runtime` comes back
+empty on Debian 13 — Debian packages no .NET runtime at all, so a framework-dependent package
+would depend on something that exists only in Microsoft's own apt repository. 42 MB to download,
+150 MB installed, and it works on a machine with nothing on it.
+
+**The dependencies are read off the binaries.** `dpkg-shlibdeps` is the proper tool and is no use
+here: it wants the whole debhelper build tree around it and produces four warnings and no answer
+without one. So the list is derived and written down with its reasoning — `libc6`, `libgcc-s1`,
+`libstdc++6` from what everything links against, and `libicu` from what nothing does.
+
+ICU is the interesting one: it appears in no binary because .NET opens it by name at runtime, and
+a self-contained build with `InvariantGlobalization` off exits at startup without it. Alternatives
+span current Debian and Ubuntu. OpenSSL is opened the same way but only when something asks for
+cryptography, which Canger never does, so it is recommended rather than required.
+
+`liblttng-ust` is deliberately not depended on: it is loaded only if tracing is asked for.
+
+**Verified as installed rather than as built.** Extracted to a scratch root and run from there with
+`DOTNET_ROOT` unset and a minimal `PATH`: `canger --version` answers, the shipped configuration
+loads through the `/usr/bin` symlink (295 browser bindings, not zero), and `man canger` renders
+from where the package put it. The manual is generated from the binary being packaged rather than
+copied from `doc/`, so it cannot describe a different version.
+
+The symlink was checked rather than assumed: a .NET apphost finds its own directory through
+`/proc/self/exe`, which resolves the link, so `config/` beside the real binary is still found.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
