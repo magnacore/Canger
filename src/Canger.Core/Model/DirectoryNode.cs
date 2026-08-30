@@ -320,9 +320,22 @@ public sealed class DirectoryNode : FsNode
 
         DateTimeOffset? now = _fileSystem.GetStatus(Path, followSymbolicLinks: true)?.ModifyTime;
 
-        // An unreadable directory is left alone: the listing already on screen is more use than
-        // an empty one, and the error is reported by whatever tries to enter it.
-        if (now is null || now == _loadedMtime)
+        if (now is null)
+        {
+            // Gone is not the same as briefly unreadable, and the two arrive here identically.
+            // A directory on a network share that has stopped answering, or one whose parent has
+            // had its search permission taken away, still exists and will come back; the listing
+            // on screen is more use than an empty one and is left alone. One that has actually
+            // been removed is never coming back, and everything on screen is about to become a
+            // ghost — so it is worth the second syscall to tell them apart, which only happens
+            // in the rare case where the first one failed.
+            HasVanished = !_fileSystem.ExistsNoFollow(Path);
+            return false;
+        }
+
+        HasVanished = false;
+
+        if (now == _loadedMtime)
         {
             return false;
         }
@@ -330,6 +343,16 @@ public sealed class DirectoryNode : FsNode
         Load(cancellationToken);
         return true;
     }
+
+    /// <summary>
+    /// Whether this directory has been removed since it was read.
+    /// </summary>
+    /// <remarks>
+    /// Set by <see cref="LoadIfOutdated"/>, which already stats the directory on every draw, so
+    /// noticing costs nothing that was not being paid. Deliberately not the same as "could not be
+    /// read": see the reasoning there.
+    /// </remarks>
+    public bool HasVanished { get; private set; }
 
     /// <summary>Forgets a shallow count, so the next request reads the directory again.</summary>
     public void InvalidateCount()

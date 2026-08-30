@@ -4184,6 +4184,47 @@ nothing ran. Anyone with a plugin on the directory-change hook would have hit it
 
 *The reason to measure a fix end to end and not only its own tests.*
 
+## Leaving a deleted directory without being asked to
+
+Having matched ranger — recover on `reset` — the obvious next question was why anybody should have
+to know that. Neither program notices on its own, and a listing of files that are no longer there
+is worse than useless: every one of them is a thing you can try to open and be told off for.
+
+**It cost nothing to notice.** `DirectoryNode.LoadIfOutdated` already stats the directory on every
+draw to decide whether to re-read it. What it did not do was tell apart the two ways that stat can
+fail, and they call for opposite answers:
+
+```
+An unreadable directory is left alone: the listing already on screen is more use
+than an empty one, and the error is reported by whatever tries to enter it.
+```
+
+That comment was right about one case and wrong about the other. A share that has stopped
+answering will come back, and moving out of it would be the surprise. One that has been *removed*
+is never coming back. They arrive identically — a null status — so the second syscall to tell them
+apart is worth it, and is only paid in the rare case where the first one failed.
+
+So: the current tab steps up to the nearest directory that is really there, and says so. No new
+polling, no watcher, no thread.
+
+**Only a directory that is genuinely gone moves anybody.** A test covers the other case, and
+removing the distinction — treating every failed stat as "gone" — fails exactly that one.
+
+**Only the tab you are looking at.** Another tab standing somewhere deleted recovers when it is
+next drawn, which is when its listing would have gone stale anyway.
+
+Measured in a pty with **no keys pressed at all**: the directory deleted from another process,
+Canger moves from `<root>/Test` to `<root>` on its own and reports it. The control, with the
+directory left alone, stays put and says nothing.
+
+### The message had to be rewritten to be read
+
+`"{gone} was deleted — moved to {here}"` never appeared: it began with a hundred characters of
+path, and on a 110-column terminal the news fell off the end. Leading with what happened and
+putting the paths after it is the difference between saying something and not.
+
+*A message that does not fit is a message that was not sent.*
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
