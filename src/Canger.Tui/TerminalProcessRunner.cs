@@ -22,6 +22,52 @@ namespace Canger.Tui;
 /// </remarks>
 public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessRunner
 {
+    /// <summary>
+    /// Where to start a program when the caller did not say.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not <see cref="Environment.CurrentDirectory"/> directly, which <em>throws</em> when the
+    /// process's own working directory has been deleted — <c>getcwd(2)</c> has nothing to
+    /// return. Another instance of Canger removing the directory this one is sitting in is
+    /// enough, and then the next external program of any kind — a preview, a plugin announcing
+    /// where you are, anything at all — took the whole browser down with an unhandled exception
+    /// rather than failing on its own.
+    /// </para>
+    /// <para>
+    /// Home, then the root: the first thing that exists. A program started somewhere other than
+    /// where the user thought is a small surprise; a file manager that quits is not.
+    /// </para>
+    /// </remarks>
+    private static string Here => StartIn(null, static () => Environment.CurrentDirectory);
+
+    /// <summary>
+    /// Decides where to start a program.
+    /// </summary>
+    /// <param name="requested">Where the caller asked for, or <see langword="null"/>.</param>
+    /// <param name="current">Reads the process's own working directory.</param>
+    /// <returns>A directory to start in.</returns>
+    internal static string StartIn(string? requested, Func<string> current)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+
+        if (requested is { Length: > 0 })
+        {
+            return requested;
+        }
+
+        try
+        {
+            return current();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+            return Directory.Exists(home) ? home : "/";
+        }
+    }
+
     /// <summary>The shell that interprets command lines.</summary>
     private static string Shell =>
         Environment.GetEnvironmentVariable("SHELL") is { Length: > 0 } shell &&
@@ -88,7 +134,7 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
             return new ProcessResult(process.ExitCode, output);
         }
         catch (Exception e) when (e is System.ComponentModel.Win32Exception
-                                      or InvalidOperationException)
+                                      or InvalidOperationException or IOException)
         {
             return new ProcessResult(error: e.Message);
         }
@@ -111,7 +157,7 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
             {
                 FileName = Shell,
                 UseShellExecute = false,
-                WorkingDirectory = request.WorkingDirectory ?? Environment.CurrentDirectory,
+                WorkingDirectory = request.WorkingDirectory ?? Here,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -157,7 +203,7 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
         {
             FileName = Shell,
             UseShellExecute = false,
-            WorkingDirectory = request.WorkingDirectory ?? Environment.CurrentDirectory,
+            WorkingDirectory = request.WorkingDirectory ?? Here,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
 
@@ -218,7 +264,8 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
 
             return new ProcessResult(process.ExitCode);
         }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception
+                              or InvalidOperationException or IOException)
         {
             return new ProcessResult(error: e.Message);
         }
@@ -263,7 +310,8 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
 
             return new ProcessResult(process.ExitCode, output);
         }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception
+                              or InvalidOperationException or IOException)
         {
             return new ProcessResult(error: e.Message);
         }
@@ -281,7 +329,7 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
         {
             FileName = emulator.Program,
             UseShellExecute = false,
-            WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
+            WorkingDirectory = workingDirectory ?? Here,
         };
 
         foreach (string argument in emulator.BuildArguments(Shell, command))
@@ -297,7 +345,8 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
                 ? new ProcessResult(error: "could not start the terminal emulator")
                 : new ProcessResult();
         }
-        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception
+                              or InvalidOperationException or IOException)
         {
             return new ProcessResult(error: e.Message);
         }
@@ -310,7 +359,7 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
         {
             FileName = Shell,
             UseShellExecute = false,
-            WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
+            WorkingDirectory = workingDirectory ?? Here,
             RedirectStandardOutput = captureOutput || discardOutput,
             RedirectStandardError = discardOutput,
         };

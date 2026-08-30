@@ -4128,6 +4128,62 @@ answer. What breaks the pattern is having the negative case in hand — run the 
 against code known to be broken and check it says so. Every one of these was caught that way, and
 none of them by staring harder at the positive.
 
+## Standing in a directory another instance has deleted
+
+Two instances, both inside `Test/`. One deletes it; the other still lists `notes.md` and errors on
+opening it.
+
+**Measured against real ranger**, run from `/opt/ranger-master` with `--choosedir` answering
+"where did you end up" rather than anything read off the screen, and a control run with the
+directory left alone:
+
+| | ranger | Canger before | Canger now |
+|---|---|---|---|
+| control, directory intact | `<root>/Test` | `<root>/Test` | `<root>/Test` |
+| deleted, no reset | `<root>/Test` | `<root>/Test` | `<root>/Test` |
+| deleted, then `Ctrl-R` | **`<root>`** | `<root>/Test` | **`<root>`** |
+
+So **neither program notices on its own** — both keep the stale listing and let you try to open a
+file that has gone. Ranger's `load_content_if_outdated` stats the directory and, when that fails,
+`return False` without reloading (`container/directory.py:700-702`). Canger did the same thing by
+a different route. That half is parity, and the user sees it as a bug in both.
+
+Where they differed is the recovery. Ranger's `reset` re-enters the current path, and its
+`enter_dir` treats **anything that is not a directory** as "go to the parent and select the name"
+(`core/tab.py:151-153`) — which covers a file and equally a path that has stopped being anything.
+Canger's `Tab.Enter` asked whether the path was a *file*, so a path that had vanished failed that
+test and was entered anyway.
+
+One test rather than two, now. And it walks up rather than trying the parent once: ranger's
+`chdir` fails if the parent is gone too and it stays where it was, which for a deleted *tree* — the
+usual case — means it does not recover at all.
+
+Ranger's failure to open is silent, incidentally; Canger says the file is not there. Canger's is
+better and stays.
+
+### The far worse bug this uncovered
+
+Recovering moved the tab, which announced the new directory, which ran the user's zoxide plugin,
+which **took the whole browser down**:
+
+```
+Unhandled exception. System.IO.FileNotFoundException: Unable to find the specified file.
+   at Interop.Sys.GetCwd()
+   at Canger.Tui.TerminalProcessRunner.Start(...)
+```
+
+`Environment.CurrentDirectory` *throws* when the process's own working directory has been deleted —
+`getcwd(2)` has nothing to return. It was read in four places to fill in a working directory
+nobody had specified, so **any** external program at all — a preview, a plugin, a shell command —
+killed Canger once the directory it was sitting in went away. Only the two causes that mean "it is
+not there any more" are absorbed; anything else still surfaces, so a real bug cannot hide behind a
+working directory.
+
+Not caused by the fix, only revealed by it: without recovering there was no directory change, so
+nothing ran. Anyone with a plugin on the directory-change hook would have hit it by navigating.
+
+*The reason to measure a fix end to end and not only its own tests.*
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

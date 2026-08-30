@@ -11,4 +11,10 @@
     <ProjectReference Include="../Canger.Core/Canger.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The runner needs a real terminal to be useful, so the decisions it makes that are not
+         about drawing are tested directly instead. -->
+    <InternalsVisibleTo Include="Canger.Tui.Tests" />
+  </ItemGroup>
+
 </Project>

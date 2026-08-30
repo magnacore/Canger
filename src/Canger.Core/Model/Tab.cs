@@ -188,11 +188,18 @@ public sealed class Tab
             leaving.Refilter();
         }
 
+        // Ranger's rule, and it is one test rather than two: anything that is not a directory is
+        // entered as its parent, with the cursor put on the name (`core/tab.py:151-153`). That
+        // covers a file — go there and select it — and equally a path that has stopped being
+        // anything, which is what another instance deleting the directory you are standing in
+        // leaves behind. Canger asked whether the path was a file, so a path that had vanished
+        // failed the test and was entered anyway; `reset` then re-entered a directory that was
+        // not there and stayed in it.
         DirectoryNode candidate = _cache.Get(target);
-        if (candidate.Status is { IsDirectory: false })
+        if (candidate.Status is not { IsDirectory: true })
         {
             selectAfterwards = target;
-            target = System.IO.Path.GetDirectoryName(target) ?? "/";
+            target = NearestDirectory(System.IO.Path.GetDirectoryName(target) ?? "/");
         }
 
         DirectoryNode directory = _cache.GetLoaded(target, cancellationToken);
@@ -254,6 +261,39 @@ public sealed class Tab
         MoveCursorTo(node);
 
         return true;
+    }
+
+    /// <summary>
+    /// Walks up from a path until it finds something that really is a directory.
+    /// </summary>
+    /// <param name="from">Where to start looking.</param>
+    /// <returns>The nearest ancestor that exists, or the root.</returns>
+    /// <remarks>
+    /// Ranger tries the immediate parent and no further: if that is gone too its <c>chdir</c>
+    /// fails and it stays where it was (`core/tab.py:156-159`), which for a deleted tree means it
+    /// does not recover at all. Walking up gives the same answer as ranger whenever ranger has
+    /// one, and an answer where ranger has none — which is the common case here, since deleting
+    /// a directory usually means deleting the thing that contained what you were looking at.
+    /// </remarks>
+    private string NearestDirectory(string from)
+    {
+        string path = from;
+
+        while (_cache.Get(path).Status is not { IsDirectory: true })
+        {
+            string? parent = System.IO.Path.GetDirectoryName(path);
+
+            // At the root, or somewhere with no parent to go to. The root is the one directory
+            // that can be relied on to be there.
+            if (parent is null || string.Equals(parent, path, StringComparison.Ordinal))
+            {
+                return "/";
+            }
+
+            path = parent;
+        }
+
+        return path;
     }
 
     /// <summary>
