@@ -102,6 +102,7 @@ cd canger
 ./build.sh Release      # optimised, still JITs itself on the way to the first frame
 ./build.sh publish      # Release + ReadyToRun, framework-dependent — the one to actually use
 ./build.sh dist         # tarballs to hand to somebody else
+./build.sh deb          # a Debian package
 ./test.sh               # the whole suite
 ```
 
@@ -109,6 +110,16 @@ cd canger
 applies at publish, so a plain build — in either configuration — still pays to compile itself on
 every launch. It stays framework-dependent (`--self-contained false`), so it uses the runtime
 that is already installed rather than bundling one.
+
+`deb` builds `dist/canger_VERSION_amd64.deb`, which is the right answer on Debian or Ubuntu:
+`canger` goes on the PATH, the manual where `man canger` finds it, and the shipped `cc.conf`,
+`rifle.conf` and `scope.sh` under `/usr/lib/canger/config`. It is self-contained — Debian packages
+no .NET runtime at all, so a framework-dependent package would depend on something that does not
+exist outside Microsoft's own apt repository.
+
+```
+sudo apt install ./dist/canger_0.4.0_amd64.deb
+```
 
 `dist` is for giving Canger to someone else. It writes two tarballs into `dist/`: a
 framework-dependent one for a machine that already has .NET 10, and a self-contained one that
