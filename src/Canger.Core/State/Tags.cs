@@ -92,6 +92,64 @@ public sealed class Tags(string path)
     }
 
     /// <summary>
+    /// Removes the tags of things that have gone, and of everything that was inside them.
+    /// </summary>
+    /// <param name="paths">What has been removed.</param>
+    /// <returns>How many tags were dropped.</returns>
+    /// <remarks>
+    /// <para>
+    /// Deleting a tagged file left its tag behind, pointing at nothing; deleting a tagged folder
+    /// left a tag for the folder and for every tagged file inside it. Ranger clears them as part
+    /// of deleting (<c>core/actions.py:1687-1690</c>) and this is the same rule.
+    /// </para>
+    /// <para>
+    /// Not the same comparison, though. Ranger asks whether the tag's path
+    /// <c>startswith</c> the deleted one, which is a comparison of text rather than of paths:
+    /// deleting <c>/a/b</c> there also untags <c>/a/bc</c>, a different file that merely begins
+    /// the same way. This asks whether one path is really inside the other, which is what
+    /// <c>startswith</c> was reaching for.
+    /// </para>
+    /// <para>
+    /// Only in response to something being removed — never as a sweep over tags whose files are
+    /// missing. A tag on a file on a drive that is not plugged in is not a stale tag, and a
+    /// tidy-up that could not tell the difference would quietly empty the file every time
+    /// somebody browsed without their external disc.
+    /// </para>
+    /// </remarks>
+    public int RemoveUnder(IEnumerable<string> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+
+        List<string> gone = [.. paths.Where(p => p is { Length: > 0 })];
+
+        if (gone.Count == 0)
+        {
+            return 0;
+        }
+
+        Reload();
+
+        List<string> stale =
+        [
+            .. _tags.Keys.Where(tagged => gone.Exists(
+                   path => string.Equals(tagged, path, StringComparison.Ordinal)
+                           || FileOperations.PathRelation.IsInside(tagged, path))),
+        ];
+
+        foreach (string path in stale)
+        {
+            _tags.Remove(path);
+        }
+
+        if (stale.Count > 0)
+        {
+            Save();
+        }
+
+        return stale.Count;
+    }
+
+    /// <summary>
     /// Adds a tag where it is missing and removes it where it is present.
     /// </summary>
     /// <remarks>
