@@ -14,7 +14,8 @@ same settings and the same configuration file syntax — written as idiomatic C#
 transliterated Python. If a key does something in ranger and something else in Canger, that is a
 bug; please report it.
 
-For usage, read the manual: `man canger`, or `canger --man` before it is installed.
+For usage, press `?` then `m` inside Canger, which renders the manual for the build you
+are running. Outside it: `man canger` once installed, or `canger --man` before that.
 
 
 Status

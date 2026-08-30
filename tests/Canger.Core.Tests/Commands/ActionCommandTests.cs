@@ -255,14 +255,20 @@ public class ActionCommandTests
     public void Help_StillShowsTheManPageThroughMan()
     {
         // `m` is not a dump: man formats and pages it itself, so it does not go through either
-        // pager.
+        // pager. This asserted the whole command line, `man canger` — which is what broke, since
+        // that asks the system for an installed page and Canger is normally run from wherever it
+        // was unpacked. The intent above is worth keeping; the exact spelling was not.
         FakeFileManager manager = Manager();
 
         manager.Execute("help");
         manager.Answer('m');
 
         Assert.Empty(manager.ExternalPagerText);
-        Assert.Contains(("man canger", string.Empty), manager.LaunchedPrograms);
+
+        (string Command, string Flags) launched = Assert.Single(manager.LaunchedPrograms);
+
+        Assert.Contains("man -l", launched.Command, StringComparison.Ordinal);
+        Assert.DoesNotContain("man canger", launched.Command, StringComparison.Ordinal);
     }
 
     [Fact]

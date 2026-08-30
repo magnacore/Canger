@@ -4088,6 +4088,46 @@ user never expressed. Ranger draws the line in the same place.
 not be written — it would have quietly asserted the successful case. `FailToDelete(path)` makes a
 path refuse, as a read-only mount or a missing permission would.
 
+## `?` then `m` reported "man: exited 16"
+
+The one key whose whole job is to explain the program. It ran `man canger`, which asks the system
+for an *installed* page — and Canger is normally run from wherever it was unpacked or built, where
+nothing installs one. Exit 16 is man-db's code for "no such page", so the failure was complete and
+the message told the user nothing they could act on.
+
+**Canger writes its own manual now.** `--man` already existed and already rendered the page for the
+running build; `?` `m` puts that in a temporary `canger.1` and hands it to `man` to format. No
+installation needed, and the page describes the bindings and settings actually in force rather
+than whichever version was installed last.
+
+Through a file rather than a pipe: `man -l -` reads standard input on man-db but not everywhere,
+while `man -l FILE` is understood by every implementation. Named `canger.1` so the header reads
+`CANGER(1)` and not a temporary name, and the directory goes after a `;` rather than an `&&` so
+quitting the pager still clears it up.
+
+**A test was pinning the broken command.** `Help_StillShowsTheManPageThroughMan` asserted the
+whole line, `man canger`. Its stated intent — that `m` is not a dump, since man formats and pages
+it itself — is worth keeping and is what it asserts now.
+
+### The instrument, wrong for the sixth time
+
+The pty said the fix did nothing: no `CANGER(1)` anywhere in the output. It was there all along.
+**`man` renders bold by overstriking** — `C\bC A\bA` — so a heading never appears as contiguous
+bytes in the stream, and searching for one finds nothing however well it is displayed. The same
+search against `man` redirected to a *file* matched immediately, because without a terminal there
+is no formatting to get in the way.
+
+That was five wrong turns before it: reading the screen for a fact the screen cannot tell (twice),
+a control that ran after the measurement and destroyed what it was controlling for, a single
+positive result believed without a control, and a mutation that failed to compile so the previous
+binary was measured instead.
+
+*Six of them now, and not one was Canger.* The pattern in all six is the same: the instrument
+answered a question slightly different from the one being asked, and the answer looked like an
+answer. What breaks the pattern is having the negative case in hand — run the same measurement
+against code known to be broken and check it says so. Every one of these was caught that way, and
+none of them by staring harder at the positive.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
