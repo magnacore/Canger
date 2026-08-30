@@ -67,7 +67,12 @@ public sealed class ScriptPreviewProvider(
             return PreviewResult.None;
         }
 
-        if (_cache.Find(path, size.Width, size.Height) is { } cached)
+        // Taken once and used for both the lookup and, if it comes to it, the storing — so the
+        // entry records the file as it was when generation started rather than as it was after.
+        PreviewStamp stamp = PreviewStamp.Of(
+            _fileSystem.GetStatus(path, followSymbolicLinks: true));
+
+        if (_cache.Find(path, size.Width, size.Height, stamp) is { } cached)
         {
             return cached;
         }
@@ -80,11 +85,11 @@ public sealed class ScriptPreviewProvider(
         if (onGenerated is null)
         {
             PreviewResult immediate = Generate(path, size, cancellationToken);
-            _cache.Store(path, size.Width, size.Height, immediate);
+            _cache.Store(path, size.Width, size.Height, immediate, stamp);
             return immediate;
         }
 
-        Request(path, size);
+        Request(path, size, stamp);
 
         // Not `None`: the caller has to be able to tell "there is nothing here" from "ask again in
         // a moment", because the preview column collapses on the first and must not on the second.
@@ -96,7 +101,7 @@ public sealed class ScriptPreviewProvider(
     private readonly CancellationTokenSource _shutdown = new();
 
     /// <summary>Starts generating a preview, unless one is already being generated for it.</summary>
-    private void Request(string path, PreviewSize size)
+    private void Request(string path, PreviewSize size, PreviewStamp stamp)
     {
         // Keyed by size as well as path: a resized terminal wants a different preview, and the
         // cache is keyed the same way.
@@ -117,7 +122,7 @@ public sealed class ScriptPreviewProvider(
             try
             {
                 PreviewResult result = Generate(path, size, _shutdown.Token);
-                _cache.Store(path, size.Width, size.Height, result);
+                _cache.Store(path, size.Width, size.Height, result, stamp);
             }
             catch (OperationCanceledException)
             {

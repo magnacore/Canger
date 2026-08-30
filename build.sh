@@ -105,17 +105,267 @@ case "$target" in
                 exit 1
             fi
 
-            tar -czf "$out/$name.tar.gz" -C "$out" "$name"
+            # lzip rather than gzip: smaller, and its container carries a CRC of the
+            # uncompressed data plus the original size, so a truncated or corrupted archive is
+            # detected rather than silently unpacked short. The cost is that the recipient needs
+            # lzip installed — `tar xf` alone will not do it — which is why the .deb and the
+            # AppImage exist for people who would rather not.
+            command -v lzip >/dev/null || {
+                echo "canger: lzip is not installed; the tarballs need it (apt install lzip)" >&2
+                exit 1
+            }
+
+            tar --lzip -cf "$out/$name.tar.lz" -C "$out" "$name"
             rm -rf "$staging"
         done
 
         rm -rf "$artifacts"
 
         echo
-        ls -lh "$out"/*.tar.gz | awk '{ printf "  %-52s %s\n", $9, $5 }'
+        ls -lh "$out"/*.tar.lz | awk '{ printf "  %-52s %s\n", $9, $5 }'
         echo
-        echo "  Unpack and run ./canger. The directory has to stay together: config/ holds the"
-        echo "  key bindings, and doc/canger.1 is what ? -> m opens."
+        echo "  tar --lzip -xf <file>, then run ./canger. The directory has to stay together:"
+        echo "  config/ holds the key bindings, and doc/canger.1 installs as man canger."
+        ;;
+    deb)
+        # A Debian package, because a tarball cannot do the three things that make a terminal
+        # program feel installed: put `canger` on the PATH, put the manual where `man canger`
+        # finds it, and be removable. Debian packages no .NET runtime at all — `apt-cache search
+        # ^dotnet-runtime` comes back empty — so a framework-dependent package would depend on
+        # something that does not exist outside Microsoft's own apt repository. Self-contained is
+        # larger and it works, which is the whole point of a package.
+        version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -1)
+        rid="${CANGER_RID:-linux-x64}"
+        out="dist"
+
+        [ -n "$version" ] || { echo "canger: no <Version> in Directory.Build.props" >&2; exit 1; }
+
+        case "$rid" in
+            linux-x64)   arch=amd64 ;;
+            linux-arm64) arch=arm64 ;;
+            *) echo "canger: no Debian architecture known for $rid" >&2; exit 1 ;;
+        esac
+
+        name="canger_${version}_${arch}"
+        staging="$out/$name"
+        lib="$staging/usr/lib/canger"
+
+        mkdir -p "$out"
+        rm -rf "$staging"
+        mkdir -p "$lib" "$staging/usr/bin" "$staging/usr/share/man/man1" \
+                 "$staging/usr/share/doc/canger" "$staging/DEBIAN"
+
+        echo "canger: building $name.deb"
+
+        lean="-p:SatelliteResourceLanguages=en -p:DebugType=none -p:GenerateDocumentationFile=false"
+
+        # shellcheck disable=SC2086
+        "$DOTNET_ROOT/dotnet" publish src/Canger.App/Canger.App.csproj \
+            -c Release -r "$rid" --self-contained true \
+            --artifacts-path "$out/.artifacts/deb" \
+            -o "$lib" $lean "$@" >/dev/null
+
+        [ -f "$lib/config/cc.conf" ] || {
+            echo "canger: $lib/config/cc.conf is missing; the package would have no key bindings" >&2
+            exit 1
+        }
+
+        cp LICENSE "$staging/usr/share/doc/canger/copyright"
+        cp README.md "$staging/usr/share/doc/canger/"
+
+        # `canger` on the PATH as a symlink rather than a wrapper script. A .NET apphost finds
+        # its own directory through /proc/self/exe, which resolves the link, so the shipped
+        # config beside it is still found — verified rather than assumed.
+        ln -sf ../lib/canger/canger "$staging/usr/bin/canger"
+
+        # Generated from the binary being packaged rather than copied from `doc/`, so the manual
+        # in the package describes the version in the package.
+        "$lib/canger" --man | gzip -9n > "$staging/usr/share/man/man1/canger.1.gz"
+
+        # Read off the binaries rather than guessed at, and rather than computed: dpkg-shlibdeps
+        # wants the whole debhelper build tree around it and produces nothing useful without it.
+        # What every bundled binary links against, minus what is bundled, is:
+        #
+        #   libc.so.6 libm.so.6 libdl.so.2 libpthread.so.0 librt.so.1   -> libc6
+        #   libgcc_s.so.1                                               -> libgcc-s1
+        #   libstdc++.so.6                                              -> libstdc++6
+        #   liblttng-ust.so.0    tracing, loaded only if asked for      -> not depended on
+        #
+        # ICU appears in none of them because .NET opens it by name at runtime rather than
+        # linking it. It is still required: with InvariantGlobalization off, a self-contained
+        # build exits at startup without it. The alternatives span current Debian and Ubuntu.
+        depends="libc6, libgcc-s1, libstdc++6"
+        depends="$depends, libicu76 | libicu74 | libicu72 | libicu71 | libicu70"
+
+        # OpenSSL is opened the same way and only when something asks for cryptography, which
+        # Canger itself never does — so it is recommended rather than required, and a plugin that
+        # wants it will find it on any system that has not gone out of its way.
+        recommends="libssl3t64 | libssl3"
+
+        size=$(du -sk "$staging/usr" | cut -f1)
+
+        cat > "$staging/DEBIAN/control" <<EOF
+Package: canger
+Version: $version
+Section: utils
+Priority: optional
+Architecture: $arch
+Maintainer: $(git config user.name) <$(git config user.email)>
+Installed-Size: $size
+Depends: $depends
+Recommends: $recommends
+Description: file manager for the terminal with vi-style key bindings
+ Canger shows a directory as a set of columns: the path leading to where you
+ are, the listing itself, and a preview of whatever the cursor is on. Almost
+ everything is a command and almost every key is bound to one.
+ .
+ It is a port of ranger from Python to .NET, aiming at a 1-to-1 match of its
+ key bindings, commands, settings and configuration syntax. It ships rifle,
+ ranger's file launcher, and reads the same rc.conf, rifle.conf and scope.sh.
+ .
+ The .NET runtime is included, so nothing else needs installing.
+EOF
+
+        # Run what is about to be packaged. A publish that emits a broken assembly still reports
+        # success, so starting it is the only way to know the package is worth handing to anyone.
+        if ! "$lib/canger" --version >/dev/null 2>&1; then
+            echo "canger: the packaged build does not start; refusing to package it" >&2
+            exit 1
+        fi
+
+        dpkg-deb --build --root-owner-group "$staging" "$out/$name.deb" >/dev/null
+        rm -rf "$staging" "$out/.artifacts"
+
+        echo
+        ls -lh "$out/$name.deb" | awk '{ printf "  %-52s %s\n", $9, $5 }'
+        echo
+        echo "  sudo apt install ./$out/$name.deb"
+        echo "  Puts canger on the PATH, the manual where man canger finds it, and the shipped"
+        echo "  cc.conf, rifle.conf and scope.sh under /usr/lib/canger/config."
+        ;;
+    appimage)
+        # One file to hand to anybody, which is the only thing this does that the self-contained
+        # tarball does not: both bundle the .NET runtime, and neither bundles what Canger actually
+        # reaches for at runtime — less, file, git, udisksctl, the user's editor — because those
+        # belong to the machine it is running on.
+        #
+        # The cost is that the recipient needs FUSE to run it at all, or has to know about
+        # --appimage-extract-and-run. The .deb and the tarball have no such requirement, so this
+        # is the convenient artifact rather than the compatible one.
+        #
+        # Which FUSE was worth checking rather than repeating: this appimagetool builds a
+        # type2-runtime, which statically bundles libfuse and squashfuse and needs `fusermount3`
+        # from the `fuse3` package plus /dev/fuse. Not `libfuse2`, which is the requirement people
+        # remember and the one that has been dropped from recent Debian and Ubuntu — measured by
+        # running the image with fusermount taken off the PATH and watching it fail.
+        version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -1)
+        rid="${CANGER_RID:-linux-x64}"
+        out="dist"
+
+        [ -n "$version" ] || { echo "canger: no <Version> in Directory.Build.props" >&2; exit 1; }
+
+        command -v appimagetool >/dev/null || {
+            echo "canger: appimagetool is not on the PATH." >&2
+            echo "canger: Debian does not package it; take the x86_64 build from" >&2
+            echo "canger:   https://github.com/AppImage/appimagetool/releases" >&2
+            exit 1
+        }
+
+        case "$rid" in
+            linux-x64)   arch=x86_64 ;;
+            linux-arm64) arch=aarch64 ;;
+            *) echo "canger: no AppImage architecture known for $rid" >&2; exit 1 ;;
+        esac
+
+        appdir="$out/Canger.AppDir"
+        image="$out/Canger-$version-$arch.AppImage"
+
+        mkdir -p "$out"
+        rm -rf "$appdir"
+        mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
+                 "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/man/man1"
+
+        echo "canger: building $(basename "$image")"
+
+        lean="-p:SatelliteResourceLanguages=en -p:DebugType=none -p:GenerateDocumentationFile=false"
+
+        # Into usr/bin, because `config/` has to sit beside the binary: Canger finds its shipped
+        # configuration from the directory the executable is in, whatever that turns out to be.
+        # shellcheck disable=SC2086
+        "$DOTNET_ROOT/dotnet" publish src/Canger.App/Canger.App.csproj \
+            -c Release -r "$rid" --self-contained true \
+            --artifacts-path "$out/.artifacts/appimage" \
+            -o "$appdir/usr/bin" $lean "$@" >/dev/null
+
+        [ -f "$appdir/usr/bin/config/cc.conf" ] || {
+            echo "canger: $appdir/usr/bin/config/cc.conf is missing; the image would have no key bindings" >&2
+            exit 1
+        }
+
+        cp LICENSE README.md "$appdir/usr/bin/"
+        "$appdir/usr/bin/canger" --man | gzip -9n > "$appdir/usr/share/man/man1/canger.1.gz"
+
+        # `readlink -f` because AppRun is invoked through whatever name the user gave the image,
+        # and $0 is that name rather than the path inside the mounted image.
+        cat > "$appdir/AppRun" <<'APPRUN'
+#!/bin/sh
+here=$(dirname "$(readlink -f "$0")")
+exec "$here/usr/bin/canger" "$@"
+APPRUN
+        chmod +x "$appdir/AppRun"
+
+        # Terminal=true is the whole difference between this and a desktop program: launched from
+        # a menu it needs a terminal opened for it, and without saying so it would flash and die.
+        cat > "$appdir/canger.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Canger
+GenericName=File Manager
+Comment=File manager for the terminal with vi-style key bindings
+Exec=canger %f
+Icon=canger
+Terminal=true
+Categories=System;FileTools;FileManager;ConsoleOnly;
+Keywords=file;manager;ranger;terminal;vi;
+DESKTOP
+
+        cp "$appdir/canger.desktop" "$appdir/usr/share/applications/canger.desktop"
+        cp doc/canger.png "$appdir/canger.png"
+        cp doc/canger.png "$appdir/usr/share/icons/hicolor/256x256/apps/canger.png"
+
+        if command -v desktop-file-validate >/dev/null; then
+            desktop-file-validate "$appdir/canger.desktop" || {
+                echo "canger: the desktop entry is not valid; refusing to package it" >&2
+                exit 1
+            }
+        fi
+
+        # Run what is about to be packaged, before packaging it.
+        if ! "$appdir/usr/bin/canger" --version >/dev/null 2>&1; then
+            echo "canger: the packaged build does not start; refusing to package it" >&2
+            exit 1
+        fi
+
+        rm -f "$image"
+        ARCH="$arch" appimagetool "$appdir" "$image" >/dev/null 2>&1 || {
+            echo "canger: appimagetool failed" >&2
+            exit 1
+        }
+
+        rm -rf "$appdir" "$out/.artifacts"
+
+        # And run the image itself, which is the only thing that proves the AppRun, the layout
+        # and the runtime all agree.
+        if ! "$image" --version >/dev/null 2>&1; then
+            echo "canger: $image does not start; FUSE is needed to run one at all" >&2
+            exit 1
+        fi
+
+        echo
+        ls -lh "$image" | awk '{ printf "  %-52s %s\n", $9, $5 }'
+        echo
+        echo "  One file, already executable. Needs fuse3 on the machine it runs on, or"
+        echo "  ./Canger-$version-$arch.AppImage --appimage-extract-and-run"
         ;;
     Debug|Release)
         exec "$DOTNET_ROOT/dotnet" build Canger.slnx -c "$target" "$@"

@@ -92,6 +92,26 @@ public static class DeviceActions
                                  $"unlocking {device.DisplayName}", NeedsTerminal: true);
     }
 
+    /// <summary>
+    /// Opens an encrypted container with a passphrase Canger already has.
+    /// </summary>
+    /// <param name="device">The container to unlock.</param>
+    /// <returns>The command, which expects the passphrase on its standard input.</returns>
+    /// <remarks>
+    /// <c>--key-file /dev/stdin</c>, so the passphrase arrives down a pipe and is never written
+    /// to a file nor placed in a command line where <c>ps</c> would show it. Verified against a
+    /// real LUKS volume; the trap is that the bytes must be exact, since a trailing newline is
+    /// part of the passphrase as far as cryptsetup is concerned and makes it the wrong key.
+    /// </remarks>
+    public static DeviceCommand UnlockWithKey(BlockDevice device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+
+        return new DeviceCommand(
+            $"{Tool} unlock {Quiet} -b {Quote(device.Path)} --key-file /dev/stdin",
+            $"unlocking {device.DisplayName}", NeedsTerminal: false);
+    }
+
     /// <summary>Closes an encrypted container.</summary>
     /// <param name="device">The container to lock.</param>
     /// <returns>The command.</returns>
@@ -182,11 +202,19 @@ public static class DeviceActions
                    + "Close it and try again.";
         }
 
-        if (error.Contains("Failed to activate", StringComparison.OrdinalIgnoreCase)
-            || error.Contains("No key available", StringComparison.OrdinalIgnoreCase)
+        // Measured against a real LUKS volume: udisks says this for a passphrase that is simply
+        // wrong, and something different for one that is empty. They were treated as the same
+        // thing, which would have told a user who typed nothing that what they typed was wrong.
+        if (error.Contains("Incorrect passphrase", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("Failed to activate", StringComparison.OrdinalIgnoreCase)
             || error.Contains("wrong passphrase", StringComparison.OrdinalIgnoreCase))
         {
             return "wrong passphrase";
+        }
+
+        if (error.Contains("No key available", StringComparison.OrdinalIgnoreCase))
+        {
+            return "no passphrase was given";
         }
 
         if (error.Contains("AlreadyMounted", StringComparison.Ordinal))

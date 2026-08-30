@@ -26,6 +26,7 @@ public sealed class DeviceSession
 {
     private readonly IProcessRunner _runner;
     private readonly TaskQueue _tasks;
+    private readonly Dictionary<string, string> _remembered = new(StringComparer.Ordinal);
     private int _cursor;
     private long _readAt;
 
@@ -34,10 +35,81 @@ public sealed class DeviceSession
     /// <param name="tasks">
     /// The work queue, consulted so that a drive Canger is itself writing to is not unmounted.
     /// </param>
-    public DeviceSession(IProcessRunner runner, TaskQueue tasks)
+    /// <param name="secretToolAvailable">
+    /// Whether libsecret's command can be found, for a test that must not depend on the machine
+    /// it runs on. Left unset in a real session, where it is probed.
+    /// </param>
+    public DeviceSession(IProcessRunner runner, TaskQueue tasks,
+                         Func<bool>? secretToolAvailable = null)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
+        Passphrases = new PassphraseStore(_runner, secretToolAvailable);
+    }
+
+    /// <summary>Saved passphrases, in the desktop's keyring.</summary>
+    public PassphraseStore Passphrases { get; }
+
+    /// <summary>
+    /// A passphrase the user asked to keep only while Canger is running.
+    /// </summary>
+    /// <param name="luksUuid">The container's LUKS UUID.</param>
+    /// <returns>The passphrase, or <see langword="null"/> when none was kept.</returns>
+    /// <remarks>
+    /// In memory and nowhere else, so locking a drive and unlocking it again in the same sitting
+    /// does not ask twice, and quitting forgets it. The middle option between typing it every
+    /// time and writing it to the keyring, and the same one Thunar offers.
+    /// </remarks>
+    public string? Remembered(string luksUuid)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(luksUuid);
+
+        return _remembered.TryGetValue(luksUuid, out string? passphrase) ? passphrase : null;
+    }
+
+    /// <summary>Keeps a passphrase until Canger exits.</summary>
+    /// <param name="luksUuid">The container's LUKS UUID.</param>
+    /// <param name="passphrase">The passphrase.</param>
+    public void Remember(string luksUuid, string passphrase)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(luksUuid);
+        ArgumentException.ThrowIfNullOrEmpty(passphrase);
+
+        _remembered[luksUuid] = passphrase;
+    }
+
+    /// <summary>Forgets every passphrase held in memory.</summary>
+    /// <remarks>
+    /// For <c>:forget_passphrases</c>, which exists so that leaving a terminal unattended is a
+    /// decision the user can undo without quitting.
+    /// </remarks>
+    public int Forget()
+    {
+        int held = _remembered.Count;
+        _remembered.Clear();
+        return held;
+    }
+
+    /// <summary>
+    /// Unlocks a container with a passphrase, which never reaches a file or a command line.
+    /// </summary>
+    /// <param name="device">The container.</param>
+    /// <param name="passphrase">The passphrase.</param>
+    /// <returns>What udisks said.</returns>
+    /// <remarks>
+    /// Run here and waited for, rather than queued. The queue starts a program with an empty
+    /// standard input by design — a job that stopped to be typed at would block everything behind
+    /// it — so a passphrase cannot travel that way. The wait is a key derivation, a second or two
+    /// at worst on LUKS2, and the alternative is a second mechanism for feeding a secret to a
+    /// background process, which is not worth building for one caller.
+    /// </remarks>
+    public ProcessResult UnlockWith(BlockDevice device, string passphrase)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(passphrase);
+
+        return _runner.RunWithInput(
+            new ProcessRequest(DeviceActions.UnlockWithKey(device).Command), passphrase);
     }
 
     /// <summary>How old the list may get before the view re-reads it.</summary>

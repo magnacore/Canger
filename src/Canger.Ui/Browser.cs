@@ -61,6 +61,16 @@ public sealed class Browser : IFileManager, IDisposable
 
     private CangerCommand? _pendingCommand;
     private Action<char>? _questionCallback;
+
+    /// <summary>
+    /// What to do with a hidden line once it has been typed, or cancelled.
+    /// </summary>
+    /// <remarks>
+    /// Called with <see langword="null"/> when the user gave up, so the caller can say nothing
+    /// rather than treat an empty line as an answer — an empty passphrase and a cancelled prompt
+    /// are different things, and udisks reports them differently.
+    /// </remarks>
+    private Action<string?>? _promptCallback;
     private string? _message;
     private bool _messageIsError;
 
@@ -1261,6 +1271,15 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <inheritdoc />
+    public void Prompt(string question, Action<string?> callback, bool hidden = false)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+
+        _promptCallback = callback;
+        _console.Open(prompt: question + " ", hidden: hidden);
+    }
+
+    /// <inheritdoc />
     public void Ask(string question, Action<char> callback, IReadOnlyList<char>? choices = null)
     {
         _questionCallback = callback;
@@ -1387,6 +1406,8 @@ public sealed class Browser : IFileManager, IDisposable
                 Handle(_decoder.Flush());
             }
 
+            LeaveIfTheDirectoryHasGone();
+
             // A drive plugged in while the list is on screen should appear on its own, as it
             // does in a desktop file manager. Only while the list is showing, and only every two
             // seconds: lsblk reads sysfs rather than the drives themselves, so it costs nothing
@@ -1428,6 +1449,10 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>Says how finished work turned out, then clears it from the queue.</summary>
     private void ReportFinishedWork()
     {
+        // Before the sweep below, which is what forgets the jobs — and so what they moved.
+        Core.FileOperations.FinishedWork.CarryTags(
+            [.. Tasks.Tasks.Where(t => t.IsComplete)], Tags);
+
         // One message for the whole run. Reporting each job in turn meant each report replacing
         // the last, so a transfer that had lost a file was reported and then unreported in the
         // same frame by a transfer that finished cleanly beside it.
@@ -1594,6 +1619,51 @@ public sealed class Browser : IFileManager, IDisposable
 
     /// <inheritdoc />
     public void CloseDevices() => _deviceView.IsVisible = false;
+
+    /// <summary>
+    /// Steps out of the current directory once it has been removed from underneath.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Another instance deleting the folder this one is standing in used to leave a listing of
+    /// files that were no longer there, and opening one reported that it did not exist. Ranger
+    /// behaves the same way and recovers only when asked, with a reset; there is no reason a
+    /// person should have to know that.
+    /// </para>
+    /// <para>
+    /// The noticing costs nothing new. <c>LoadIfOutdated</c> already stats the directory on every
+    /// draw to see whether it needs re-reading, and it now records the one case it used to treat
+    /// as merely unreadable. Only a directory that is genuinely gone moves anybody: one that
+    /// cannot be read for a moment — a network share, a permission taken away — is left alone,
+    /// because it will come back and being moved out of it would be the surprise.
+    /// </para>
+    /// <para>
+    /// Only the tab the user is looking at. Another tab standing somewhere deleted recovers when
+    /// it is next drawn, which is when its own listing would have gone stale anyway.
+    /// </para>
+    /// </remarks>
+    private void LeaveIfTheDirectoryHasGone()
+    {
+        if (!CurrentTab.Current.HasVanished)
+        {
+            return;
+        }
+
+        string gone = CurrentTab.Path;
+
+        // `Enter` walks up to the nearest directory that is really there, which is the same
+        // route `reset` takes.
+        Directories.Evict(gone);
+        CurrentTab.Enter(gone, recordHistory: false);
+
+        // Said out loud. A browser that moves on its own without explaining looks broken, and
+        // the explanation is the whole story: the directory went, so you are somewhere else now.
+        //
+        // What happened first, and the paths after it. Led by the deleted path, the sentence
+        // began with a hundred characters of directory and the news fell off the end of the
+        // screen — which is the same as not saying it.
+        Notify($"directory deleted — moved to {CurrentTab.Path} (was {gone})");
+    }
 
     /// <summary>Whether the device list is showing.</summary>
     public bool IsDevicesOpen => _deviceView.IsVisible;
@@ -1934,6 +2004,18 @@ public sealed class Browser : IFileManager, IDisposable
         {
             case "console_accept":
                 {
+                    // A hidden line is an answer to whoever asked, never a command. Running it
+                    // would put a passphrase through the dispatcher, the macro expander and the
+                    // message log on its way to failing.
+                    if (_promptCallback is { } answered)
+                    {
+                        string secret = _console.Accept();
+                        _promptCallback = null;
+                        _consoleKeys.Clear();
+                        answered(secret);
+                        break;
+                    }
+
                     string line = _console.Accept();
                     _pendingCommand = null;
                     _consoleKeys.Clear();
@@ -1947,10 +2029,18 @@ public sealed class Browser : IFileManager, IDisposable
                 }
 
             case "console_close":
-                _pendingCommand?.Cancel();
-                _pendingCommand = null;
-                _console.Close();
-                break;
+                {
+                    // Told, rather than left waiting. A cancelled prompt and an empty passphrase
+                    // are different answers, and something is expecting one of them.
+                    Action<string?>? cancelled = _promptCallback;
+                    _promptCallback = null;
+
+                    _pendingCommand?.Cancel();
+                    _pendingCommand = null;
+                    _console.Close();
+                    cancelled?.Invoke(null);
+                    break;
+                }
 
             case "console_complete":
             case "console_complete_back":

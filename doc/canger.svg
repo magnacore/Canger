@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"
+     role="img" aria-label="Canger">
+  <!-- Canger's identity is its layout: the path you came by, the listing, and a preview of
+       whatever the cursor is on. The icon is that, with the cursor on a row. -->
+  <rect x="8" y="8" width="240" height="240" rx="46" fill="#1b1e24"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="45.5" fill="none"
+        stroke="#2f3540" stroke-width="1"/>
+
+  <!-- The parent column: where you came from, dimmed. -->
+  <rect x="36" y="56" width="34" height="144" rx="7" fill="#2b303a"/>
+  <rect x="44" y="70"  width="18" height="5" rx="2.5" fill="#4a5160"/>
+  <rect x="44" y="84"  width="18" height="5" rx="2.5" fill="#4a5160"/>
+  <rect x="44" y="98"  width="18" height="5" rx="2.5" fill="#4a5160"/>
+
+  <!-- The listing, with the cursor on one row. -->
+  <rect x="78" y="56" width="70" height="144" rx="7" fill="#333a46"/>
+  <rect x="86" y="70"  width="54" height="6" rx="3" fill="#606a7d"/>
+  <rect x="82" y="86"  width="62" height="14" rx="4" fill="#4c9df0"/>
+  <rect x="86" y="110" width="46" height="6" rx="3" fill="#606a7d"/>
+  <rect x="86" y="124" width="54" height="6" rx="3" fill="#606a7d"/>
+  <rect x="86" y="138" width="38" height="6" rx="3" fill="#606a7d"/>
+
+  <!-- The preview of what the cursor is on. -->
+  <rect x="156" y="56" width="64" height="144" rx="7" fill="#23272f"/>
+  <rect x="164" y="70"  width="48" height="4" rx="2" fill="#414958"/>
+  <rect x="164" y="80"  width="40" height="4" rx="2" fill="#414958"/>
+  <rect x="164" y="90"  width="44" height="4" rx="2" fill="#414958"/>
+  <rect x="164" y="100" width="30" height="4" rx="2" fill="#414958"/>
+</svg>

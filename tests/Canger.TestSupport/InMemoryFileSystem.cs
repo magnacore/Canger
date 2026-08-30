@@ -373,11 +373,43 @@ public sealed class InMemoryFileSystem : IFileSystem
     }
 
     /// <inheritdoc />
-    public void Delete(string path) => _nodes.Remove(Normalize(path));
+    public void Delete(string path)
+    {
+        Refuse(path);
+        _nodes.Remove(Normalize(path));
+    }
+
+    private readonly HashSet<string> _undeletable = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Makes a path refuse to be deleted, as a read-only mount or a lack of permission would.
+    /// </summary>
+    /// <param name="path">The path.</param>
+    /// <returns>This filesystem, for chaining.</returns>
+    /// <remarks>
+    /// Deletion here otherwise always succeeds, so a test about what happens when it does not
+    /// could not be written at all — it would quietly assert the successful case instead.
+    /// </remarks>
+    public InMemoryFileSystem FailToDelete(string path)
+    {
+        _undeletable.Add(Normalize(path));
+        return this;
+    }
+
+    /// <summary>Throws if the path has been marked undeletable.</summary>
+    private void Refuse(string path)
+    {
+        if (_undeletable.Contains(Normalize(path)))
+        {
+            throw new IOException($"Permission denied: {path}");
+        }
+    }
 
     /// <inheritdoc />
     public void DeleteRecursive(string path)
     {
+        Refuse(path);
+
         path = Normalize(path);
         string prefix = path + "/";
 

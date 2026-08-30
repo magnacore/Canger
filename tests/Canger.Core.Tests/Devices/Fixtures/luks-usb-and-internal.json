@@ -53,7 +53,8 @@
                   }
                ]
             }
-         ]
+         ],
+         "rota": true
       },
       {
          "name": "zram0",
@@ -70,7 +71,8 @@
          "vendor": null,
          "model": null,
          "rm": false,
-         "ro": false
+         "ro": false,
+         "rota": false
       },
       {
          "name": "nvme0n1",
@@ -178,7 +180,8 @@
                   }
                ]
             }
-         ]
+         ],
+         "rota": false
       }
    ]
 }

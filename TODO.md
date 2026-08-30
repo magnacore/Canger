@@ -3830,6 +3830,517 @@ accidental confirmation of the filter from a direction the fixtures do not cover
 `unmount`, and the last step is documented rather than measured. Everything was cleaned up:
 unmounted, `loop-delete`, image removed, nothing left in `/media`.
 
+## Passphrases: ask inside Canger, and share the desktop's keyring
+
+Thunar asks for a LUKS passphrase in a dialog, offers to remember it, and next time the drive just
+mounts. Canger handed the screen to `udisksctl` and there was nothing to remember with.
+
+**The keyring is the desktop's, not Canger's.** This is the whole point, and it was worth reading a
+real entry to be sure of rather than inventing a schema:
+
+```
+gvfs-luks-uuid : 61858679-035e-4001-94c3-0e6946fc85df
+xdg:schema     : org.gnome.GVfs.Luks.Password
+label          : Encryption passphrase for WDC WD40NMZW-59GX6S1 (4.0 TB Hard Disk)
+```
+
+That UUID is `/dev/sda1` on the drive on this machine — and `lsblk` was **already** being asked for
+`UUID`, so nothing new had to be read to connect a row on screen to an entry in the keyring. A
+passphrase saved in Thunar now unlocks the drive in Canger without being typed, and one saved here
+works in Thunar.
+
+`set unlock_prompt builtin` turns it on; `terminal` is the default and is exactly what happened
+before. It is the first setting Canger has that ranger does not, so the catalogue test now carries
+a written-down list of those — one entry — and a setting cannot be added without either matching
+ranger or being put on it.
+
+### Where a passphrase goes, and does not
+
+* To udisks down a **pipe**: `udisksctl unlock --key-file /dev/stdin`. Never a file, never a
+  command line where `ps` would show it. This needed a shape `IProcessRunner` did not have —
+  `Run` gives a program the terminal or nothing, and neither can carry an argument the user must
+  not see afterwards.
+* To libsecret on **`secret-tool`'s standard input**, for the same reason.
+* **Not** into the command history, which is written to `~/.local/share/canger`. `Accept()` added
+  every line to it; a passphrase would have been a passphrase in a plain file, and would have come
+  back on the next Up arrow.
+* Not into a completion, and Up at a passphrase prompt recalls nothing — either would put
+  something into the line that was not typed there.
+
+### The trap, found by measuring rather than by thinking
+
+**A trailing newline is part of the passphrase.** `printf 'x'` unlocks a real LUKS volume where
+`echo 'x'` reports `Incorrect passphrase`. So the pipe is written with `Write`, never `WriteLine`,
+and what comes back from `secret-tool` is trimmed of exactly one newline. This would have been an
+hour of blaming the keyring.
+
+Measured too: udisks distinguishes a **wrong** passphrase (`Incorrect passphrase`) from **no**
+passphrase (`No key available`). Those were being translated to the same words, which would have
+told a user who typed nothing that what they typed was wrong.
+
+### Verified against a real LUKS volume
+
+Not the real drive — a 64 MB image, `cryptsetup luksFormat`, attached with `udisksctl loop-setup`,
+which gives a genuine LUKS volume without root. Driven through the production path
+(`DeviceSession.UnlockWith` → `TerminalProcessRunner.RunWithInput` → udisksctl):
+
+```
+WRONG  succeeded=False  explain=wrong passphrase
+RIGHT  succeeded=True   out=Unlocked /dev/loop0 as /dev/dm-2.
+```
+
+An accidental confirmation on the way: Canger correctly refuses to list the loop device as
+removable, which is why it had to be driven directly rather than through `<F9>`.
+
+### The keyring half, once libsecret-tools was installed
+
+Run for real, against the actual keyring and a real LUKS volume:
+
+```
+secret-tool available: True
+lookup before save:    nothing
+save:                  ok
+lookup after save:     15 bytes
+round-trip exact:      True
+unlock with it:        succeeded=True Unlocked /dev/loop0 as /dev/dm-2.
+```
+
+Saved, read back byte-exact, and used to unlock without anything being typed. The existing entry
+for the real drive was also confirmed reachable by the attributes Canger sends — a `SearchItems`
+call with `gvfs-luks-uuid` and the gvfs schema returns the very item Thunar wrote, in the unlocked
+collection.
+
+**And it found a bug in the code.** `Lookup` trimmed a trailing newline, on the assumption that
+one could only be there by accident. Measured against libsecret: `lookup` adds no terminator of
+its own (a 63-byte passphrase arrives as 63 bytes with no newline), and `store` *keeps* a newline
+piped into it (4 bytes in, 4 bytes out). So a passphrase whose last character is a newline is one
+that can be stored, and trimming it would have handed cryptsetup the wrong key while looking like
+the right one. The trim is gone; the pipe is exact in both directions.
+
+**And a flaw in the tests.** `PassphraseStore.IsAvailable` probed the machine, so every test of
+the save prompt depended on whether libsecret happened to be installed — and they passed only
+because it was not. Installing it turned nine of them red at once: the fake runner answered
+`secret-tool lookup` with the same canned result as everything else, which is a page of lsblk
+output, and Canger duly tried to unlock a drive with it. Availability is injected now and the fake
+answers lookup distinctly, so a test means the same thing on every machine.
+
+*A test that passes only on the machines where the feature cannot run is not testing the feature.*
+
+### The label, corrected by looking at the real ones
+
+`(0.1 GB Hard Disk)` for a 64 MB volume, and "Hard Disk" for everything. The existing entries make
+a distinction — a `TOSHIBA MQ01ABD100` is a `1.0 TB Hard Disk` and a `SanDisk Extreme` beside it
+is a `1.0 TB Disk` — so `ROTA` is now read from lsblk and megabytes are spelled as megabytes.
+Cosmetic, since lookup goes by attributes; but the point of using the desktop's schema is that a
+row in Seahorse should not read as a stranger.
+
+Unlocking is run and waited for rather than queued, because the queue starts a program with an
+empty standard input by design. It is a key derivation — a second or two at worst on LUKS2 — and
+the alternative is a second mechanism for feeding a secret to a background process, for one
+caller.
+
+## ` did not survive quitting
+
+Ranger's `` ` `` returns you to where you were — including yesterday. Quit inside a folder, reopen,
+press `` ` `` twice, and you are back in it. Canger put you one level up.
+
+Everything for it was already there: the bookmark is set on every move, `` ` `` and `'` are aliases
+of one key, and the file is written on the way out. **The one thing missing was the call ranger
+makes as it exits** — `bookmarks.remember(thisdir)` immediately before `bookmarks.save()`
+(`core/fm.py:547-548`). Without it, what gets written is the directory most recently *left*, which
+is right for toggling back and forth within a session and wrong for coming back later.
+
+**The sixth instance of the same shape**: the mechanism exists and something does not feed it.
+
+Extracted as `Program.RememberWhereTheUserEnded` rather than left as two lines inline, because the
+bug *was* the absence of a call in the middle of a startup routine — which no test could see. Now
+it is four, one of them asserting the wrong behaviour explicitly so the difference is written down.
+
+### Four instrument errors in one sitting
+
+Measuring this took five attempts, and every failure was in the instrument rather than in Canger.
+Worth recording as a set, because the shape recurs:
+
+1. **Read the title bar for the current directory.** It shows *directory plus selected item*, so
+   sitting in `home` with `AAA` selected renders identically to standing inside `AAA`. Two
+   different states, one string.
+2. **Added a marker file to tell them apart.** Better, but still read through the same ambiguous
+   line — the fix addressed the symptom rather than the instrument.
+3. **Ran a control after the test.** Every quit rewrites the bookmark, so the control destroyed the
+   state the test had depended on, and a passing case turned into a failing one for reasons that
+   had nothing to do with the code. *A control that runs after the measurement is not a control.*
+4. **Believed a single positive result.** The first `--choosedir` reading said the fix worked. It
+   was right, but only by luck: with no control it could not tell "jumped to AAA" from "was in AAA
+   all along".
+
+What finally worked: `--choosedir`, which exists precisely to answer "where did this end up", with
+the state rebuilt from scratch before *each* case and a do-nothing control alongside. Then the fix
+was removed and the whole thing re-run to see it fail.
+
+*The flag that answers the question directly beats any amount of reading the screen.*
+
+## Previews outlived the files they were pictures of
+
+Edit a text file, move the cursor back onto it, and the preview showed the old first line. It
+stayed wrong until the whole cache was reset by hand.
+
+The cache was keyed by path and size and nothing else — so there was no version of a file for an
+entry to belong to, and a preview could not be told apart from a stale one. **The per-file
+`Invalidate(path)` that would have fixed it existed already and had no callers anywhere in the
+program.** Seventh instance of the shape.
+
+Each entry now carries the file's modification time and size as they were when it was generated,
+and an entry whose file no longer matches is thrown away rather than returned. Both halves of the
+stamp earn their place: an edit that swaps one character for another leaves the size alone, and a
+copy that preserves timestamps leaves the time alone. Not a content hash — reading a file to
+decide whether to read it is no saving.
+
+Ranger arrives at the same place from the other direction: it clears a file's preview whenever
+that file is re-examined (`container/fsobject.py:291` calling `update_preview`), so the refresh
+that notices the change is also what forgets the picture. Keeping the stamp does not depend on a
+refresh having happened, which matters because a preview can be asked for on a file the listing
+has not looked at since.
+
+**A test was pinning the bug.** `Preview_IsRememberedRatherThanRegenerated` asserted, in as many
+words, *"without invalidating, the remembered text is what comes back"* — and passed. Its stated
+intent, that a preview is not regenerated on every cursor move, is worth keeping, so it is now two
+tests: one for an unchanged file still answering from memory, one for an edited file showing what
+it says now.
+
+### A fifth instrument error, and the rule that catches it
+
+The negative check — remove the fix, watch the bug return — reported that the bug did *not*
+return. The mutation was `if (false)`, which in this build is a compile error: unreachable code is
+an error here. The build failed, the old binary stayed in place, and the pty happily measured the
+**fixed** code while I read it as evidence the fix was unnecessary.
+
+A mutation that does not compile is not a mutation; it is the previous build wearing its name. The
+check must be that the build *succeeded* before the measurement runs, and the replacement mutation
+— pass one constant stamp for every lookup — compiles and reproduces the old behaviour exactly:
+`BEFORE, BEFORE` where the fix gives `BEFORE, AFTER`.
+
+*Verify the mutation took, or the negative control is testing the thing it was meant to disable.*
+
+## Tags outliving the files they were about
+
+Tag a file, delete it, and the line stayed in `~/.local/share/canger/tagged` pointing at nothing.
+Delete a tagged *folder* and every tag inside it was stranded at once — the worst kind, because
+nothing on screen ever refers to them again.
+
+Ranger clears them as part of deleting (`core/actions.py:1687-1690`): for each path being removed,
+every tag whose path starts with it goes too. Canger deleted the files and left the tags. Eighth
+instance of the shape — `Tags.Remove` existed and was called by exactly one thing, the untag
+command.
+
+**One deliberate divergence.** Ranger compares with `startswith`, which is a comparison of text
+rather than of paths: deleting `/home/manuj/folder` there also untags `/home/manuj/folderly`, a
+different directory that merely begins the same way. `Tags.RemoveUnder` asks whether one path is
+really inside the other, which is what `startswith` was reaching for. A test covers the
+neighbour.
+
+**And one on purpose in the other direction.** Ranger untags *before* deleting, so a delete that
+fails loses the tag anyway. Here the untagging follows the delete and only covers what actually
+went: a tag is something the user put there by hand, and discarding it for a file still on disc is
+a small loss of their work for nothing.
+
+Both spellings of each path go — a tag is filed under the file's real path, and what was deleted
+is the name it was reached by; for a symbolic link those are two different things and only one has
+gone.
+
+**Never a sweep.** Nothing tidies tags whose files are merely absent. A tag on a file on a drive
+that is not plugged in is not a stale tag, and a tidy-up that could not tell the difference would
+empty the file the first time somebody browsed without their external disc. Confirmed live:
+removing a tagged file from outside Canger leaves its tag alone.
+
+### Renaming lost them too
+
+Ranger's rename carries the tag across (`config/commands.py:1139`), and Canger's `bulkrename`
+already did — but plain `rename` did not, so renaming one file was the one way to leave a tag
+pointing at a name that no longer existed. `Tags.MovePath` already handled directories and their
+contents; it simply was not called.
+
+### Cut-and-paste, done properly
+
+Ranger carries tags across a *move* as well (`core/loader.py:110-124`). Canger did not, so cutting
+a tagged file and pasting it elsewhere stranded the tag on the old path and left the file untagged
+where it had gone. Measured before the fix: the file at `<home>/archive/notes.md`, the tag still
+saying `<home>/notes.md`.
+
+It needed the piece that made it worth doing properly rather than guessing. **A transfer now
+reports where each source actually landed** — `CopyJob.Landings`, one entry per source that
+arrived whole. Reconstructing that from the source name and the destination directory is wrong
+often enough to matter: the clash policy renames what it moves, so a file pasted beside one of the
+same name lands as `notes_0.md`, and a tag filed under `notes.md` would name a file nobody moved.
+A test pastes onto a name already taken and asserts the tag reaches the renamed file; guessing the
+name instead of recording it fails exactly that one.
+
+Only sources with no error beneath them are reported. A directory that lost a file on the way is
+not somewhere its contents can be said to have arrived, and a tag must never be rewritten to point
+at somewhere its file never reached.
+
+**Only a move.** A copy leaves the original where it is, still tagged, and the new file is a
+different file nobody has said anything about — tagging it too would be inventing an opinion the
+user never expressed. Ranger draws the line in the same place.
+
+### Test support gained a fault
+
+`InMemoryFileSystem.Delete` always succeeded, so "a delete that failed leaves the tag alone" could
+not be written — it would have quietly asserted the successful case. `FailToDelete(path)` makes a
+path refuse, as a read-only mount or a missing permission would.
+
+## `?` then `m` reported "man: exited 16"
+
+The one key whose whole job is to explain the program. It ran `man canger`, which asks the system
+for an *installed* page — and Canger is normally run from wherever it was unpacked or built, where
+nothing installs one. Exit 16 is man-db's code for "no such page", so the failure was complete and
+the message told the user nothing they could act on.
+
+**Canger writes its own manual now.** `--man` already existed and already rendered the page for the
+running build; `?` `m` puts that in a temporary `canger.1` and hands it to `man` to format. No
+installation needed, and the page describes the bindings and settings actually in force rather
+than whichever version was installed last.
+
+Through a file rather than a pipe: `man -l -` reads standard input on man-db but not everywhere,
+while `man -l FILE` is understood by every implementation. Named `canger.1` so the header reads
+`CANGER(1)` and not a temporary name, and the directory goes after a `;` rather than an `&&` so
+quitting the pager still clears it up.
+
+**A test was pinning the broken command.** `Help_StillShowsTheManPageThroughMan` asserted the
+whole line, `man canger`. Its stated intent — that `m` is not a dump, since man formats and pages
+it itself — is worth keeping and is what it asserts now.
+
+### The instrument, wrong for the sixth time
+
+The pty said the fix did nothing: no `CANGER(1)` anywhere in the output. It was there all along.
+**`man` renders bold by overstriking** — `C\bC A\bA` — so a heading never appears as contiguous
+bytes in the stream, and searching for one finds nothing however well it is displayed. The same
+search against `man` redirected to a *file* matched immediately, because without a terminal there
+is no formatting to get in the way.
+
+That was five wrong turns before it: reading the screen for a fact the screen cannot tell (twice),
+a control that ran after the measurement and destroyed what it was controlling for, a single
+positive result believed without a control, and a mutation that failed to compile so the previous
+binary was measured instead.
+
+*Six of them now, and not one was Canger.* The pattern in all six is the same: the instrument
+answered a question slightly different from the one being asked, and the answer looked like an
+answer. What breaks the pattern is having the negative case in hand — run the same measurement
+against code known to be broken and check it says so. Every one of these was caught that way, and
+none of them by staring harder at the positive.
+
+## Standing in a directory another instance has deleted
+
+Two instances, both inside `Test/`. One deletes it; the other still lists `notes.md` and errors on
+opening it.
+
+**Measured against real ranger**, run from `/opt/ranger-master` with `--choosedir` answering
+"where did you end up" rather than anything read off the screen, and a control run with the
+directory left alone:
+
+| | ranger | Canger before | Canger now |
+|---|---|---|---|
+| control, directory intact | `<root>/Test` | `<root>/Test` | `<root>/Test` |
+| deleted, no reset | `<root>/Test` | `<root>/Test` | `<root>/Test` |
+| deleted, then `Ctrl-R` | **`<root>`** | `<root>/Test` | **`<root>`** |
+
+So **neither program notices on its own** — both keep the stale listing and let you try to open a
+file that has gone. Ranger's `load_content_if_outdated` stats the directory and, when that fails,
+`return False` without reloading (`container/directory.py:700-702`). Canger did the same thing by
+a different route. That half is parity, and the user sees it as a bug in both.
+
+Where they differed is the recovery. Ranger's `reset` re-enters the current path, and its
+`enter_dir` treats **anything that is not a directory** as "go to the parent and select the name"
+(`core/tab.py:151-153`) — which covers a file and equally a path that has stopped being anything.
+Canger's `Tab.Enter` asked whether the path was a *file*, so a path that had vanished failed that
+test and was entered anyway.
+
+One test rather than two, now. And it walks up rather than trying the parent once: ranger's
+`chdir` fails if the parent is gone too and it stays where it was, which for a deleted *tree* — the
+usual case — means it does not recover at all.
+
+Ranger's failure to open is silent, incidentally; Canger says the file is not there. Canger's is
+better and stays.
+
+### The far worse bug this uncovered
+
+Recovering moved the tab, which announced the new directory, which ran the user's zoxide plugin,
+which **took the whole browser down**:
+
+```
+Unhandled exception. System.IO.FileNotFoundException: Unable to find the specified file.
+   at Interop.Sys.GetCwd()
+   at Canger.Tui.TerminalProcessRunner.Start(...)
+```
+
+`Environment.CurrentDirectory` *throws* when the process's own working directory has been deleted —
+`getcwd(2)` has nothing to return. It was read in four places to fill in a working directory
+nobody had specified, so **any** external program at all — a preview, a plugin, a shell command —
+killed Canger once the directory it was sitting in went away. Only the two causes that mean "it is
+not there any more" are absorbed; anything else still surfaces, so a real bug cannot hide behind a
+working directory.
+
+Not caused by the fix, only revealed by it: without recovering there was no directory change, so
+nothing ran. Anyone with a plugin on the directory-change hook would have hit it by navigating.
+
+*The reason to measure a fix end to end and not only its own tests.*
+
+## Leaving a deleted directory without being asked to
+
+Having matched ranger — recover on `reset` — the obvious next question was why anybody should have
+to know that. Neither program notices on its own, and a listing of files that are no longer there
+is worse than useless: every one of them is a thing you can try to open and be told off for.
+
+**It cost nothing to notice.** `DirectoryNode.LoadIfOutdated` already stats the directory on every
+draw to decide whether to re-read it. What it did not do was tell apart the two ways that stat can
+fail, and they call for opposite answers:
+
+```
+An unreadable directory is left alone: the listing already on screen is more use
+than an empty one, and the error is reported by whatever tries to enter it.
+```
+
+That comment was right about one case and wrong about the other. A share that has stopped
+answering will come back, and moving out of it would be the surprise. One that has been *removed*
+is never coming back. They arrive identically — a null status — so the second syscall to tell them
+apart is worth it, and is only paid in the rare case where the first one failed.
+
+So: the current tab steps up to the nearest directory that is really there, and says so. No new
+polling, no watcher, no thread.
+
+**Only a directory that is genuinely gone moves anybody.** A test covers the other case, and
+removing the distinction — treating every failed stat as "gone" — fails exactly that one.
+
+**Only the tab you are looking at.** Another tab standing somewhere deleted recovers when it is
+next drawn, which is when its listing would have gone stale anyway.
+
+Measured in a pty with **no keys pressed at all**: the directory deleted from another process,
+Canger moves from `<root>/Test` to `<root>` on its own and reports it. The control, with the
+directory left alone, stays put and says nothing.
+
+### The message had to be rewritten to be read
+
+`"{gone} was deleted — moved to {here}"` never appeared: it began with a hundred characters of
+path, and on a 110-column terminal the news fell off the end. Leading with what happened and
+putting the paths after it is the difference between saying something and not.
+
+*A message that does not fit is a message that was not sent.*
+
+## A Debian package
+
+`./build.sh deb` writes `dist/canger_VERSION_amd64.deb`. The tarballs stay: they are what a
+packager or a non-Debian machine wants, and the framework-dependent one is the 13 MB download for
+somebody who already has .NET.
+
+A package does three things a tarball cannot, and one of them was a bug fixed here recently:
+`canger` on the PATH, the manual where **`man canger`** finds it, and `apt remove` to undo it.
+
+**Self-contained, because there is no alternative.** `apt-cache search ^dotnet-runtime` comes back
+empty on Debian 13 — Debian packages no .NET runtime at all, so a framework-dependent package
+would depend on something that exists only in Microsoft's own apt repository. 42 MB to download,
+150 MB installed, and it works on a machine with nothing on it.
+
+**The dependencies are read off the binaries.** `dpkg-shlibdeps` is the proper tool and is no use
+here: it wants the whole debhelper build tree around it and produces four warnings and no answer
+without one. So the list is derived and written down with its reasoning — `libc6`, `libgcc-s1`,
+`libstdc++6` from what everything links against, and `libicu` from what nothing does.
+
+ICU is the interesting one: it appears in no binary because .NET opens it by name at runtime, and
+a self-contained build with `InvariantGlobalization` off exits at startup without it. Alternatives
+span current Debian and Ubuntu. OpenSSL is opened the same way but only when something asks for
+cryptography, which Canger never does, so it is recommended rather than required.
+
+`liblttng-ust` is deliberately not depended on: it is loaded only if tracing is asked for.
+
+**Verified as installed rather than as built.** Extracted to a scratch root and run from there with
+`DOTNET_ROOT` unset and a minimal `PATH`: `canger --version` answers, the shipped configuration
+loads through the `/usr/bin` symlink (295 browser bindings, not zero), and `man canger` renders
+from where the package put it. The manual is generated from the binary being packaged rather than
+copied from `doc/`, so it cannot describe a different version.
+
+The symlink was checked rather than assumed: a .NET apphost finds its own directory through
+`/proc/self/exe`, which resolves the link, so `config/` beside the real binary is still found.
+
+## An AppImage
+
+`./build.sh appimage` writes one already-executable file. It is the *convenient* artifact, not the
+compatible one: what it bundles that the self-contained tarball does not is nothing at all — both
+carry the .NET runtime, and neither carries what Canger actually reaches for, which is `less`,
+`file`, `git`, `udisksctl` and the user's editor, all of which belong to the machine it runs on.
+What it buys is one file instead of a directory.
+
+**The FUSE requirement is not the one everybody repeats.** This appimagetool builds a
+type2-runtime, which statically bundles libfuse and squashfuse; what it needs is `fusermount3`
+from `fuse3`, plus `/dev/fuse`. Not `libfuse2` — the requirement people remember, and the one that
+has been dropped from recent Debian and Ubuntu, which is exactly why AppImages have their
+reputation. Measured by taking `fusermount` off the PATH and watching the image fail, rather than
+by repeating what I had already told the user, which was wrong.
+
+Canger's configuration goes in `usr/bin` beside the binary rather than in `usr/share`, because
+that is where Canger looks: the shipped `cc.conf` is found from the directory the executable is
+in, whatever that turns out to be inside a mounted image.
+
+**Verified as a recipient would receive it**: run from another directory with `DOTNET_ROOT` unset
+and a minimal `PATH`; renamed to `canger`, which is what anybody would do; and with
+`--appimage-extract-and-run` for a machine with no FUSE at all. Each one answers `canger 0.4.0`
+and loads 295 browser bindings rather than zero.
+
+### It needed an icon, so Canger has one now
+
+AppImage requires a desktop entry and an icon, and Canger had neither. `doc/canger.svg` draws what
+the program looks like — the parent column, the listing with the cursor on a row, and the preview
+— which is the one picture that is actually about this program rather than about file managers in
+general. `doc/canger.png` is checked in beside it so building needs no image tooling.
+
+`Terminal=true` is the line that matters in the desktop entry: launched from a menu, a terminal
+program needs one opened for it, and without saying so it flashes and dies.
+
+## "Argument list too long" on a folder of 2 561 files
+
+`cfn` over a folder of articles failed before the program it was calling had started. The cause is
+not the number of files:
+
+```
+the command line Canger built:                    380 530 bytes
+the kernel's limit for ONE argument:              131 072 bytes   (MAX_ARG_STRLEN, 32 pages)
+the kernel's limit for the whole of argv:       2 097 152 bytes   (ARG_MAX)
+```
+
+Every external program ran as `sh -c "the whole line"`, which makes the line a **single**
+argument — and a single argument is capped sixteen times lower than argv as a whole. Measured
+rather than reasoned about: an argument of 131 000 bytes runs, one of 132 000 fails, and *the same
+380 000 bytes split across many arguments runs perfectly well*.
+
+So a line that needs nothing from a shell is no longer given one. The ceiling goes from 128 KiB to
+2 MB — about fourteen thousand files at these name lengths.
+
+### Being wrong here means running the wrong thing
+
+The splitter refuses whenever it cannot be certain, and most of its tests are about what it
+refuses: a pipe, a redirection, `&&`, a variable, a backtick, a glob, a brace, a tilde, a comment,
+a backslash, an unterminated quote. Single quotes it handles, because every filename Canger passes
+is quoted as the macro expands and a rule disqualified by its own quoting would never fire. Double
+quotes only when they contain no `$`, backtick or backslash.
+
+`ShellQuote` writes an embedded apostrophe as `'\''`, four characters a shell reads as one.
+Reading that here would need the same trick, and getting it subtly wrong would rename the wrong
+file — so a backslash anywhere sends the whole line to the shell.
+
+### And a regression that had to be guarded, not accepted
+
+`cd`, `export`, `alias`, `ulimit`, `source` have no executable file anywhere, so starting them
+directly reports that there is no such program where a shell would have run them. And where a file
+does exist — `echo`, `printf`, `test` — it is not the same thing as the shell's version. Both are
+changes in what gets run, which is precisely what this must not do, so any line whose first word is
+a builtin goes to the shell as before. Nothing is lost: no builtin is ever handed two thousand
+filenames.
+
+### Verified against a copy of the folder
+
+2 561 files of the same shape, a command line of 519 898 bytes — four times the limit, worse than
+the real case. The program receives all 2 561 paths and no error is reported. With the fast path
+disabled it never runs at all. Checked both by name on `PATH`, which is what `cfn` does, and by
+absolute path; and redirection, pipes and builtins still go to the shell and still work.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

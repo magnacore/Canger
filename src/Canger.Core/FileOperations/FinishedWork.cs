@@ -23,6 +23,54 @@ namespace Canger.Core.FileOperations;
 public static class FinishedWork
 {
     /// <summary>
+    /// Moves the tags of anything a finished transfer moved, so they follow the files.
+    /// </summary>
+    /// <param name="finished">The jobs that have stopped.</param>
+    /// <param name="tags">The tags to rewrite.</param>
+    /// <returns>How many transfers had their tags carried across.</returns>
+    /// <remarks>
+    /// <para>
+    /// A tag is a note about a particular file, so moving the file should take the note with it.
+    /// Cutting a tagged file and pasting it elsewhere used to strand the tag on the old path and
+    /// leave the file untagged where it had gone.
+    /// </para>
+    /// <para>
+    /// Only a move. A copy leaves the original where it is, still tagged, and the new file is a
+    /// different file that nobody has said anything about — tagging it too would be inventing an
+    /// opinion the user never expressed. Ranger draws the line in the same place, doing this in
+    /// the <c>do_cut</c> branch alone (<c>core/loader.py:110-124</c>).
+    /// </para>
+    /// <para>
+    /// Driven by where each source actually landed rather than by where it was aimed, because
+    /// the clash policy renames what it moves and a tag filed under the aimed-at name would
+    /// point at nothing.
+    /// </para>
+    /// </remarks>
+    public static int CarryTags(IReadOnlyList<QueuedTask> finished, State.Tags tags)
+    {
+        ArgumentNullException.ThrowIfNull(finished);
+        ArgumentNullException.ThrowIfNull(tags);
+
+        int carried = 0;
+
+        foreach (QueuedTask task in finished)
+        {
+            if (task.Work is not CopyJob { Kind: TransferKind.Move } moved)
+            {
+                continue;
+            }
+
+            foreach (Landing landing in moved.Landings)
+            {
+                tags.MovePath(landing.Source, landing.Destination);
+                carried++;
+            }
+        }
+
+        return carried;
+    }
+
+    /// <summary>
     /// Sums up a run of finished jobs.
     /// </summary>
     /// <param name="finished">The jobs that have stopped, however they stopped.</param>

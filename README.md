@@ -14,7 +14,8 @@ same settings and the same configuration file syntax — written as idiomatic C#
 transliterated Python. If a key does something in ranger and something else in Canger, that is a
 bug; please report it.
 
-For usage, read the manual: `man canger`, or `canger --man` before it is installed.
+For usage, press `?` then `m` inside Canger, which renders the manual for the build you
+are running. Outside it: `man canger` once installed, or `canger --man` before that.
 
 
 Status
@@ -24,17 +25,17 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 
 | | |
 |---|---|
-| Settings | 82, with ranger's global / path-regex / tag scopes |
-| Commands | 113 built in, plus whatever `commands.cs` adds |
+| Settings | 83, with ranger's global / path-regex / tag scopes |
+| Commands | 114 built in, plus whatever `commands.cs` adds |
 | Key bindings | 295 in the browser, 36 console, 35 pager, 33 task view, 29 devices |
 | Colour contexts | 82, matching ranger's names exactly |
 | Colourschemes | `default`, `jungle`, `snow`, `solarized` |
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 1717 |
+| Tests | 1830 |
 
-Three things go deliberately beyond ranger:
+Four things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -48,13 +49,20 @@ Three things go deliberately beyond ranger:
   unlock, lock and safely-remove — the last of which unmounts everything on the drive, locks what
   is encrypted, and cuts the power, stopping at the first step that fails. Everything goes through
   `udisksctl`, so a drive mounted here behaves exactly like one mounted from a desktop file
-  manager, and a passphrase is typed to `udisksctl` rather than to Canger. Ranger has no
+  manager. It can also remember an encrypted drive's passphrase in the desktop's own keyring, the
+  one Thunar and GNOME Disks use, so a drive unlocked in either opens in the other. Ranger has no
   equivalent; see **Removable drives** below.
+- **It leaves a directory that has been deleted.** Another program removing the folder you are
+  standing in used to leave a listing of files that are no longer there, and opening one reported
+  that it did not exist. Canger steps up to the nearest directory that is really there and says
+  so. Ranger recovers only when asked, with a reset; a drive that has merely stopped answering for
+  a moment still moves nobody.
 
 Known gaps: five of ranger's eight image protocols (w3m, iterm2, sixel, terminology, urxvt) are
-not implemented and fall back to no image; there is no distribution packaging (no `.deb`, no AUR
-entry) beyond the tarballs `./build.sh dist` writes. `TODO.md` is the honest record of what is
-done, what was measured, and what is known to be missing.
+not implemented and fall back to no image; nothing is published anywhere, so there is no
+repository to install from — `./build.sh` makes a `.deb`, an AppImage and two tarballs, and you
+fetch them yourself. `TODO.md` is the honest record of what is done, what was measured, and what
+is known to be missing.
 
 
 Design goals
@@ -101,6 +109,8 @@ cd canger
 ./build.sh Release      # optimised, still JITs itself on the way to the first frame
 ./build.sh publish      # Release + ReadyToRun, framework-dependent — the one to actually use
 ./build.sh dist         # tarballs to hand to somebody else
+./build.sh deb          # a Debian package
+./build.sh appimage     # one executable file
 ./test.sh               # the whole suite
 ```
 
@@ -109,7 +119,34 @@ applies at publish, so a plain build — in either configuration — still pays 
 every launch. It stays framework-dependent (`--self-contained false`), so it uses the runtime
 that is already installed rather than bundling one.
 
-`dist` is for giving Canger to someone else. It writes two tarballs into `dist/`: a
+`deb` builds `dist/canger_VERSION_amd64.deb`, which is the right answer on Debian or Ubuntu:
+`canger` goes on the PATH, the manual where `man canger` finds it, and the shipped `cc.conf`,
+`rifle.conf` and `scope.sh` under `/usr/lib/canger/config`. It is self-contained — Debian packages
+no .NET runtime at all, so a framework-dependent package would depend on something that does not
+exist outside Microsoft's own apt repository.
+
+```
+sudo apt install ./dist/canger_0.5.0_amd64.deb
+```
+
+`appimage` writes `dist/Canger-VERSION-x86_64.AppImage` — one already-executable file that needs
+nothing installed except FUSE. It bundles the .NET runtime and Canger's own configuration, and
+nothing else: `less`, `file`, `git`, `udisksctl` and your editor still come from the machine it
+runs on, as they should.
+
+It needs **`fuse3`** on that machine — `fusermount3` and `/dev/fuse` — not the `libfuse2` that
+AppImages are famous for wanting; this runtime bundles libfuse statically. `fuse3` is installed by
+default nearly everywhere, and where it is not:
+
+```
+./Canger-0.5.0-x86_64.AppImage --appimage-extract-and-run
+```
+
+Building one needs `appimagetool`, which Debian does not package — take the `x86_64` build from
+[the AppImage project](https://github.com/AppImage/appimagetool/releases) and put it on your PATH.
+
+`dist` is for giving Canger to someone else. It writes two lzip tarballs into `dist/` — unpack
+with `tar --lzip -xf`, which needs `lzip` installed — a
 framework-dependent one for a machine that already has .NET 10, and a self-contained one that
 needs nothing installed at all. Both are ReadyToRun, both leave out the debug symbols, the API
 documentation and the Roslyn translations that `publish` keeps, and both carry `config/` — without
@@ -261,6 +298,44 @@ here, 512 MB written with no sync leaves 525 MB dirty, and `udisksctl unmount` t
 leaves none, against 0.07 s for the same unmount with nothing outstanding. `sync(1)` is global, so
 adding one would make ejecting a memory stick wait on dirty data belonging to every other
 filesystem.
+
+### Remembering a passphrase
+
+By default an encrypted drive is unlocked the way it always was: `udisksctl` is given the screen
+and prompts for the passphrase itself, nothing of it passes through Canger, and nothing is kept.
+
+`set unlock_prompt builtin` moves the prompt inside Canger, drawn as bullets, and three places
+are then tried in turn before you are asked — what you chose to keep for this sitting, what the
+desktop's keyring holds, and only then the keyboard. After a passphrase works you are offered
+**never**, **this session**, or **the keyring**.
+
+The keyring is the desktop's, not Canger's. Thunar, Nautilus and GNOME Disks all file a LUKS
+passphrase through libsecret under `org.gnome.GVfs.Luks.Password`, keyed by the volume's LUKS
+UUID, and Canger uses exactly that:
+
+```
+gvfs-luks-uuid : 61858679-035e-4001-94c3-0e6946fc85df
+xdg:schema     : org.gnome.GVfs.Luks.Password
+label          : Encryption passphrase for WDC WD40NMZW-59GX6S1 (4.0 TB Hard Disk)
+```
+
+So **a passphrase saved in Thunar unlocks the drive in Canger without being typed again**, and one
+saved here works in Thunar. There is one entry per drive, and it is visible and removable in
+Seahorse like any other.
+
+Where the passphrase goes, and does not:
+
+* To udisks down a **pipe** — `udisksctl unlock --key-file /dev/stdin` — so it is never written to
+  a file and never appears in a command line where `ps` would show it.
+* To libsecret on **`secret-tool`'s standard input**, for the same reason.
+* **Not** into the command history, which is written to disc; not into a completion; and an Up
+  arrow at a passphrase prompt recalls nothing.
+
+`:forget_passphrases` drops whatever is being kept in memory without touching the keyring, for
+when you are about to leave the terminal.
+
+The keyring half needs **libsecret-tools** (`secret-tool`) installed. Without it the "keyring"
+option is not offered and the other two still work.
 
 Needs **udisks2** installed. Without it the list says so and does nothing else.
 

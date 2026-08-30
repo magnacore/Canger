@@ -28,6 +28,9 @@ public static class SettingsCatalog
             "Column layout: miller shows the hierarchy, multipane shows all tabs side by side."),
         IntList("column_ratios", [1, 3, 4],
             "Relative widths of the miller columns."),
+        Str("unlock_prompt", "terminal", ["terminal", "builtin"],
+            "Where an encrypted drive asks for its passphrase: terminal hands udisksctl the "
+            + "screen, builtin asks inside Canger and can remember it in the desktop keyring."),
         Str("colorscheme", "default", null,
             "Name of the colorscheme to use."),
         Str("draw_borders", "none", ["none", "both", "outline", "separators"],

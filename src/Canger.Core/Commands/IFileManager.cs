@@ -263,6 +263,20 @@ public interface IFileManager
     /// <summary>Closes the task view.</summary>
     void CloseTaskView();
 
+    /// <summary>
+    /// Asks for a line of text, and hands it back when it has been typed.
+    /// </summary>
+    /// <param name="question">What to show before the input.</param>
+    /// <param name="callback">
+    /// Given what was typed, or <see langword="null"/> if the user gave up. The two are different
+    /// answers: an empty passphrase is a passphrase, and a cancelled prompt is not.
+    /// </param>
+    /// <param name="hidden">
+    /// Whether to draw the line as bullets. A hidden line is also kept out of the command history
+    /// — which is written to disc — and neither completes nor recalls anything.
+    /// </param>
+    void Prompt(string question, Action<string?> callback, bool hidden = false);
+
     /// <summary>The removable drives, their cursor, and the checks that guard them.</summary>
     Devices.DeviceSession Devices { get; }
 

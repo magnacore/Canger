@@ -120,6 +120,7 @@ public sealed class DeleteCommand : CangerCommand
     {
         int deleted = 0;
         List<string> failures = [];
+        List<string> removed = [];
 
         foreach (FsNode entry in selection)
         {
@@ -136,12 +137,24 @@ public sealed class DeleteCommand : CangerCommand
                 }
 
                 deleted++;
+
+                // Both spellings: a tag is filed under the file's real path, and what was
+                // deleted here is the name it was reached by. For a symbolic link those are two
+                // different things, and only one of them has gone.
+                removed.Add(entry.Path);
+                removed.Add(entry.RealPath);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 failures.Add($"{entry.RelativePath}: {e.Message}");
             }
         }
+
+        // After the fact rather than before it, so that a delete which failed leaves the tag
+        // alone. Ranger untags first and loses the tag either way; a tag is something the user
+        // put there by hand, and throwing it away for a file that is still on disc is a small
+        // loss of their work.
+        FileManager.Tags.RemoveUnder(removed);
 
         FileManager.ReloadCurrentDirectory();
 
@@ -204,6 +217,14 @@ public sealed class TrashCommand : CangerCommand
     {
         string paths = string.Join(" ", selection.Select(e => MacroExpander.ShellQuote(e.Path)));
         FileManager.RunProgram($"trash-put -- {paths}", "s");
+
+        // Whatever actually went. `trash-put` reports its own failures and this cannot see them,
+        // so the check is whether the path is still there — which is the same question a tag
+        // pointing at it would be asking.
+        FileManager.Tags.RemoveUnder(
+            selection.Where(e => !FileManager.FileSystem.ExistsNoFollow(e.Path))
+                     .SelectMany(e => new[] { e.Path, e.RealPath }));
+
         FileManager.ReloadCurrentDirectory();
     }
 }

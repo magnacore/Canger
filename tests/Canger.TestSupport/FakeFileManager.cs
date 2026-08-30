@@ -197,6 +197,27 @@ public sealed class FakeFileManager : IFileManager
     public void Ask(string question, Action<char> callback, IReadOnlyList<char>? choices = null) =>
         PendingQuestion = (question, callback, choices ?? ['y', 'n']);
 
+    /// <summary>The line being asked for, when one is.</summary>
+    public (string Question, Action<string?> Callback, bool Hidden)? PendingPrompt
+    { get; private set; }
+
+    /// <inheritdoc />
+    public void Prompt(string question, Action<string?> callback, bool hidden = false) =>
+        PendingPrompt = (question, callback, hidden);
+
+    /// <summary>Types a line into the prompt that is waiting.</summary>
+    /// <param name="line">What the user is taken to have typed, or null for giving up.</param>
+    public void Type(string? line)
+    {
+        if (PendingPrompt is not { } pending)
+        {
+            throw new InvalidOperationException("Nothing has been asked for.");
+        }
+
+        PendingPrompt = null;
+        pending.Callback(line);
+    }
+
     /// <summary>Answers the question that is waiting.</summary>
     /// <param name="answer">The key the user is taken to have pressed.</param>
     public void Answer(char answer)
@@ -295,7 +316,18 @@ public sealed class FakeFileManager : IFileManager
     public bool DevicesOpen { get; private set; }
 
     /// <inheritdoc />
-    public Canger.Core.Devices.DeviceSession Devices => _devices ??= new(Runner, Tasks);
+    public Canger.Core.Devices.DeviceSession Devices =>
+        _devices ??= new(Runner, Tasks, () => SecretToolAvailable);
+
+    /// <summary>
+    /// Whether tests should behave as though libsecret's command is installed.
+    /// </summary>
+    /// <remarks>
+    /// Fixed rather than probed, so a test means the same thing on every machine. It was probed
+    /// once, and the passphrase tests passed only on machines without libsecret — which was all
+    /// of them until one had it.
+    /// </remarks>
+    public bool SecretToolAvailable { get; set; } = true;
 
     private Canger.Core.Devices.DeviceSession? _devices;
 
@@ -429,6 +461,37 @@ public sealed class FakeFileManager : IFileManager
         public ProcessResult Run(ProcessRequest request)
         {
             Requests.Add(request);
+            return Result;
+        }
+
+        /// <summary>
+        /// What was written to a program's standard input, oldest first.
+        /// </summary>
+        /// <remarks>
+        /// Recorded so a test can prove a passphrase reached the program by the pipe and not by
+        /// the command line, which is the whole point of the method. Kept in plain sight here
+        /// because this is a test double and there are no real secrets in it.
+        /// </remarks>
+        public List<(string Command, string Input)> Fed { get; } = [];
+
+        /// <summary>What a run with input should report, keyed by a fragment of the command.</summary>
+        public Dictionary<string, ProcessResult> InputResults { get; } =
+            new(StringComparer.Ordinal);
+
+        /// <inheritdoc />
+        public ProcessResult RunWithInput(ProcessRequest request, string input)
+        {
+            Requests.Add(request);
+            Fed.Add((request.Command, input));
+
+            foreach ((string fragment, ProcessResult result) in InputResults)
+            {
+                if (request.Command.Contains(fragment, StringComparison.Ordinal))
+                {
+                    return result;
+                }
+            }
+
             return Result;
         }
 
