@@ -4059,16 +4059,28 @@ already did — but plain `rename` did not, so renaming one file was the one way
 pointing at a name that no longer existed. `Tags.MovePath` already handled directories and their
 contents; it simply was not called.
 
-### Found and not fixed: cut-and-paste
+### Cut-and-paste, done properly
 
-Ranger carries tags across a *move* as well (`core/loader.py:116-124`), rewriting each tag's path
-as the file lands. Canger does not, so cutting a tagged file and pasting it elsewhere strands the
-tag and leaves the file untagged at its new home.
+Ranger carries tags across a *move* as well (`core/loader.py:110-124`). Canger did not, so cutting
+a tagged file and pasting it elsewhere stranded the tag on the old path and left the file untagged
+where it had gone. Measured before the fix: the file at `<home>/archive/notes.md`, the tag still
+saying `<home>/notes.md`.
 
-Left alone deliberately: doing it properly needs the transfer to report where each source actually
-ended up, since the clash policy can rename what it moves, and inventing that from the source name
-would file the tag under a path that may not exist. Not a line; a change to what a `CopyJob`
-reports.
+It needed the piece that made it worth doing properly rather than guessing. **A transfer now
+reports where each source actually landed** — `CopyJob.Landings`, one entry per source that
+arrived whole. Reconstructing that from the source name and the destination directory is wrong
+often enough to matter: the clash policy renames what it moves, so a file pasted beside one of the
+same name lands as `notes_0.md`, and a tag filed under `notes.md` would name a file nobody moved.
+A test pastes onto a name already taken and asserts the tag reaches the renamed file; guessing the
+name instead of recording it fails exactly that one.
+
+Only sources with no error beneath them are reported. A directory that lost a file on the way is
+not somewhere its contents can be said to have arrived, and a tag must never be rewritten to point
+at somewhere its file never reached.
+
+**Only a move.** A copy leaves the original where it is, still tagged, and the new file is a
+different file nobody has said anything about — tagging it too would be inventing an opinion the
+user never expressed. Ranger draws the line in the same place.
 
 ### Test support gained a fault
 

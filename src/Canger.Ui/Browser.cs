@@ -1447,6 +1447,10 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>Says how finished work turned out, then clears it from the queue.</summary>
     private void ReportFinishedWork()
     {
+        // Before the sweep below, which is what forgets the jobs — and so what they moved.
+        Core.FileOperations.FinishedWork.CarryTags(
+            [.. Tasks.Tasks.Where(t => t.IsComplete)], Tags);
+
         // One message for the whole run. Reporting each job in turn meant each report replacing
         // the last, so a transfer that had lost a file was reported and then unreported in the
         // same frame by a transfer that finished cleanly beside it.
