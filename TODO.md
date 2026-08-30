@@ -4260,6 +4260,40 @@ copied from `doc/`, so it cannot describe a different version.
 The symlink was checked rather than assumed: a .NET apphost finds its own directory through
 `/proc/self/exe`, which resolves the link, so `config/` beside the real binary is still found.
 
+## An AppImage
+
+`./build.sh appimage` writes one already-executable file. It is the *convenient* artifact, not the
+compatible one: what it bundles that the self-contained tarball does not is nothing at all — both
+carry the .NET runtime, and neither carries what Canger actually reaches for, which is `less`,
+`file`, `git`, `udisksctl` and the user's editor, all of which belong to the machine it runs on.
+What it buys is one file instead of a directory.
+
+**The FUSE requirement is not the one everybody repeats.** This appimagetool builds a
+type2-runtime, which statically bundles libfuse and squashfuse; what it needs is `fusermount3`
+from `fuse3`, plus `/dev/fuse`. Not `libfuse2` — the requirement people remember, and the one that
+has been dropped from recent Debian and Ubuntu, which is exactly why AppImages have their
+reputation. Measured by taking `fusermount` off the PATH and watching the image fail, rather than
+by repeating what I had already told the user, which was wrong.
+
+Canger's configuration goes in `usr/bin` beside the binary rather than in `usr/share`, because
+that is where Canger looks: the shipped `cc.conf` is found from the directory the executable is
+in, whatever that turns out to be inside a mounted image.
+
+**Verified as a recipient would receive it**: run from another directory with `DOTNET_ROOT` unset
+and a minimal `PATH`; renamed to `canger`, which is what anybody would do; and with
+`--appimage-extract-and-run` for a machine with no FUSE at all. Each one answers `canger 0.4.0`
+and loads 295 browser bindings rather than zero.
+
+### It needed an icon, so Canger has one now
+
+AppImage requires a desktop entry and an icon, and Canger had neither. `doc/canger.svg` draws what
+the program looks like — the parent column, the listing with the cursor on a row, and the preview
+— which is the one picture that is actually about this program rather than about file managers in
+general. `doc/canger.png` is checked in beside it so building needs no image tooling.
+
+`Terminal=true` is the line that matters in the desktop entry: launched from a menu, a terminal
+program needs one opened for it, and without saying so it flashes and dies.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

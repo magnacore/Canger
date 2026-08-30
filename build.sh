@@ -233,6 +233,130 @@ EOF
         echo "  Puts canger on the PATH, the manual where man canger finds it, and the shipped"
         echo "  cc.conf, rifle.conf and scope.sh under /usr/lib/canger/config."
         ;;
+    appimage)
+        # One file to hand to anybody, which is the only thing this does that the self-contained
+        # tarball does not: both bundle the .NET runtime, and neither bundles what Canger actually
+        # reaches for at runtime — less, file, git, udisksctl, the user's editor — because those
+        # belong to the machine it is running on.
+        #
+        # The cost is that the recipient needs FUSE to run it at all, or has to know about
+        # --appimage-extract-and-run. The .deb and the tarball have no such requirement, so this
+        # is the convenient artifact rather than the compatible one.
+        #
+        # Which FUSE was worth checking rather than repeating: this appimagetool builds a
+        # type2-runtime, which statically bundles libfuse and squashfuse and needs `fusermount3`
+        # from the `fuse3` package plus /dev/fuse. Not `libfuse2`, which is the requirement people
+        # remember and the one that has been dropped from recent Debian and Ubuntu — measured by
+        # running the image with fusermount taken off the PATH and watching it fail.
+        version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -1)
+        rid="${CANGER_RID:-linux-x64}"
+        out="dist"
+
+        [ -n "$version" ] || { echo "canger: no <Version> in Directory.Build.props" >&2; exit 1; }
+
+        command -v appimagetool >/dev/null || {
+            echo "canger: appimagetool is not on the PATH." >&2
+            echo "canger: Debian does not package it; take the x86_64 build from" >&2
+            echo "canger:   https://github.com/AppImage/appimagetool/releases" >&2
+            exit 1
+        }
+
+        case "$rid" in
+            linux-x64)   arch=x86_64 ;;
+            linux-arm64) arch=aarch64 ;;
+            *) echo "canger: no AppImage architecture known for $rid" >&2; exit 1 ;;
+        esac
+
+        appdir="$out/Canger.AppDir"
+        image="$out/Canger-$version-$arch.AppImage"
+
+        mkdir -p "$out"
+        rm -rf "$appdir"
+        mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" \
+                 "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/man/man1"
+
+        echo "canger: building $(basename "$image")"
+
+        lean="-p:SatelliteResourceLanguages=en -p:DebugType=none -p:GenerateDocumentationFile=false"
+
+        # Into usr/bin, because `config/` has to sit beside the binary: Canger finds its shipped
+        # configuration from the directory the executable is in, whatever that turns out to be.
+        # shellcheck disable=SC2086
+        "$DOTNET_ROOT/dotnet" publish src/Canger.App/Canger.App.csproj \
+            -c Release -r "$rid" --self-contained true \
+            --artifacts-path "$out/.artifacts/appimage" \
+            -o "$appdir/usr/bin" $lean "$@" >/dev/null
+
+        [ -f "$appdir/usr/bin/config/cc.conf" ] || {
+            echo "canger: $appdir/usr/bin/config/cc.conf is missing; the image would have no key bindings" >&2
+            exit 1
+        }
+
+        cp LICENSE README.md "$appdir/usr/bin/"
+        "$appdir/usr/bin/canger" --man | gzip -9n > "$appdir/usr/share/man/man1/canger.1.gz"
+
+        # `readlink -f` because AppRun is invoked through whatever name the user gave the image,
+        # and $0 is that name rather than the path inside the mounted image.
+        cat > "$appdir/AppRun" <<'APPRUN'
+#!/bin/sh
+here=$(dirname "$(readlink -f "$0")")
+exec "$here/usr/bin/canger" "$@"
+APPRUN
+        chmod +x "$appdir/AppRun"
+
+        # Terminal=true is the whole difference between this and a desktop program: launched from
+        # a menu it needs a terminal opened for it, and without saying so it would flash and die.
+        cat > "$appdir/canger.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Canger
+GenericName=File Manager
+Comment=File manager for the terminal with vi-style key bindings
+Exec=canger %f
+Icon=canger
+Terminal=true
+Categories=System;FileTools;FileManager;ConsoleOnly;
+Keywords=file;manager;ranger;terminal;vi;
+DESKTOP
+
+        cp "$appdir/canger.desktop" "$appdir/usr/share/applications/canger.desktop"
+        cp doc/canger.png "$appdir/canger.png"
+        cp doc/canger.png "$appdir/usr/share/icons/hicolor/256x256/apps/canger.png"
+
+        if command -v desktop-file-validate >/dev/null; then
+            desktop-file-validate "$appdir/canger.desktop" || {
+                echo "canger: the desktop entry is not valid; refusing to package it" >&2
+                exit 1
+            }
+        fi
+
+        # Run what is about to be packaged, before packaging it.
+        if ! "$appdir/usr/bin/canger" --version >/dev/null 2>&1; then
+            echo "canger: the packaged build does not start; refusing to package it" >&2
+            exit 1
+        fi
+
+        rm -f "$image"
+        ARCH="$arch" appimagetool "$appdir" "$image" >/dev/null 2>&1 || {
+            echo "canger: appimagetool failed" >&2
+            exit 1
+        }
+
+        rm -rf "$appdir" "$out/.artifacts"
+
+        # And run the image itself, which is the only thing that proves the AppRun, the layout
+        # and the runtime all agree.
+        if ! "$image" --version >/dev/null 2>&1; then
+            echo "canger: $image does not start; FUSE is needed to run one at all" >&2
+            exit 1
+        fi
+
+        echo
+        ls -lh "$image" | awk '{ printf "  %-52s %s\n", $9, $5 }'
+        echo
+        echo "  One file, already executable. Needs fuse3 on the machine it runs on, or"
+        echo "  ./Canger-$version-$arch.AppImage --appimage-extract-and-run"
+        ;;
     Debug|Release)
         exec "$DOTNET_ROOT/dotnet" build Canger.slnx -c "$target" "$@"
         ;;

@@ -103,6 +103,7 @@ cd canger
 ./build.sh publish      # Release + ReadyToRun, framework-dependent — the one to actually use
 ./build.sh dist         # tarballs to hand to somebody else
 ./build.sh deb          # a Debian package
+./build.sh appimage     # one executable file
 ./test.sh               # the whole suite
 ```
 
@@ -120,6 +121,22 @@ exist outside Microsoft's own apt repository.
 ```
 sudo apt install ./dist/canger_0.4.0_amd64.deb
 ```
+
+`appimage` writes `dist/Canger-VERSION-x86_64.AppImage` — one already-executable file that needs
+nothing installed except FUSE. It bundles the .NET runtime and Canger's own configuration, and
+nothing else: `less`, `file`, `git`, `udisksctl` and your editor still come from the machine it
+runs on, as they should.
+
+It needs **`fuse3`** on that machine — `fusermount3` and `/dev/fuse` — not the `libfuse2` that
+AppImages are famous for wanting; this runtime bundles libfuse statically. `fuse3` is installed by
+default nearly everywhere, and where it is not:
+
+```
+./Canger-0.4.0-x86_64.AppImage --appimage-extract-and-run
+```
+
+Building one needs `appimagetool`, which Debian does not package — take the `x86_64` build from
+[the AppImage project](https://github.com/AppImage/appimagetool/releases) and put it on your PATH.
 
 `dist` is for giving Canger to someone else. It writes two tarballs into `dist/`: a
 framework-dependent one for a machine that already has .NET 10, and a self-contained one that
