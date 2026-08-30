@@ -144,18 +144,39 @@ public sealed class ScriptPreviewProviderTests : IDisposable
     }
 
     [Fact]
-    public void Preview_IsRememberedRatherThanRegenerated()
+    public void Preview_IsRememberedWhileTheFileIsUnchanged()
     {
-        // Regenerating on every cursor move would make the browser unusable.
+        // Regenerating on every cursor move would make the browser unusable, so an untouched
+        // file keeps answering from memory. Deleting it and asking again is the plainest way to
+        // show the answer did not come from the disc.
+        InMemoryFileSystem fs = new InMemoryFileSystem().AddFile("/x/notes.txt", "before");
+        ScriptPreviewProvider provider = Build(fs);
+
+        provider.Preview("/x/notes.txt", Size, TestContext.Current.CancellationToken);
+
+        Assert.Contains(
+            "before",
+            provider.Preview("/x/notes.txt", Size, TestContext.Current.CancellationToken).Text,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Preview_OfAnEditedFileShowsWhatItSaysNow()
+    {
+        // This asserted the opposite for as long as it existed — "without invalidating, the
+        // remembered text is what comes back" — which is exactly the complaint: edit a file, move
+        // back onto it, and the preview showed the old first line. The mechanism for forgetting
+        // one file's preview was there and nothing called it.
         InMemoryFileSystem fs = new InMemoryFileSystem().AddFile("/x/notes.txt", "before");
         ScriptPreviewProvider provider = Build(fs);
 
         provider.Preview("/x/notes.txt", Size, TestContext.Current.CancellationToken);
         fs.AddFile("/x/notes.txt", "after");
 
-        // Without invalidating, the remembered text is what comes back.
-        Assert.Contains("before", provider.Preview("/x/notes.txt", Size, TestContext.Current.CancellationToken).Text,
-                        StringComparison.Ordinal);
+        Assert.Contains(
+            "after",
+            provider.Preview("/x/notes.txt", Size, TestContext.Current.CancellationToken).Text,
+            StringComparison.Ordinal);
     }
 
     [Fact]

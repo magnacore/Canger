@@ -3979,6 +3979,48 @@ was removed and the whole thing re-run to see it fail.
 
 *The flag that answers the question directly beats any amount of reading the screen.*
 
+## Previews outlived the files they were pictures of
+
+Edit a text file, move the cursor back onto it, and the preview showed the old first line. It
+stayed wrong until the whole cache was reset by hand.
+
+The cache was keyed by path and size and nothing else — so there was no version of a file for an
+entry to belong to, and a preview could not be told apart from a stale one. **The per-file
+`Invalidate(path)` that would have fixed it existed already and had no callers anywhere in the
+program.** Seventh instance of the shape.
+
+Each entry now carries the file's modification time and size as they were when it was generated,
+and an entry whose file no longer matches is thrown away rather than returned. Both halves of the
+stamp earn their place: an edit that swaps one character for another leaves the size alone, and a
+copy that preserves timestamps leaves the time alone. Not a content hash — reading a file to
+decide whether to read it is no saving.
+
+Ranger arrives at the same place from the other direction: it clears a file's preview whenever
+that file is re-examined (`container/fsobject.py:291` calling `update_preview`), so the refresh
+that notices the change is also what forgets the picture. Keeping the stamp does not depend on a
+refresh having happened, which matters because a preview can be asked for on a file the listing
+has not looked at since.
+
+**A test was pinning the bug.** `Preview_IsRememberedRatherThanRegenerated` asserted, in as many
+words, *"without invalidating, the remembered text is what comes back"* — and passed. Its stated
+intent, that a preview is not regenerated on every cursor move, is worth keeping, so it is now two
+tests: one for an unchanged file still answering from memory, one for an edited file showing what
+it says now.
+
+### A fifth instrument error, and the rule that catches it
+
+The negative check — remove the fix, watch the bug return — reported that the bug did *not*
+return. The mutation was `if (false)`, which in this build is a compile error: unreachable code is
+an error here. The build failed, the old binary stayed in place, and the pty happily measured the
+**fixed** code while I read it as evidence the fix was unnecessary.
+
+A mutation that does not compile is not a mutation; it is the previous build wearing its name. The
+check must be that the build *succeeded* before the measurement runs, and the replacement mutation
+— pass one constant stamp for every lookup — compiles and reproduces the old behaviour exactly:
+`BEFORE, BEFORE` where the fix gives `BEFORE, AFTER`.
+
+*Verify the mutation took, or the negative control is testing the thing it was meant to disable.*
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
