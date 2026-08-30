@@ -4,6 +4,11 @@ using Canger.Core.Tasks;
 
 namespace Canger.Core.FileOperations;
 
+/// <summary>Where one of a transfer's sources ended up.</summary>
+/// <param name="Source">Where it was.</param>
+/// <param name="Destination">Where it is now, after any renaming to avoid a clash.</param>
+public readonly record struct Landing(string Source, string Destination);
+
 /// <summary>Whether files are being copied or moved.</summary>
 public enum TransferKind
 {
@@ -51,6 +56,7 @@ public sealed class CopyJob : ILoadable, ISizedWork
     private readonly ClashPolicy _clashPolicy;
     private readonly CancellationToken _cancellationToken;
     private readonly List<string> _errors = [];
+    private readonly List<Landing> _landings = [];
 
     /// <summary>The sizing walk, kept so it is resumed rather than restarted.</summary>
     private IEnumerator<Unit>? _sizing;
@@ -83,6 +89,26 @@ public sealed class CopyJob : ILoadable, ISizedWork
 
     /// <summary>What is being copied or moved.</summary>
     public IReadOnlyList<string> Sources => _sources;
+
+    /// <summary>Whether the originals are being removed.</summary>
+    public TransferKind Kind => _kind;
+
+    /// <summary>
+    /// Where each source actually ended up, for the ones that arrived whole.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not derivable from the source name and the destination directory, which is why it is
+    /// recorded rather than reconstructed: the clash policy renames what it moves, so a file
+    /// pasted beside one of the same name lands as <c>notes_0.md</c> and a caller guessing
+    /// <c>notes.md</c> would be naming a file that is not there.
+    /// </para>
+    /// <para>
+    /// Only sources that finished without any error beneath them appear. A directory that lost
+    /// one file on the way is not somewhere its contents can be said to have arrived.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyList<Landing> Landings => _landings;
 
     /// <summary>The directory it is going to.</summary>
     public string Destination => _destination;
@@ -205,9 +231,18 @@ public sealed class CopyJob : ILoadable, ISizedWork
 
             string target = ResolveTarget(source);
 
+            // Errors are recorded per file as the transfer walks a tree, so the count either
+            // side of one source says whether everything under it arrived.
+            int errorsBefore = _errors.Count;
+
             foreach (Unit step in TransferAny(source, target))
             {
                 yield return step;
+            }
+
+            if (_errors.Count == errorsBefore)
+            {
+                _landings.Add(new Landing(source, target));
             }
         }
 
