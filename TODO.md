@@ -4294,6 +4294,53 @@ general. `doc/canger.png` is checked in beside it so building needs no image too
 `Terminal=true` is the line that matters in the desktop entry: launched from a menu, a terminal
 program needs one opened for it, and without saying so it flashes and dies.
 
+## "Argument list too long" on a folder of 2 561 files
+
+`cfn` over a folder of articles failed before the program it was calling had started. The cause is
+not the number of files:
+
+```
+the command line Canger built:                    380 530 bytes
+the kernel's limit for ONE argument:              131 072 bytes   (MAX_ARG_STRLEN, 32 pages)
+the kernel's limit for the whole of argv:       2 097 152 bytes   (ARG_MAX)
+```
+
+Every external program ran as `sh -c "the whole line"`, which makes the line a **single**
+argument — and a single argument is capped sixteen times lower than argv as a whole. Measured
+rather than reasoned about: an argument of 131 000 bytes runs, one of 132 000 fails, and *the same
+380 000 bytes split across many arguments runs perfectly well*.
+
+So a line that needs nothing from a shell is no longer given one. The ceiling goes from 128 KiB to
+2 MB — about fourteen thousand files at these name lengths.
+
+### Being wrong here means running the wrong thing
+
+The splitter refuses whenever it cannot be certain, and most of its tests are about what it
+refuses: a pipe, a redirection, `&&`, a variable, a backtick, a glob, a brace, a tilde, a comment,
+a backslash, an unterminated quote. Single quotes it handles, because every filename Canger passes
+is quoted as the macro expands and a rule disqualified by its own quoting would never fire. Double
+quotes only when they contain no `$`, backtick or backslash.
+
+`ShellQuote` writes an embedded apostrophe as `'\''`, four characters a shell reads as one.
+Reading that here would need the same trick, and getting it subtly wrong would rename the wrong
+file — so a backslash anywhere sends the whole line to the shell.
+
+### And a regression that had to be guarded, not accepted
+
+`cd`, `export`, `alias`, `ulimit`, `source` have no executable file anywhere, so starting them
+directly reports that there is no such program where a shell would have run them. And where a file
+does exist — `echo`, `printf`, `test` — it is not the same thing as the shell's version. Both are
+changes in what gets run, which is precisely what this must not do, so any line whose first word is
+a builtin goes to the shell as before. Nothing is lost: no builtin is ever handed two thousand
+filenames.
+
+### Verified against a copy of the folder
+
+2 561 files of the same shape, a command line of 519 898 bytes — four times the limit, worse than
+the real case. The program receives all 2 561 paths and no error is reported. With the fast path
+disabled it never runs at all. Checked both by name on `PATH`, which is what `cfn` does, and by
+absolute path; and redirection, pipes and builtins still go to the shell and still work.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
