@@ -33,9 +33,9 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 1830 |
+| Tests | 1918 |
 
-Four things go deliberately beyond ranger:
+Seven things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -57,6 +57,26 @@ Four things go deliberately beyond ranger:
   that it did not exist. Canger steps up to the nearest directory that is really there and says
   so. Ranger recovers only when asked, with a reset; a drive that has merely stopped answering for
   a moment still moves nobody.
+- **It notices changes made outside it.** A `chmod`, `chown` or write from another terminal does
+  not touch the directory's modification time, and that is all either program watches — so the
+  permissions, owner, size and date on screen stayed as first read, often for a whole session.
+  Canger re-reads the rows that are on screen, which costs the same in a directory of twenty
+  thousand entries as in one of twenty.
+- **Version control that works where ranger's does not.** Ranger runs `chg` unconditionally for
+  Mercurial; Canger falls back to `hg`, so it works on a machine that has only Mercurial
+  installed. Ranger's Bazaar commit line never appears at all, because its own parser requires a
+  newline that it has already stripped. Both programs' Subversion and Bazaar parsers read
+  trailing prose as filenames — `svn status` ends with a `Summary of conflicts:` block, and
+  `bzr status` describes a conflict rather than naming it — inventing subpaths that cannot exist;
+  Canger's reject them, and report a conflicted Bazaar file as conflicted rather than as merely
+  modified. `:stage` and `:unstage` are bound to the add and reset that ranger implements in every
+  backend and never reaches from a key. All four backends were checked by running ranger's own
+  Python and Canger's C# over the same repositories and diffing the results.
+- **Shell commands that behave.** `-q` puts a long command on the task queue instead of freezing
+  the interface behind it; `Tab` completes a path and not merely a name in the current directory;
+  and a line is run directly when it safely can be, rather than always through `sh -c`, so passing
+  two and a half thousand filenames to a program does not fail on Linux's 131 072-byte limit for a
+  single argument.
 
 Known gaps: five of ranger's eight image protocols (w3m, iterm2, sixel, terminology, urxvt) are
 not implemented and fall back to no image; nothing is published anywhere, so there is no
@@ -126,7 +146,7 @@ no .NET runtime at all, so a framework-dependent package would depend on somethi
 exist outside Microsoft's own apt repository.
 
 ```
-sudo apt install ./dist/canger_0.5.0_amd64.deb
+sudo apt install ./dist/canger_0.6.0_amd64.deb
 ```
 
 `appimage` writes `dist/Canger-VERSION-x86_64.AppImage` — one already-executable file that needs
@@ -139,7 +159,7 @@ AppImages are famous for wanting; this runtime bundles libfuse statically. `fuse
 default nearly everywhere, and where it is not:
 
 ```
-./Canger-0.5.0-x86_64.AppImage --appimage-extract-and-run
+./Canger-0.6.0-x86_64.AppImage --appimage-extract-and-run
 ```
 
 Building one needs `appimagetool`, which Debian does not package — take the `x86_64` build from
@@ -361,7 +381,7 @@ src/
   Canger.App/       entry point, command-line parsing, composition root
 tests/              one test project per source project, plus Canger.TestSupport
 config/             the shipped cc.conf, rifle.conf, scope.sh, commands.cs
-tools/              code generators and the measurement harness
+tools/              code generators, and `screen.py` for driving Canger in a real terminal
 doc/                the man page
 artifacts/          a real user's ported configuration, compiled by the tests as a fixture
 ```
@@ -369,6 +389,14 @@ artifacts/          a real user's ported configuration, compiled by the tests as
 `Canger.Core` and `Canger.Tui` are the two foundations and depend on nothing else. Both are fully
 testable without a terminal or a real filesystem, through `IFileSystem`, `IProcessRunner` and
 friends.
+
+Some behaviour only exists on a screen, and the test suite cannot see it — a column's layout, a
+colour, what a key actually does. `tools/screen.py` runs Canger in a pty and rebuilds the screen
+from the escape stream, so it can be read back as rows of text with the colour of every cell. It
+is documented, with the five ways it will mislead you, in `.claude/skills/pty-verify`.
+`.claude/skills/ranger-parity-check` records the other method that keeps paying: settle a "does
+this match ranger?" question by running ranger's own class and Canger's over the same input and
+diffing, rather than by reading either source.
 
 ### The reference implementation
 
