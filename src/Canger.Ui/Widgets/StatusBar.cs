@@ -125,6 +125,17 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         x += screen.Write(x, Bounds.Y, permissions, permissionStyle);
         x += screen.Write(x, Bounds.Y, " ", baseStyle);
 
+        // How many names the file has, between the permissions and the owner, where `ls -l` and
+        // ranger both put it (`gui/widgets/statusbar.py:174`). Nearly always 1, which is why it
+        // was easy to leave out — and exactly why it is worth showing: the moment it is not 1,
+        // deleting this name does not delete the file, and nothing else on screen says so.
+        x += screen.Write(x, Bounds.Y,
+                          status.HardLinkCount.ToString(CultureInfo.InvariantCulture),
+                          colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                              ContextKey.LinkCount)));
+
+        x += screen.Write(x, Bounds.Y, " ", baseStyle);
+
         x += screen.Write(x, Bounds.Y,
                           $"{UserDatabase.UserName(status.Uid)} {UserDatabase.GroupName(status.Gid)}",
                           baseStyle);

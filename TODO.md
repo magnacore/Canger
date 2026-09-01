@@ -4450,6 +4450,23 @@ Removing the linemode change failed four tests; removing the `BrowserColumn` cha
 which is exactly how the linked file shipped without its arrow while the linked directory had one.
 Three render tests cover it now, and removing that change fails one of them.
 
+## The status bar now says how many names a file has
+
+Ranger puts the hard-link count between the permissions and the owner, where `ls -l` puts it
+(`gui/widgets/statusbar.py:174`). Canger omitted it for every file, which was noticed while
+matching ranger's display of a symlink and left as a separate gap.
+
+It is 1 nearly always, which is why it was easy to leave out, and exactly why it earns its two
+columns: the moment it is not 1, deleting the name under the cursor does not delete the file, and
+nothing else on screen says so.
+
+Verified against real hard links rather than the test double, which reports 1 for everything and
+so cannot tell a working count from a constant: three names for one file reads `-rw-rw-r-- 3`, and
+a file with one name beside it reads `-rw-rw-r-- 1`, both matching `ls -l`.
+
+The colour context was already there — `nlink` is one of ranger's, so it came in with the
+generated set — and had never been used by anything.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
