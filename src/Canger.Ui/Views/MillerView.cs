@@ -56,6 +56,26 @@ public sealed class MillerView(IColorScheme colorScheme)
     /// </remarks>
     private bool _collapsedLastFrame;
 
+    /// <summary>
+    /// Whether the layout just drawn is already out of date and another frame is owed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Whether the preview column is worth its width cannot be known until the preview has been
+    /// asked for, and the preview cannot be asked for until it has been told how much room it
+    /// has. So the decision is always one frame behind — ranger's is too, which is what its
+    /// <c>old_collapse</c> is for.
+    /// </para>
+    /// <para>
+    /// Being a frame behind is invisible while frames keep coming. It is very visible when they
+    /// stop: leaving an empty directory collapsed the column on the frame that keystroke drew,
+    /// and nothing asked for another, so it stayed collapsed until the idle timer fired two
+    /// seconds later and the columns snapped back. This says "ask me again", so the correction
+    /// happens on the next frame instead of on the next idle tick.
+    /// </para>
+    /// </remarks>
+    public bool NeedsAnotherFrame { get; private set; }
+
     /// <summary>Whether a preview result should keep the preview column open.</summary>
     /// <param name="kind">What the provider answered with.</param>
     /// <param name="collapsedLastFrame">Whether the column was collapsed on the previous frame.</param>
@@ -157,6 +177,7 @@ public sealed class MillerView(IColorScheme colorScheme)
         // how much room it has (`gui/widgets/view_miller.py:190-206`, `old_collapse`).
         bool collapse = CollapsePreview && !_hadPreview;
         _collapsedLastFrame = collapse;
+        NeedsAnotherFrame = false;
 
         IReadOnlyList<Rect> regions = ComputeColumns(inner, ColumnRatios, PaddingRight, collapse);
         _hadPreview = false;
@@ -222,6 +243,11 @@ public sealed class MillerView(IColorScheme colorScheme)
         {
             DrawBorderLines(screen, bounds, regions, outline, separators);
         }
+
+        // What the next frame would decide, against what this one drew. They differ exactly when
+        // the answer arrived too late to use, which is the frame after the cursor lands on
+        // something whose preview is a different sort from the last one's.
+        NeedsAnotherFrame = (CollapsePreview && !_hadPreview) != collapse;
     }
 
     /// <summary>Reads the <c>draw_borders</c> setting into the two things it actually controls.</summary>
