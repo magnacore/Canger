@@ -65,3 +65,4 @@ scratch more than once.
 - Run `./build.sh publish` after merging, or `canger` keeps running the previous binary.
 - Never risk data. No forced or lazy unmounts, no overwrite without a check, and read a file
   before deleting or replacing it.
+- If you come across an important piece of learning that will be beneficial in the future, turn it into a skill.
