@@ -4902,9 +4902,12 @@ What is new and least exercised, most consequential first:
 ### Verifying by driving the real binary
 
 Several defects in this file were found only by running the published binary under a pty and
-reconstructing the screen from the escape stream — the unit tests could not see them. There is no
-committed harness; the scripts were written per-investigation in a scratch directory and are gone.
-What is worth knowing before writing the next one:
+reconstructing the screen from the escape stream — the unit tests could not see them.
+
+**There is a committed harness now: `tools/screen.py`.** It was written from scratch about five
+times across these sessions, each copy in a scratch directory that no longer exists, and each copy
+fell into the same traps. It has a command line for the simple case and is importable for the rest;
+the `pty-verify` skill has the recipes. What is worth knowing, and what the harness handles:
 
 - The window size must be set explicitly with `TIOCSWINSZ`. Without it the pty reports 0x0 and
   nothing lays out.
@@ -4915,3 +4918,15 @@ What is worth knowing before writing the next one:
   responding. `less` searching correctly was misdiagnosed twice this way.
 - Reading per-cell SGR state is what proves a colour question. `1;7;93` on one word and nothing on
   the next is the difference between a fix and a plausible-looking one.
+- Prove the state before measuring it. Twice a probe pressed a key, timed the result and
+  published a number, and the thing it thought it had opened had never opened — both numbers were
+  withdrawn. `Session.require` fails loudly with the screen contents instead.
+- Two things that are not traps but cost time anyway: `canger.sh` runs the last
+  `./build.sh publish` rather than the working tree, and the user's real configuration is loaded,
+  so `f` is a keychain prefix and `f` then `g` runs `fg`, not `find`.
+
+Writing the harness immediately caught one of its own: `--cwd` changes directory before `exec`, so
+a relative `./canger.sh` stopped resolving and the failure arrived as a Python traceback drawn onto
+the screen under test. `require` printed it, which is exactly what it is for. The program is
+resolved to an absolute path before the fork now.
+
