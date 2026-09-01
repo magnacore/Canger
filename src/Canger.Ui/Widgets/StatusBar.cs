@@ -58,6 +58,22 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     /// <summary>How much of the commit summary to show.</summary>
     public int VcsMessageLength { get; set; } = 50;
 
+    /// <summary>The kind of repository the entry under the cursor belongs to.</summary>
+    /// <remarks>
+    /// <c>git</c>, <c>hg</c>, <c>bzr</c> or <c>svn</c> — ranger names it because a machine with
+    /// more than one of them installed gives no other clue which is answering.
+    /// </remarks>
+    public string? RepositoryType { get; set; }
+
+    /// <summary>The branch that repository is on, or <c>detached</c>.</summary>
+    public string? Branch { get; set; }
+
+    /// <summary>How that repository stands against the remote it tracks.</summary>
+    public VcsRemoteStatus? RemoteStatus { get; set; }
+
+    /// <summary>What that repository makes of the entry under the cursor.</summary>
+    public VcsStatus? FileStatus { get; set; }
+
     /// <inheritdoc />
     protected override void Draw(ScreenBuffer screen)
     {
@@ -169,19 +185,35 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
                               baseStyle);
         }
 
-        DrawCommit(screen, x, baseStyle, limit);
+        DrawVcs(screen, x, baseStyle, limit);
     }
 
     /// <summary>
-    /// Draws the latest commit's date and summary after the file's own details.
+    /// Draws the repository block after the file's own details.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Ranger's order exactly (<c>gui/widgets/statusbar.py:200-227</c>): <c>(git: main)</c>, the
+    /// repository's standing against its remote, the hovered entry's own status, then the head
+    /// commit's date and summary. Only the last two were drawn here. The branch you are on, and
+    /// whether you had anything to push, could not be read from the status line at all — the
+    /// title bar carries the branch, but with its own arrows and only when it is not in sync.
+    /// </para>
+    /// <para>
+    /// The marks come from the listing's own tables, so a <c>+</c> on this line and a <c>+</c> in
+    /// the column cannot come to disagree.
+    /// </para>
+    /// <para>
     /// Truncated to <c>vcs_msg_length</c>, because a commit message can be a paragraph and this
-    /// is one line shared with everything else. The date and the summary are coloured separately,
-    /// which is what the <c>vcsdate</c> and <c>vcscommit</c> contexts exist for.
+    /// is one line shared with everything else. Each part is coloured separately, which is what
+    /// the <c>vcsinfo</c>, <c>vcsremote</c>, <c>vcsfile</c>, <c>vcsdate</c> and <c>vcscommit</c>
+    /// contexts exist for.
+    /// </para>
     /// </remarks>
-    private void DrawCommit(ScreenBuffer screen, int x, CellStyle baseStyle, int limit)
+    private void DrawVcs(ScreenBuffer screen, int x, CellStyle baseStyle, int limit)
     {
+        x = DrawRepository(screen, x, baseStyle, limit);
+
         if (Head is not { } head)
         {
             return;
@@ -209,6 +241,54 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         screen.Write(x, Bounds.Y, new WideString(head.Summary).Truncate(room),
                      colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
                                                          ContextKey.VcsCommit)));
+    }
+
+    /// <summary>Draws the repository name, its remote standing and the entry's own status.</summary>
+    /// <param name="screen">Where to draw.</param>
+    /// <param name="x">Where the file's own details ended.</param>
+    /// <param name="baseStyle">The status bar's ordinary colour, for the separating spaces.</param>
+    /// <param name="limit">The column the right-hand side begins at.</param>
+    /// <returns>Where it finished, so the commit can carry on from there.</returns>
+    private int DrawRepository(ScreenBuffer screen, int x, CellStyle baseStyle, int limit)
+    {
+        if (RepositoryType is not { Length: > 0 } type)
+        {
+            return x;
+        }
+
+        string label = Branch is { Length: > 0 } branch ? $"({type}: {branch})" : $"({type})";
+
+        // Nothing rather than half a label: a truncated `(git: fea` reads as a branch name.
+        if (x + label.Length + 1 >= limit)
+        {
+            return x;
+        }
+
+        x += screen.Write(x, Bounds.Y, " ", baseStyle);
+        x += screen.Write(x, Bounds.Y, label,
+                          colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                              ContextKey.VcsInfo)));
+        x += screen.Write(x, Bounds.Y, " ", baseStyle);
+
+        if (RemoteStatus is { } remote &&
+            BrowserColumn.RemoteMarkerFor(remote) is { } mark && x < limit)
+        {
+            x += screen.Write(x, Bounds.Y, mark.Text,
+                              colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                                  ContextKey.VcsRemote,
+                                                                  mark.Context)));
+        }
+
+        if (FileStatus is { } status &&
+            BrowserColumn.MarkerFor(status) is { } file && x < limit)
+        {
+            x += screen.Write(x, Bounds.Y, file.Text,
+                              colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                                  ContextKey.VcsFile,
+                                                                  file.Context)));
+        }
+
+        return x;
     }
 
     /// <summary>Draws the position in the listing, and free space.</summary>

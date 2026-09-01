@@ -4605,6 +4605,66 @@ A second instrument fault caught the same way: `TheSortOrderReachesThePreviewCol
 under the mutation, because the preview directory had exactly one visible entry and reversing a
 one-element list changes nothing. It now asserts there is more than one before reversing.
 
+## The status line said nothing about the repository — 2026-09-01
+
+A verification pass over git parity, asked for as "ensure all vcs symbols and functionality are
+matching". Almost everything did, and the checking was worth more than the one fix.
+
+**Verified by running both implementations, not by reading them.** Ranger's own `Git` class was
+driven directly with a stand-in object and pointed at the same repositories as Canger's
+`GitBackend`; both dumped JSON and the dumps were compared. A repository carrying every status at
+once — staged, changed, deleted, a real merge conflict, untracked, ignored, a rename, an ignored
+directory, an empty directory — came back **identical**: nine subpath statuses, the aggregate root
+status, the branch, and the head commit's hash, author and summary. Four repositories in genuinely
+different remote states, plus a detached head and one with no remote: **identical** again.
+
+Identical too, by inspection: the two symbol tables character for character, all sixteen `vcs*`
+colour contexts (every one of them read), the eight-row porcelain translation table in ranger's
+order, the directory-status precedence with the same two exclusions, the seven git invocations
+including `rev-list --left-right {remote}...{head}`, the `^>`/`^<` regexes, the six settings with
+the same defaults and allowed values, and the status bar's date format. `local` is treated as
+`enabled`, which is what ranger does — it is an inert value there.
+
+### The gap
+
+Ranger's status bar draws **five** things (`gui/widgets/statusbar.py:200-227`): `(git: main)`, the
+repository's standing against its remote, the hovered entry's own status, then the head commit's
+date and summary. Canger drew the last two. The branch and the push state could not be read from
+the status line at all; the title bar carries a branch, but with its own `↑`/`↓` and nothing when
+in sync. This was never a decision — the column half was designed and argued over and recorded, and
+the status-bar half looks simply to have been missed.
+
+A second, quieter half of the same gap: ranger describes the **hovered entry's** repository when
+that entry is a directory (`statusbar.py:199-201`). Canger always used the directory the cursor
+stood in — which in a listing of projects is not a repository at all, so the line said nothing
+exactly where it is most wanted. That was affecting the commit date and summary Canger already drew.
+
+### Two controls, because the first kind of test was not enough
+
+The widget tests render a `StatusBar` with the fields set, and seven of them cover the label, both
+mark tables and the ordering. Mutating the drawing off fails six. But that says nothing about
+*which repository* gets described, which is the second half of the defect — the same seam that went
+undetected earlier in this file. So the rule moved out of `Browser` into
+`Browser.VcsForStatusBar(vcs, tab)` and `VcsStatusForStatusBar(vcs, tab)`, and is tested against
+**real git repositories**: a parent holding two projects on different branches. Reverting the rule
+to "the current directory" fails two of those.
+
+Writing them caught a third thing: the first harness moved `tab.Current.Cursor` where `Tab.Selected`
+reads `LiveCursor`. Two of the seven passed anyway, by accident — the entry it happened to describe
+was the right one. The two that failed were the only reason it was noticed.
+
+### Confirmed on the real binary
+
+Under a pty, in a repository with every status. Before the fix the line ended
+`… 2026-09-01 08:39 main` — date and summary alone. After:
+
+```
+-rw-rw-r-- 1 manuj manuj 12 B 2026-09-01 08:39 (git: main) ⌂+ 2026-09-01 08:39 main
+```
+
+and the mark follows the cursor: `+` changed, `X` conflict, `?` untracked, nothing at all on an
+entry whose status is `none` — which is ranger's `' '.strip()`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

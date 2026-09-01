@@ -2180,6 +2180,63 @@ public sealed class Browser : IFileManager, IDisposable
         }
     }
 
+    /// <summary>The repository the status bar describes.</summary>
+    /// <returns>The repository, or <see langword="null"/> when there is none.</returns>
+    /// <remarks>
+    /// The hovered entry when it is a directory, the directory containing it otherwise — ranger's
+    /// rule (<c>gui/widgets/statusbar.py:199-201</c>). It is what makes the line useful in a
+    /// listing of projects, where the directory the cursor stands in is not a repository.
+    /// </remarks>
+    /// <param name="vcs">The service, or <see langword="null"/> when <c>vcs_aware</c> is off.</param>
+    /// <param name="tab">The tab in front of the user.</param>
+    internal static VcsRepository? VcsForStatusBar(VcsService? vcs, Tab tab)
+    {
+        ArgumentNullException.ThrowIfNull(tab);
+
+        if (vcs is null)
+        {
+            return null;
+        }
+
+        string path = tab.Selected is { IsDirectory: true } directory
+            ? directory.Path
+            : tab.Path;
+
+        return vcs.RepositoryFor(path);
+    }
+
+    /// <summary>What version control makes of the entry under the cursor.</summary>
+    /// <returns>The status, or <see langword="null"/> when there is no repository to ask.</returns>
+    /// <remarks>
+    /// The same two sources the listing uses: a directory that is a repository in its own right
+    /// answers about itself — its own aggregate — and anything else answers to the repository it
+    /// sits in. Ranger reads a single field, <c>target.vcsstatus</c>, which its directory loader
+    /// fills from those same two places (<c>ext/vcs/vcs.py:246-268</c> and
+    /// <c>container/directory.py:430-437</c>).
+    /// </remarks>
+    /// <param name="vcs">The service, or <see langword="null"/> when <c>vcs_aware</c> is off.</param>
+    /// <param name="tab">The tab in front of the user.</param>
+    internal static VcsStatus? VcsStatusForStatusBar(VcsService? vcs, Tab tab)
+    {
+        ArgumentNullException.ThrowIfNull(tab);
+
+        if (vcs is null || tab.Selected is not { } entry)
+        {
+            return null;
+        }
+
+        VcsRepository? source =
+            entry.IsDirectory &&
+            vcs.RepositoryFor(entry.Path) is { IsLoaded: true } own &&
+            string.Equals(own.Root, entry.Path, StringComparison.Ordinal)
+                ? own
+                : vcs.RepositoryFor(tab.Path);
+
+        return source is { IsLoaded: true } repository
+            ? repository.StatusOf(entry.Path, entry.IsDirectory)
+            : null;
+    }
+
     /// <summary>Pushes the current settings onto the directories being shown.</summary>
     private void ApplySettingsToDirectory() =>
         ApplySettings(
@@ -2598,7 +2655,19 @@ public sealed class Browser : IFileManager, IDisposable
             _statusBar.IsVisualMode = IsVisualMode;
             _statusBar.IsVisualReverse = _visualReverse;
             _statusBar.ExactBytes = Settings.SizeInBytes;
-            _statusBar.Head = repository is { IsLoaded: true } ? repository.Head : null;
+            // Ranger describes the *hovered* entry's repository when that entry is a directory,
+            // and the containing one otherwise (`gui/widgets/statusbar.py:199-201`). Standing in
+            // `~/Projects` and moving down the list therefore reads each project's own branch;
+            // this read the directory the cursor was standing in, which in that listing is not a
+            // repository at all, so the line said nothing.
+            VcsRepository? described = VcsForStatusBar(Vcs, CurrentTab);
+            bool loaded = described is { IsLoaded: true };
+
+            _statusBar.Head = loaded ? described!.Head : null;
+            _statusBar.RepositoryType = loaded ? described!.Backend.Name : null;
+            _statusBar.Branch = loaded ? described!.Branch : null;
+            _statusBar.RemoteStatus = loaded ? described!.RemoteStatus : null;
+            _statusBar.FileStatus = VcsStatusForStatusBar(Vcs, CurrentTab);
             _statusBar.VcsMessageLength = Math.Max(Settings.VcsMessageLength, 1);
             _statusBar.ShowProgressBar = Settings.DrawProgressBarInStatusBar;
             _statusBar.Progress = Tasks.OverallProgress();
