@@ -37,6 +37,13 @@ public sealed class ScoutCommand : CangerCommand
             return;
         }
 
+        // The cursor moves first, and whatever the flags say. Ranger opens its `execute` with
+        // `count = self._count(move=True)` before it marks, filters or anything else — so
+        // `:mark foo` puts the cursor on the first match as well as marking the rest, and `fm`
+        // takes you to what you searched for. Canger moved only when it was doing nothing else,
+        // so marking left the cursor where it was and the search appeared to have missed.
+        bool found = MoveToFirstMatch(pattern, flags);
+
         // Remembered so `n` can repeat it. Ranger does the same at this point
         // (config/commands.py:1607-1608), which is what connects `/` to `search_next`.
         FileManager.CurrentTab.LastSearch = pattern;
@@ -61,7 +68,10 @@ public sealed class ScoutCommand : CangerCommand
             return;
         }
 
-        JumpToFirstMatch(pattern, flags);
+        if (!found)
+        {
+            FileManager.Notify($"no match: {pattern}");
+        }
     }
 
     /// <inheritdoc />
@@ -210,20 +220,37 @@ public sealed class ScoutCommand : CangerCommand
         }
     }
 
-    private void JumpToFirstMatch(string pattern, string flags)
+    private bool MoveToFirstMatch(string pattern, string flags)
     {
-        IFileFilter filter = BuildFilter(pattern, flags);
         DirectoryNode directory = FileManager.CurrentDirectory;
+        IReadOnlyList<FsNode> entries = directory.Entries;
 
-        FsNode? match = directory.Entries.FirstOrDefault(filter.Accepts);
-        if (match is not null)
+        if (entries.Count == 0)
         {
-            FileManager.CurrentTab.MoveCursorTo(match);
+            return false;
         }
-        else
+
+        IFileFilter filter = BuildFilter(pattern, flags);
+
+        // From where the cursor is, wrapping — not from the top of the listing. Ranger rotates
+        // the entries by the cursor's position before looking (`_count`), so a search finds the
+        // next match rather than jumping backwards to an earlier one, and searching for what you
+        // are already standing on leaves you there. Starting at the top instead would walk
+        // backwards every time `n` was pressed on a pattern with a match above.
+        int from = directory.Cursor.Index;
+
+        for (int step = 0; step < entries.Count; step++)
         {
-            FileManager.Notify($"no match: {pattern}");
+            FsNode candidate = entries[(from + step) % entries.Count];
+
+            if (filter.Accepts(candidate))
+            {
+                FileManager.CurrentTab.MoveCursorTo(candidate);
+                return true;
+            }
         }
+
+        return false;
     }
 
     private void Clear()

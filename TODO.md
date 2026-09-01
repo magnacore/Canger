@@ -4363,6 +4363,51 @@ known-gaps line still saying there is no `.deb`. There is one; what there is not
 install it from. And "three things beyond ranger" was four: leaving a directory that has been
 deleted had never been written down.
 
+## `fm` marked the files but left the cursor behind
+
+`fm` is `console mark`, and `mark` is an alias for `scout -mr` in both configurations. In ranger
+the cursor lands on the first match; in Canger it stayed where it was, so the search looked as
+though it had missed.
+
+Ranger's `execute` opens with `count = self._count(move=True)` — **before** it marks, before it
+filters, before anything. Canger moved only in the case where it was doing nothing else, and
+returned early from the mark and filter branches. So the move was not part of searching; it was
+the thing searching did when it had nothing better to do.
+
+Two things came out of reading `_count` properly rather than only its name:
+
+**It starts from the cursor and wraps.** `deq.rotate(-cwd.pointer)` puts the current entry first,
+so a search finds the *next* match rather than jumping backwards to an earlier one, and searching
+for what you are standing on leaves you there. Canger took the first match in the listing, which
+walks backwards every time on a pattern with a match above.
+
+**A failed mark says nothing.** "no match" belongs to a search; a mark that matched nothing has
+marked nothing, and the listing shows that for itself.
+
+Verified in a pty against the real configuration: `fm gamma` puts the cursor on `gamma.txt`, and
+without the fix it stays on `alpha.txt`.
+
+### The instrument, wrong again — and in a way worth remembering
+
+The first pty run reported `gamma.txt` **with and without the fix**, which would have said the fix
+did nothing. The probe pressed Enter and read `--choosefile` — but with files marked, Enter opens
+the *selection*, not the file under the cursor. The measurement was of the marking, which worked
+all along, and said nothing about the cursor.
+
+Unmarking with `uv` before pressing Enter made it measure what it claimed to. *An instrument that
+reads the right value by the wrong route is the hardest kind to catch, because it agrees with you
+whenever you are right.*
+
+### Found and not fixed: `f` narrows where ranger moves
+
+`find` is `scout -aets` — no `-f` and no `-p`, so ranger applies no filter: it moves the cursor as
+you type and opens on a unique match. Canger's `Quick` applies a preview filter whenever `t` is
+set, so `f` narrows the listing instead. Ranger's `quick` also moves when `-t` is set, which
+Canger's never does.
+
+Left alone deliberately: it is a visible difference in a key used constantly, and worth changing on
+purpose rather than in passing.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
