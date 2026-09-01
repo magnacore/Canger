@@ -182,19 +182,35 @@ public static class LinemodeText
     {
         ArgumentNullException.ThrowIfNull(node);
 
+        string measured = Measured(node, binaryPrefix, countFiles, exactBytes);
+
+        // Ranger prefixes the whole info column with `->` for any link, a file's size and a
+        // directory's entry count alike (`container/fsobject.py:342`,
+        // `container/directory.py:394`, `container/directory.py:612`) — so a linked folder reads
+        // `-> 3`. Canger did it only for a directory whose size had been measured with `dc`,
+        // which is the one case nobody starts from.
+        //
+        // Only when there is something to prefix: a lone arrow with no figure after it would say
+        // less than the arrow costs.
+        return measured.Length > 0 && node.IsSymbolicLink ? "-> " + measured : measured;
+    }
+
+    /// <summary>The figure itself, before any link marker.</summary>
+    private static string Measured(FsNode node, bool binaryPrefix, bool countFiles,
+                                   bool exactBytes)
+    {
         if (node.IsDirectory)
         {
             // A directory that has been measured shows what it holds rather than how many entries
             // it has. Ranger does the same by overwriting the row's infostring
             // (`container/directory.py:582-585`), which is why `dc` changes the size column rather
             // than printing somewhere else — the answer belongs beside the directory it is about.
-            if (node.CumulativeSize is { } measured)
+            if (node.CumulativeSize is { } cumulative)
             {
                 // A `?` between the number and the unit — `4.5? k` — when the directory has been
                 // re-read since it was measured. Ranger marks it the same way, by handing the
                 // formatter a different separator (`container/directory.py:385`).
-                return (node.IsSymbolicLink ? "-> " : string.Empty)
-                     + HumanReadable.Format(measured, binaryPrefix,
+                return HumanReadable.Format(cumulative, binaryPrefix,
                                             node.CumulativeSizeStale ? "? " : " ", exactBytes);
             }
 

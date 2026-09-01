@@ -154,6 +154,11 @@ public sealed class InMemoryFileSystem : IFileSystem
         path = Normalize(path);
         ListCount++;
 
+        // A link to a directory lists what it points at, because `opendir(3)` follows links.
+        // Without this the double could not represent a linked folder at all: listing one threw,
+        // so its entry count came back empty and any test about one quietly measured nothing.
+        path = FollowLinks(path);
+
         if (!_nodes.TryGetValue(path, out Node? directory) || directory.Kind != FileKind.Directory)
         {
             throw new DirectoryNotFoundException($"No such directory: {path}");
@@ -221,7 +226,10 @@ public sealed class InMemoryFileSystem : IFileSystem
     {
         CountEntriesCount++;
 
-        path = Normalize(path);
+        // Following links here for the same reason ListDirectory does: counting a linked folder
+        // counts what it points at, and answering null instead made a linked folder show no
+        // count at all.
+        path = FollowLinks(Normalize(path));
 
         if (!_nodes.TryGetValue(path, out Node? directory) || directory.Kind != FileKind.Directory
             || !directory.IsAccessible)
@@ -477,6 +485,30 @@ public sealed class InMemoryFileSystem : IFileSystem
 
     /// <inheritdoc />
     public (long FreeBytes, long TotalBytes)? GetDiskUsage(string path) => (FreeBytes, TotalBytes);
+
+    /// <summary>
+    /// Follows a chain of links to whatever it ends at.
+    /// </summary>
+    /// <param name="path">The path to follow.</param>
+    /// <returns>The path of the final target, or the path itself when it is not a link.</returns>
+    /// <remarks>
+    /// Bounded, so a link pointing at itself is a wrong answer rather than a hung test. The real
+    /// kernel gives up after forty and reports ELOOP.
+    /// </remarks>
+    private string FollowLinks(string path)
+    {
+        for (int hop = 0; hop < 40; hop++)
+        {
+            if (!_nodes.TryGetValue(path, out Node? node) || node.Kind != FileKind.SymbolicLink)
+            {
+                return path;
+            }
+
+            path = Normalize(node.LinkTarget!);
+        }
+
+        return path;
+    }
 
     private Node? Resolve(string target) =>
         _nodes.TryGetValue(Normalize(target), out Node? node) ? node : null;

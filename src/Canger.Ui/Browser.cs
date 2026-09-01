@@ -2180,31 +2180,126 @@ public sealed class Browser : IFileManager, IDisposable
         }
     }
 
-    /// <summary>Pushes the current settings onto the directories being shown.</summary>
-    private void ApplySettingsToDirectory()
+    /// <summary>The repository the status bar describes.</summary>
+    /// <returns>The repository, or <see langword="null"/> when there is none.</returns>
+    /// <remarks>
+    /// The hovered entry when it is a directory, the directory containing it otherwise — ranger's
+    /// rule (<c>gui/widgets/statusbar.py:199-201</c>). It is what makes the line useful in a
+    /// listing of projects, where the directory the cursor stands in is not a repository.
+    /// </remarks>
+    /// <param name="vcs">The service, or <see langword="null"/> when <c>vcs_aware</c> is off.</param>
+    /// <param name="tab">The tab in front of the user.</param>
+    internal static VcsRepository? VcsForStatusBar(VcsService? vcs, Tab tab)
     {
-        SortOrder order = new(
-            SortOrder.ParseKey(Settings.Sort),
-            Settings.SortReverse,
-            Settings.SortDirectoriesFirst,
-            Settings.SortCaseInsensitive,
-            Settings.SortUnicode);
+        ArgumentNullException.ThrowIfNull(tab);
 
-        bool autoupdate = Settings.AutoupdateCumulativeSize;
-
-        foreach (DirectoryNode directory in CurrentTab.Pathway)
+        if (vcs is null)
         {
-            directory.ShowHidden = Settings.ShowHidden;
-            directory.HiddenPattern = Settings.HiddenFilter;
-            directory.SortOrder = order;
-            directory.AutoupdateCumulativeSize = autoupdate;
+            return null;
         }
 
-        // The directory shown to the right is measured and re-read like any other, so it needs the
-        // setting too — and it is the one a `dc` is most often aimed at, since the cursor is on it.
-        if (CurrentTab.SelectedDirectory is { } selected)
+        string path = tab.Selected is { IsDirectory: true } directory
+            ? directory.Path
+            : tab.Path;
+
+        return vcs.RepositoryFor(path);
+    }
+
+    /// <summary>What version control makes of the entry under the cursor.</summary>
+    /// <returns>The status, or <see langword="null"/> when there is no repository to ask.</returns>
+    /// <remarks>
+    /// The same two sources the listing uses: a directory that is a repository in its own right
+    /// answers about itself — its own aggregate — and anything else answers to the repository it
+    /// sits in. Ranger reads a single field, <c>target.vcsstatus</c>, which its directory loader
+    /// fills from those same two places (<c>ext/vcs/vcs.py:246-268</c> and
+    /// <c>container/directory.py:430-437</c>).
+    /// </remarks>
+    /// <param name="vcs">The service, or <see langword="null"/> when <c>vcs_aware</c> is off.</param>
+    /// <param name="tab">The tab in front of the user.</param>
+    internal static VcsStatus? VcsStatusForStatusBar(VcsService? vcs, Tab tab)
+    {
+        ArgumentNullException.ThrowIfNull(tab);
+
+        if (vcs is null || tab.Selected is not { } entry)
         {
-            selected.AutoupdateCumulativeSize = autoupdate;
+            return null;
+        }
+
+        VcsRepository? source =
+            entry.IsDirectory &&
+            vcs.RepositoryFor(entry.Path) is { IsLoaded: true } own &&
+            string.Equals(own.Root, entry.Path, StringComparison.Ordinal)
+                ? own
+                : vcs.RepositoryFor(tab.Path);
+
+        return source is { IsLoaded: true } repository
+            ? repository.StatusOf(entry.Path, entry.IsDirectory)
+            : null;
+    }
+
+    /// <summary>Pushes the current settings onto the directories being shown.</summary>
+    private void ApplySettingsToDirectory() =>
+        ApplySettings(
+            CurrentTab,
+            Tabs,
+            Settings.Viewmode,
+            new SortOrder(
+                SortOrder.ParseKey(Settings.Sort),
+                Settings.SortReverse,
+                Settings.SortDirectoriesFirst,
+                Settings.SortCaseInsensitive,
+                Settings.SortUnicode),
+            Settings.ShowHidden,
+            Settings.HiddenFilter,
+            Settings.AutoupdateCumulativeSize);
+
+    /// <summary>Gives each directory the settings that decide what it lists and in what order.</summary>
+    /// <param name="current">The tab in front of the user.</param>
+    /// <param name="tabs">Every open tab, for the view mode that shows them all at once.</param>
+    /// <param name="viewmode">The <c>viewmode</c> setting.</param>
+    /// <param name="order">The <c>sort</c> family, already resolved.</param>
+    /// <param name="showHidden">The <c>show_hidden</c> setting.</param>
+    /// <param name="hiddenPattern">The <c>hidden_filter</c> setting.</param>
+    /// <param name="autoupdate">The <c>autoupdate_cumulative_size</c> setting.</param>
+    /// <remarks>
+    /// <para>
+    /// Every setter here re-derives the listing on a change and returns immediately on a
+    /// non-change, so this is cheap to call each frame and there is nothing to remember to
+    /// invalidate.
+    /// </para>
+    /// <para>
+    /// The set is <see cref="VisibleDirectories"/>, and it has to be: this walked
+    /// <c>Pathway</c> instead, which leaves out the preview column. Pressing backspace to show
+    /// hidden files updated every column except the one on the right, which kept the listing it
+    /// had — and so did a change of sort order. Ranger has no such gap because every directory
+    /// binds itself to these settings when it is created
+    /// (<c>container/directory.py:140-148</c>), so all of them refilter at once.
+    /// </para>
+    /// <para>
+    /// The set is chosen <em>here</em>, from the tab, rather than passed in. Taking a ready-made
+    /// list read better and was worse: the defect was the choice of set, so a test that handed
+    /// this method the right one passed while the caller went on handing it the wrong one. With
+    /// the choice inside, there is no seam left to get wrong and the tests reach it.
+    /// </para>
+    /// <para>
+    /// Static, and given everything it needs, so the rule can be checked without standing up a
+    /// terminal — as <see cref="VisibleDirectories"/> and <see cref="FocusedOn"/> are.
+    /// </para>
+    /// </remarks>
+    internal static void ApplySettings(Tab current, IReadOnlyDictionary<int, Tab> tabs,
+                                       string? viewmode, SortOrder order, bool showHidden,
+                                       string hiddenPattern, bool autoupdate)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(tabs);
+        ArgumentNullException.ThrowIfNull(hiddenPattern);
+
+        foreach (DirectoryNode directory in VisibleDirectories(current, tabs, viewmode))
+        {
+            directory.ShowHidden = showHidden;
+            directory.HiddenPattern = hiddenPattern;
+            directory.SortOrder = order;
+            directory.AutoupdateCumulativeSize = autoupdate;
         }
     }
 
@@ -2461,6 +2556,16 @@ public sealed class Browser : IFileManager, IDisposable
             else
             {
                 _view.Render(_screen, BrowserBounds(), CurrentTab);
+
+                // The preview column's width is decided from an answer that only arrives while
+                // drawing, so a frame can end knowing its own layout was wrong. Asking for
+                // another now settles it immediately; without this the correction waited for the
+                // idle timer, and leaving an empty directory left the columns visibly wrong for
+                // `idle_delay` — two seconds by default — before they snapped back.
+                if (_view.NeedsAnotherFrame)
+                {
+                    Volatile.Write(ref _needsRedraw, true);
+                }
             }
         }
 
@@ -2550,7 +2655,19 @@ public sealed class Browser : IFileManager, IDisposable
             _statusBar.IsVisualMode = IsVisualMode;
             _statusBar.IsVisualReverse = _visualReverse;
             _statusBar.ExactBytes = Settings.SizeInBytes;
-            _statusBar.Head = repository is { IsLoaded: true } ? repository.Head : null;
+            // Ranger describes the *hovered* entry's repository when that entry is a directory,
+            // and the containing one otherwise (`gui/widgets/statusbar.py:199-201`). Standing in
+            // `~/Projects` and moving down the list therefore reads each project's own branch;
+            // this read the directory the cursor was standing in, which in that listing is not a
+            // repository at all, so the line said nothing.
+            VcsRepository? described = VcsForStatusBar(Vcs, CurrentTab);
+            bool loaded = described is { IsLoaded: true };
+
+            _statusBar.Head = loaded ? described!.Head : null;
+            _statusBar.RepositoryType = loaded ? described!.Backend.Name : null;
+            _statusBar.Branch = loaded ? described!.Branch : null;
+            _statusBar.RemoteStatus = loaded ? described!.RemoteStatus : null;
+            _statusBar.FileStatus = VcsStatusForStatusBar(Vcs, CurrentTab);
             _statusBar.VcsMessageLength = Math.Max(Settings.VcsMessageLength, 1);
             _statusBar.ShowProgressBar = Settings.DrawProgressBarInStatusBar;
             _statusBar.Progress = Tasks.OverallProgress();

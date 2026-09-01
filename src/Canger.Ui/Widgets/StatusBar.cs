@@ -58,6 +58,22 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     /// <summary>How much of the commit summary to show.</summary>
     public int VcsMessageLength { get; set; } = 50;
 
+    /// <summary>The kind of repository the entry under the cursor belongs to.</summary>
+    /// <remarks>
+    /// <c>git</c>, <c>hg</c>, <c>bzr</c> or <c>svn</c> — ranger names it because a machine with
+    /// more than one of them installed gives no other clue which is answering.
+    /// </remarks>
+    public string? RepositoryType { get; set; }
+
+    /// <summary>The branch that repository is on, or <c>detached</c>.</summary>
+    public string? Branch { get; set; }
+
+    /// <summary>How that repository stands against the remote it tracks.</summary>
+    public VcsRemoteStatus? RemoteStatus { get; set; }
+
+    /// <summary>What that repository makes of the entry under the cursor.</summary>
+    public VcsStatus? FileStatus { get; set; }
+
     /// <inheritdoc />
     protected override void Draw(ScreenBuffer screen)
     {
@@ -109,7 +125,11 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             return;
         }
 
-        string permissions = PermissionString(status);
+        // `l` for a link, with the permission bits of whatever it points at. That is what ranger
+        // shows — the type character comes from `is_link` while the bits come from the followed
+        // stat (`container/fsobject.py:347-358`) — and it is why a linked directory reads
+        // `lrwxr-xr-x` there and read `drwxr-xr-x` here, saying nothing about being a link.
+        string permissions = PermissionString(status, entry.IsSymbolicLink);
         bool ownedByUser = status.Uid == UserDatabase.CurrentUserId;
 
         CellStyle permissionStyle = colorScheme.Resolve(
@@ -121,33 +141,79 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         x += screen.Write(x, Bounds.Y, permissions, permissionStyle);
         x += screen.Write(x, Bounds.Y, " ", baseStyle);
 
+        // How many names the file has, between the permissions and the owner, where `ls -l` and
+        // ranger both put it (`gui/widgets/statusbar.py:174`). Nearly always 1, which is why it
+        // was easy to leave out — and exactly why it is worth showing: the moment it is not 1,
+        // deleting this name does not delete the file, and nothing else on screen says so.
+        x += screen.Write(x, Bounds.Y,
+                          status.HardLinkCount.ToString(CultureInfo.InvariantCulture),
+                          colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                              ContextKey.LinkCount)));
+
+        x += screen.Write(x, Bounds.Y, " ", baseStyle);
+
         x += screen.Write(x, Bounds.Y,
                           $"{UserDatabase.UserName(status.Uid)} {UserDatabase.GroupName(status.Gid)}",
                           baseStyle);
 
-        if (ShowSize && !entry.IsDirectory)
+        // Where it points, in place of the size and the date rather than beside them. Ranger
+        // makes the same trade (`gui/widgets/statusbar.py:180-186`): for a link the destination
+        // is the one fact worth the room, and the size and time belong to the target and are
+        // already a keystroke away.
+        if (entry.IsSymbolicLink)
         {
-            x += screen.Write(x, Bounds.Y, " " + Size(status.Size), baseStyle);
+            CellStyle linkStyle = colorScheme.Resolve(
+                StyleContext.Of(ContextKey.InStatusbar, ContextKey.Link)
+                            .With(!entry.IsBrokenSymbolicLink, ContextKey.Good)
+                            .With(entry.IsBrokenSymbolicLink, ContextKey.Bad));
+
+            // A question mark when the link cannot be read, as ranger does — the row still says
+            // that it is a link and that where it goes could not be found out.
+            x += screen.Write(x, Bounds.Y, " -> " + (entry.LinkTarget ?? "?"), linkStyle);
+        }
+        else
+        {
+            if (ShowSize && !entry.IsDirectory)
+            {
+                x += screen.Write(x, Bounds.Y, " " + Size(status.Size), baseStyle);
+            }
+
+            x += screen.Write(x, Bounds.Y,
+                              " " + status.ModifyTime.ToLocalTime()
+                                          .ToString("yyyy-MM-dd HH:mm",
+                                                    CultureInfo.InvariantCulture),
+                              baseStyle);
         }
 
-        x += screen.Write(x, Bounds.Y,
-                          " " + status.ModifyTime.ToLocalTime()
-                                      .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
-                          baseStyle);
-
-        DrawCommit(screen, x, baseStyle, limit);
+        DrawVcs(screen, x, baseStyle, limit);
     }
 
     /// <summary>
-    /// Draws the latest commit's date and summary after the file's own details.
+    /// Draws the repository block after the file's own details.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// Ranger's order exactly (<c>gui/widgets/statusbar.py:200-227</c>): <c>(git: main)</c>, the
+    /// repository's standing against its remote, the hovered entry's own status, then the head
+    /// commit's date and summary. Only the last two were drawn here. The branch you are on, and
+    /// whether you had anything to push, could not be read from the status line at all — the
+    /// title bar carries the branch, but with its own arrows and only when it is not in sync.
+    /// </para>
+    /// <para>
+    /// The marks come from the listing's own tables, so a <c>+</c> on this line and a <c>+</c> in
+    /// the column cannot come to disagree.
+    /// </para>
+    /// <para>
     /// Truncated to <c>vcs_msg_length</c>, because a commit message can be a paragraph and this
-    /// is one line shared with everything else. The date and the summary are coloured separately,
-    /// which is what the <c>vcsdate</c> and <c>vcscommit</c> contexts exist for.
+    /// is one line shared with everything else. Each part is coloured separately, which is what
+    /// the <c>vcsinfo</c>, <c>vcsremote</c>, <c>vcsfile</c>, <c>vcsdate</c> and <c>vcscommit</c>
+    /// contexts exist for.
+    /// </para>
     /// </remarks>
-    private void DrawCommit(ScreenBuffer screen, int x, CellStyle baseStyle, int limit)
+    private void DrawVcs(ScreenBuffer screen, int x, CellStyle baseStyle, int limit)
     {
+        x = DrawRepository(screen, x, baseStyle, limit);
+
         if (Head is not { } head)
         {
             return;
@@ -175,6 +241,54 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         screen.Write(x, Bounds.Y, new WideString(head.Summary).Truncate(room),
                      colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
                                                          ContextKey.VcsCommit)));
+    }
+
+    /// <summary>Draws the repository name, its remote standing and the entry's own status.</summary>
+    /// <param name="screen">Where to draw.</param>
+    /// <param name="x">Where the file's own details ended.</param>
+    /// <param name="baseStyle">The status bar's ordinary colour, for the separating spaces.</param>
+    /// <param name="limit">The column the right-hand side begins at.</param>
+    /// <returns>Where it finished, so the commit can carry on from there.</returns>
+    private int DrawRepository(ScreenBuffer screen, int x, CellStyle baseStyle, int limit)
+    {
+        if (RepositoryType is not { Length: > 0 } type)
+        {
+            return x;
+        }
+
+        string label = Branch is { Length: > 0 } branch ? $"({type}: {branch})" : $"({type})";
+
+        // Nothing rather than half a label: a truncated `(git: fea` reads as a branch name.
+        if (x + label.Length + 1 >= limit)
+        {
+            return x;
+        }
+
+        x += screen.Write(x, Bounds.Y, " ", baseStyle);
+        x += screen.Write(x, Bounds.Y, label,
+                          colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                              ContextKey.VcsInfo)));
+        x += screen.Write(x, Bounds.Y, " ", baseStyle);
+
+        if (RemoteStatus is { } remote &&
+            BrowserColumn.RemoteMarkerFor(remote) is { } mark && x < limit)
+        {
+            x += screen.Write(x, Bounds.Y, mark.Text,
+                              colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                                  ContextKey.VcsRemote,
+                                                                  mark.Context)));
+        }
+
+        if (FileStatus is { } status &&
+            BrowserColumn.MarkerFor(status) is { } file && x < limit)
+        {
+            x += screen.Write(x, Bounds.Y, file.Text,
+                              colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                                  ContextKey.VcsFile,
+                                                                  file.Context)));
+        }
+
+        return x;
     }
 
     /// <summary>Draws the position in the listing, and free space.</summary>
@@ -409,9 +523,14 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     /// <summary>Renders the mode bits the way <c>ls -l</c> does.</summary>
     /// <param name="status">The file's metadata.</param>
     /// <returns>A ten-character permission string.</returns>
-    public static string PermissionString(FileStatus status)
+    /// <param name="isLink">
+    /// Whether the entry is a symbolic link, which decides the type character alone. The
+    /// permission bits still come from <paramref name="status"/>, which describes what the link
+    /// points at — the same split ranger makes.
+    /// </param>
+    public static string PermissionString(FileStatus status, bool isLink = false)
     {
-        char type = status.Kind switch
+        char type = isLink ? 'l' : status.Kind switch
         {
             FileKind.Directory => 'd',
             FileKind.SymbolicLink => 'l',

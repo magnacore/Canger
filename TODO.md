@@ -4341,6 +4341,623 @@ the real case. The program receives all 2 561 paths and no error is reported. Wi
 disabled it never runs at all. Checked both by name on `PATH`, which is what `cfn` does, and by
 absolute path; and redirection, pipes and builtins still go to the shell and still work.
 
+## 0.5.0, and lzip tarballs
+
+Tagged and merged to `main`. Four artifacts now, each started before it is packaged and each run
+again after: two lzip tarballs, a `.deb` and an AppImage.
+
+**tar.lz rather than tar.gz.** Smaller — the framework-dependent tarball went from 13 MB to 9.6 MB
+and the self-contained one from 61 MB to 42 MB — and lzip's container carries a CRC of the
+uncompressed data along with its original size, so a truncated or corrupted archive is detected
+rather than unpacked short in silence. The cost is real and worth stating: the recipient needs
+lzip, and `tar xf` alone will not do it. That is what the `.deb` and the AppImage are for.
+
+**Verified as four separate deliveries, not one build.** Both tarballs unpacked and run; the `.deb`
+extracted and run through its `/usr/bin` symlink with `DOTNET_ROOT` unset, with `man canger`
+rendering from where it was installed; the AppImage renamed to `canger`, run with a minimal PATH,
+and run again with `--appimage-extract-and-run` for a machine with no FUSE. Every one answers
+`canger 0.5.0` and loads 295 browser bindings rather than zero.
+
+The README's status table was three releases stale again — 1740 tests where there are 1830, and a
+known-gaps line still saying there is no `.deb`. There is one; what there is not is anywhere to
+install it from. And "three things beyond ranger" was four: leaving a directory that has been
+deleted had never been written down.
+
+## `fm` marked the files but left the cursor behind
+
+`fm` is `console mark`, and `mark` is an alias for `scout -mr` in both configurations. In ranger
+the cursor lands on the first match; in Canger it stayed where it was, so the search looked as
+though it had missed.
+
+Ranger's `execute` opens with `count = self._count(move=True)` — **before** it marks, before it
+filters, before anything. Canger moved only in the case where it was doing nothing else, and
+returned early from the mark and filter branches. So the move was not part of searching; it was
+the thing searching did when it had nothing better to do.
+
+Two things came out of reading `_count` properly rather than only its name:
+
+**It starts from the cursor and wraps.** `deq.rotate(-cwd.pointer)` puts the current entry first,
+so a search finds the *next* match rather than jumping backwards to an earlier one, and searching
+for what you are standing on leaves you there. Canger took the first match in the listing, which
+walks backwards every time on a pattern with a match above.
+
+**A failed mark says nothing.** "no match" belongs to a search; a mark that matched nothing has
+marked nothing, and the listing shows that for itself.
+
+Verified in a pty against the real configuration: `fm gamma` puts the cursor on `gamma.txt`, and
+without the fix it stays on `alpha.txt`.
+
+### The instrument, wrong again — and in a way worth remembering
+
+The first pty run reported `gamma.txt` **with and without the fix**, which would have said the fix
+did nothing. The probe pressed Enter and read `--choosefile` — but with files marked, Enter opens
+the *selection*, not the file under the cursor. The measurement was of the marking, which worked
+all along, and said nothing about the cursor.
+
+Unmarking with `uv` before pressing Enter made it measure what it claimed to. *An instrument that
+reads the right value by the wrong route is the hardest kind to catch, because it agrees with you
+whenever you are right.*
+
+### Found and not fixed: `f` narrows where ranger moves
+
+`find` is `scout -aets` — no `-f` and no `-p`, so ranger applies no filter: it moves the cursor as
+you type and opens on a unique match. Canger's `Quick` applies a preview filter whenever `t` is
+set, so `f` narrows the listing instead. Ranger's `quick` also moves when `-t` is set, which
+Canger's never does.
+
+Left alone deliberately: it is a visible difference in a key used constantly, and worth changing on
+purpose rather than in passing.
+
+## A link looked like anything else
+
+Ranger marks a link twice over: the listing's info column is prefixed with `->`, so a linked
+folder reads `-> 3` rather than `3`, and the status bar replaces the size and the date with where
+the link goes. Canger did neither, so a shortcut was indistinguishable from the thing it points at
+except by colour.
+
+**Three separate causes for what looked like one.**
+
+The `->` existed in `LinemodeText.Size` — but only in the branch for a directory whose size had
+been measured with `dc`, which is the one case nobody starts from. Ranger prefixes the whole info
+column for any link, file and directory alike (`container/fsobject.py:342`,
+`container/directory.py:394`). Now computed once and prefixed once.
+
+The listing then only marked *directories*, because `BrowserColumn` sent directories through the
+linemode and formatted a file's size itself. The two agreed on the figure, so the split looked
+harmless — until the linemode learned something the other copy did not know. One call for both
+now, and the second copy is gone.
+
+The status bar had no idea what a link was: it showed the target's permissions, so a linked folder
+read `drwxrwxr-x`, saying nothing. Ranger takes the type character from the link and the
+permission bits from what it points at (`container/fsobject.py:347-358`) — which is why a link
+reads `lrwx------` — and puts ` -> destination` where the size and date would be
+(`gui/widgets/statusbar.py:180-186`). The destination is `readlink`, the link's own text, not the
+resolved path: a link written as `../shared` should say `../shared`.
+
+### The test double could not represent the thing being tested
+
+The first unit test said a linked *directory* had no count at all, while the live run showed `3`.
+`InMemoryFileSystem.ListDirectory` and `CountEntries` both required the path to be a directory,
+and a symlink is not one — so listing or counting a linked folder threw or answered null, and any
+test about one quietly measured nothing. `opendir(3)` follows links; the double does now.
+
+*A fixture that cannot express the case is worse than no fixture: it answers, and the answer looks
+like a result.*
+
+### And the fix for the file case had no test at all
+
+Removing the linemode change failed four tests; removing the `BrowserColumn` change failed none —
+which is exactly how the linked file shipped without its arrow while the linked directory had one.
+Three render tests cover it now, and removing that change fails one of them.
+
+## The status bar now says how many names a file has
+
+Ranger puts the hard-link count between the permissions and the owner, where `ls -l` puts it
+(`gui/widgets/statusbar.py:174`). Canger omitted it for every file, which was noticed while
+matching ranger's display of a symlink and left as a separate gap.
+
+It is 1 nearly always, which is why it was easy to leave out, and exactly why it earns its two
+columns: the moment it is not 1, deleting the name under the cursor does not delete the file, and
+nothing else on screen says so.
+
+Verified against real hard links rather than the test double, which reports 1 for everything and
+so cannot tell a working count from a constant: three names for one file reads `-rw-rw-r-- 3`, and
+a file with one name beside it reads `-rw-rw-r-- 1`, both matching `ls -l`.
+
+The colour context was already there — `nlink` is one of ranger's, so it came in with the
+generated set — and had never been used by anything.
+
+## The preview column stayed wrong for two seconds
+
+With `collapse_preview` on: enter an empty directory, come back, and the preview column is
+collapsed and the listing stretched across it — then two seconds later everything snaps back.
+
+Not intended, and the two seconds names the cause exactly: `idle_delay` is 2000 ms.
+
+**The layout is one frame behind by design.** Whether the column is worth its width cannot be known
+until the preview has been asked for, and the preview cannot be asked for until it has been told
+how much room it has. Ranger makes the same compromise and calls it `old_collapse`.
+
+Being a frame behind is invisible while frames keep coming, and very visible when they stop. The
+keystroke drew one frame using the previous frame's answer — which was "nothing to preview",
+because inside an empty directory nothing is selected — and then nothing asked for another. The
+correction waited for the idle timer.
+
+So a frame that ends knowing its own layout was wrong now says so, and the loop draws once more
+immediately. Measured, by the position of the column rules:
+
+```
+                            before            after
+parent, cursor on EMPTY     0 12 48 99        0 12 48 99
+inside EMPTY                0 12 48 99        0 12 92 99   ← collapses at once now
+back out, 0.4s later        0 12 92 99        0 12 48 99   ← was wrong for two seconds
+back out, 3.4s later        0 12 48 99        0 12 48 99
+```
+
+It settles in both directions: entering the empty directory used to take two seconds to collapse
+as well, which was the same lag in the other direction and nobody had noticed.
+
+The flag must also stop being set, or the loop would redraw for ever and never idle — which is
+its own test.
+
+## `:shell` completing a path — 2026-09-01
+
+`:shell sudo mv canger /us<Tab>` completed nothing. Reported as a parity gap; it is not one.
+
+**Ranger does not complete that either.** `shell.tab` matches the typed word against the basenames
+in the current directory (`config/commands.py:342`), and no basename begins with `/`, so nothing
+can match. Verified by driving ranger's own command class rather than by reading it — a stand-in
+`fm`, ranger's real `shell` class from `/opt/ranger-master`:
+
+```
+:shell sudo mv canger /us   -> none
+:shell sudo mv canger can   -> ['shell sudo mv canger canger']
+```
+
+Two probes were wasted before that: a pty harness that never found ranger's console row (it printed
+`:abort` and a "nested ranger instance" warning — `RANGER_LEVEL=1` is in this environment, because
+Claude Code was launched from inside ranger). Driving the class directly was both cheaper and
+exact. **When the question is "what does this code do", run the code, not the UI around it.**
+
+**Fixed past ranger, deliberately.** Once the word carries a separator the listing is simply the
+wrong set to search, so Canger reads the directory the path points at instead. `CompleteDirectories`
+already did this for `:cd`; its core is now `CangerCommand.CompletePath(typed, directoriesOnly)`,
+returning the resolved directory, the head as typed, and the matching names. `:cd` keeps
+directories only; `:shell` takes files too, since a shell argument is as likely to be either.
+
+Only the final name is escaped — `dir/'two words/'` is one word to the shell, and leaving the head
+outside the quotes is what keeps a leading `~` expanding rather than reaching the program as a
+literal tilde. A word without a separator still goes to the listing, which is ranger's behaviour
+and the right one: the hidden-file setting and the sort order are the ones the user is looking at.
+
+Eight new tests in `tests/Canger.Core.Tests/Commands/ShellPathCompletionTests.cs`, against the real
+filesystem as `CdCompletionTests` does. **Control run**: the branch mutated off (`'/'` -> `'\0'`,
+which compiles clean) fails five of them. The tilde and the no-such-path tests pass either way —
+both can succeed vacuously, and they are documentation more than proof.
+
+## A link to a folder could not be renamed — 2026-09-01
+
+`yy` a folder, `pl` to make a link, then `cr` on the link: `rename: Could not find file '<path>'`.
+A link to a *file* renamed perfectly well, which is what made it look arbitrary.
+
+`LocalFileSystem.Rename` stats without following the link — correctly, since a link must be renamed
+as a link — and then branched on `IsDirectory`. Under `lstat` a link to a directory **is not a
+directory**, so it fell through to `File.Move`, which does not consider it a file either and throws
+`FileNotFoundException: Could not find file`. Neither .NET call would take it.
+
+Measured rather than guessed, across every combination:
+
+| call | link to dir | link to file | dangling link | plain file |
+|---|---|---|---|---|
+| `File.Move` | **FileNotFoundException** | ok | ok | ok |
+| `Directory.Move` | ok | ok | ok | ok |
+
+`Directory.Move` moves the *link* in every case — the target is untouched, verified by reading a
+file inside it afterwards. So the branch is now `IsDirectory or IsSymbolicLink`.
+
+**The no-overwrite contract survives the switch**, which was the thing worth checking before
+changing it. `Directory.Move` refuses an occupied destination more strictly than
+`File.Move(overwrite: false)`: a file, a directory and even a dangling link at the destination each
+stop it with an `IOException`, and none of them is disturbed.
+
+`CopyJob` calls `Rename` too (`CopyJob.cs:373`), so cutting and pasting a directory link within one
+filesystem was hitting the same exception — silently, because it is caught and falls through to
+copy-then-delete, and `CopyEngine` recreates a link properly (`CopyEngine.cs:135`). The result was
+right and the fast path was simply never taken. It is now, and the move is atomic.
+
+Six tests in `LocalFileSystemTests`. **Control**: with the condition put back to `IsDirectory`
+alone, three of them fail. The dangling-link and link-to-file tests pass either way — `File.Move`
+handles both, as the table says — and the overwrite test discriminates only on the exception's
+exact type, so it is documentation rather than proof.
+
+## Backspace did not reach the preview column — 2026-09-01
+
+`<backspace>` is `set show_hidden!`. It updated every column except the one on the right, which
+kept the listing it already had.
+
+`Browser.ApplySettingsToDirectory` pushed `show_hidden`, `hidden_filter` and the whole `sort`
+family onto `CurrentTab.Pathway` — the ancestry and the current directory. The preview directory
+was handled by a separate two-line block that gave it `autoupdate_cumulative_size` **and nothing
+else**. The setters on `DirectoryNode` re-derive the listing the moment they change, so the
+mechanism was there and one directory was simply never fed. That is the eighth instance of that
+shape in this port.
+
+The same omission was quietly doing it to the sort order: the preview column kept whatever order
+it was loaded with however `sort`, `sort_reverse` or `sort_directories_first` changed.
+
+Ranger has no such gap because it is not a set at all — every `Directory` binds itself to
+`setopt.show_hidden`, `setopt.hidden_filter` and the sort options in its constructor
+(`container/directory.py:140-148`), so all of them refilter at once.
+
+`VisibleDirectories` was already the right set — pathway, plus the preview directory, plus every
+tab in multipane — and its own doc comment already claimed to be "the same set
+`ApplySettingsToDirectory` walks". It was not. It is now.
+
+**The interesting part is the test, not the fix.** The first version extracted
+`ApplySettings(IEnumerable<DirectoryNode>, …)` and handed it `VisibleDirectories(...)` from the
+test. Four tests, all green — and then the control: the production call reverted to `Pathway`,
+the bug fully back, **1868 of 1868 still passing**. The defect was the *choice of set*, and a test
+that makes that choice itself can never catch a caller making it differently. So the choice moved
+inside: `ApplySettings` now takes the tab and works out the set, leaving no seam. With the defect
+reintroduced *there*, three of the four tests fail.
+
+A second instrument fault caught the same way: `TheSortOrderReachesThePreviewColumnToo` passed
+under the mutation, because the preview directory had exactly one visible entry and reversing a
+one-element list changes nothing. It now asserts there is more than one before reversing.
+
+## The status line said nothing about the repository — 2026-09-01
+
+A verification pass over git parity, asked for as "ensure all vcs symbols and functionality are
+matching". Almost everything did, and the checking was worth more than the one fix.
+
+**Verified by running both implementations, not by reading them.** Ranger's own `Git` class was
+driven directly with a stand-in object and pointed at the same repositories as Canger's
+`GitBackend`; both dumped JSON and the dumps were compared. A repository carrying every status at
+once — staged, changed, deleted, a real merge conflict, untracked, ignored, a rename, an ignored
+directory, an empty directory — came back **identical**: nine subpath statuses, the aggregate root
+status, the branch, and the head commit's hash, author and summary. Four repositories in genuinely
+different remote states, plus a detached head and one with no remote: **identical** again.
+
+Identical too, by inspection: the two symbol tables character for character, all sixteen `vcs*`
+colour contexts (every one of them read), the eight-row porcelain translation table in ranger's
+order, the directory-status precedence with the same two exclusions, the seven git invocations
+including `rev-list --left-right {remote}...{head}`, the `^>`/`^<` regexes, the six settings with
+the same defaults and allowed values, and the status bar's date format. `local` is treated as
+`enabled`, which is what ranger does — it is an inert value there.
+
+### The gap
+
+Ranger's status bar draws **five** things (`gui/widgets/statusbar.py:200-227`): `(git: main)`, the
+repository's standing against its remote, the hovered entry's own status, then the head commit's
+date and summary. Canger drew the last two. The branch and the push state could not be read from
+the status line at all; the title bar carries a branch, but with its own `↑`/`↓` and nothing when
+in sync. This was never a decision — the column half was designed and argued over and recorded, and
+the status-bar half looks simply to have been missed.
+
+A second, quieter half of the same gap: ranger describes the **hovered entry's** repository when
+that entry is a directory (`statusbar.py:199-201`). Canger always used the directory the cursor
+stood in — which in a listing of projects is not a repository at all, so the line said nothing
+exactly where it is most wanted. That was affecting the commit date and summary Canger already drew.
+
+### Two controls, because the first kind of test was not enough
+
+The widget tests render a `StatusBar` with the fields set, and seven of them cover the label, both
+mark tables and the ordering. Mutating the drawing off fails six. But that says nothing about
+*which repository* gets described, which is the second half of the defect — the same seam that went
+undetected earlier in this file. So the rule moved out of `Browser` into
+`Browser.VcsForStatusBar(vcs, tab)` and `VcsStatusForStatusBar(vcs, tab)`, and is tested against
+**real git repositories**: a parent holding two projects on different branches. Reverting the rule
+to "the current directory" fails two of those.
+
+Writing them caught a third thing: the first harness moved `tab.Current.Cursor` where `Tab.Selected`
+reads `LiveCursor`. Two of the seven passed anyway, by accident — the entry it happened to describe
+was the right one. The two that failed were the only reason it was noticed.
+
+### Confirmed on the real binary
+
+Under a pty, in a repository with every status. Before the fix the line ended
+`… 2026-09-01 08:39 main` — date and summary alone. After:
+
+```
+-rw-rw-r-- 1 manuj manuj 12 B 2026-09-01 08:39 (git: main) ⌂+ 2026-09-01 08:39 main
+```
+
+and the mark follows the cursor: `+` changed, `X` conflict, `?` untracked, nothing at all on an
+entry whose status is `none` — which is ranger's `' '.strip()`.
+
+## All four version-control backends verified — 2026-09-01
+
+`hg`, `svn` and `bzr` installed, so the method used for git was repeated for the other three:
+ranger's own backend class driven directly with a stand-in object, Canger's backend pointed at the
+same repository, both dumped as JSON and compared.
+
+| backend | repository built | result |
+|---|---|---|
+| git | staged, changed, deleted, real merge conflict, untracked, ignored, rename, ignored dir, empty dir; plus four remote states, a detached head and no remote | **identical** |
+| hg | modified, added, removed, missing, untracked, ignored dir and file, clean | **identical** |
+| svn | added, modified, real text conflict, deleted, missing, unversioned, ignored | **identical** |
+| bzr | added, modified, missing, removed, untracked, ignored | identical but for the head commit |
+
+Three things worth keeping.
+
+**Ranger's svn parser has a bug, and Canger reproduced it exactly.** `svn status` ends with a
+`Summary of conflicts:` block when there are conflicts, and both parsers read those trailing lines
+as status records — both produced a phantom subpath `"of conflicts:"` with status `unknown`.
+
+> **Superseded the same day.** This section originally ended "left alone deliberately; it is a
+> faithful port, and the divergence would be worth less than the fidelity". The user overruled
+> that and set a standing rule: **a logical bug in Canger gets fixed even when ranger has it too.**
+> Both this and a worse one in the Bazaar parser are fixed — see *Two status parsers read prose as
+> filenames*. Nothing below this line is still open.
+
+**Ranger's bzr head commit never works, and Canger's does.** Ranger's `_log` matches
+`-+\n(.+?)\n(?:-|\Z)` against the output of `bzr log --log-format long`, but its own `_run` strips
+the trailing newline the `\n\Z` needs. Measured, not inferred: zero entries as ranger runs it, one
+if the newline is kept. So ranger shows no commit on the status line for a Bazaar tree. Canger asks
+differently (`log --limit 1 --revision last:1 --log-format line`) and gets the commit.
+
+**Two things I had said were wrong, both corrected by measuring.**
+
+* I said there was no `chg` on Debian and therefore ranger's Mercurial backend could not run. There
+  is no *package* called `chg`, but the `mercurial` package ships `/usr/bin/chg`. Ranger's hg
+  backend runs fine, and the hg comparison above is a clean like-for-like.
+* I said Bazaar was the deadest of the four and the likeliest thing to drop. **`bzr` is not
+  outdated.** On Debian 13 it is an alternatives symlink to Breezy 3.3.11, which is maintained, and
+  it works: `PATH=/usr/bin:/bin bzr --version` reports `Breezy (brz) 3.3.11`. It fails in this
+  user's shell only because anaconda's `python3` comes first on `PATH` and has no `breezy` module —
+  an environment quirk, not obsolescence. Removal was proposed on the condition that it was
+  outdated; the condition is false, so nothing was removed.
+
+## Two status parsers read prose as filenames — 2026-09-01
+
+**Standing rule, set by the user and applied here for the first time: a logical bug in Canger gets
+fixed even when ranger has the same bug.** The 1-1 mandate governs behaviour and shortcuts, not the
+reproduction of ranger's mistakes. Both fixes below are deliberate divergences.
+
+Found while verifying the backends. `git` and `hg` are structurally immune — one parses
+NUL-separated porcelain, the other JSON — so only the two line-parsers were affected.
+
+### Subversion
+
+`svn status` ends with a summary block when there are conflicts:
+
+```
+?       untracked.txt
+Summary of conflicts:
+  Text conflicts: 1
+```
+
+Both parsers test only `line[0] == ' '` (`ext/vcs/svn.py:100-116`), so `Summary of conflicts:`
+becomes a record: column zero is `S`, which matches no rule and gives `unknown`, and column eight
+onwards gives the "path" `of conflicts:`. The second line is skipped only because it happens to
+start with a space.
+
+Fixed by validating **all seven status columns** against what `svn help status` says each may hold,
+rather than the first alone. Any prose line fails at column one — `u` of `Summary` is not a
+property status. Testing column zero alone would still let `Assertion …` or `Merge …` through,
+which is why the check is not the smaller one it could have been.
+
+### Bazaar
+
+Worse, because the payload of two codes is never a path. Mid-merge:
+
+```
+ M  f.txt
+C   Text conflict in f.txt
+P   T 2026-09-01 theirs
+```
+
+`C` introduces a human-readable conflict description and `P` a pending merge's revision line. Read
+as records they become the subpaths `Text conflict in f.txt` and `T 2026-09-01 theirs`, both
+`unknown`, and — the part that actually costs the user something — **a conflicted file was never
+reported as conflicted**. `C` is in no translation table, so `f.txt` showed as its status line
+alone, which is ` M` → staged.
+
+Both codes are now skipped, and the real conflicts are read back from `bzr conflicts --text`, which
+names the files rather than describing them; it is the only machine-readable form the command
+offers. It covers text conflicts, which is what a merge leaves behind in almost every case. Other
+kinds go unmarked, which is what happened before and is better than inventing a subpath.
+
+### Verification
+
+Six tests across `SubversionBackendTests` and `BazaarBackendTests`, each building a real working
+copy left mid-conflict — without one the defect cannot appear at all. **Controls**: the svn column
+check reverted to `line[0]` fails one; the bzr skip and conflict lookup reverted fail two.
+
+Both skip properly when the program is missing, using `Assert.SkipUnless` — `GitBackendTests` has
+claimed in its doc comment since it was written that it "skips where git is not installed", and it
+has no skip in it. Measured rather than assumed: with `/usr/bin` first on PATH, `skipped: 0`;
+without it, `skipped: 3`.
+
+## `f` narrowed the listing where ranger moves the cursor — 2026-09-01
+
+Carried on this file since the `fm` cursor fix, deliberately left because it is a visible change to
+a key pressed constantly. Now done.
+
+`find` is `scout -aets`. There is no `-f` and no `-p`, so ranger applies no filter at all: it moves
+the cursor as you type and opens on a unique match. Canger narrowed the listing whenever `-t` was
+set — which is every one of these aliases — and never moved the cursor:
+
+```
+find       scout -aets     no 'f', no 'p'  ->  move, never narrow
+search_inc scout -rts      the same
+travel     scout -aefklst  'f'             ->  narrow *and* move
+filter     scout -prts     'p' with 't'    ->  narrow
+hide       scout -prtsv    the same
+search     scout -rs       no 't'          ->  nothing until Enter
+mark       scout -mr       the same
+```
+
+So two of ranger's most-used searches hid the listing they were meant to be walking, and
+`search_inc` — an incremental search — was not incremental in the one way that matters.
+
+`scout.quick` narrows for `-f`, or for `-p` with `-t`, and calls `_count(move=asyoutype)` either
+way. Both narrowing kinds go through `PreviewFilter` here, Canger's one live-filter mechanism;
+admitting `-p`-with-`-t` is what stops the fix turning `:filter` into a regression.
+
+**`_count` is one pass doing two jobs**, and copying that shape mattered. It rotates the listing to
+start at the cursor, moves there on the first match when asked, and stops as soon as it knows there
+is more than one. `MoveToFirstMatch` already had the rotation, so it became a thin wrapper over the
+new `CountMatches`. The auto-open test changed with it: ranger asks whether exactly one thing
+*matches*, and Canger asked how many rows were *left* — a test that only ever came out true because
+the listing had been narrowed. Without narrowing it could have fired only in a directory of one
+file.
+
+Ranger's `_count` also returns 1 for `..`, which with `-a` closes the prompt. Not copied: no
+listing here holds an entry called `..`, so the prompt would close and the command behind it would
+report finding nothing. The empty-pattern and lone-`.` cases, which return 0, are copied.
+
+Nine tests. **Two controls, because the change has two halves and one masks the other**: narrowing
+to a single row moves the cursor by itself, so a single mutation looked half-clean. Cursor movement
+removed, correct narrowing kept: three fail. Narrowing restored to every flag, movement kept: two
+fail.
+
+Confirmed on the real binary under a pty: `:find gam` in a directory of five leaves all five on
+screen, and the relative line numbers put the cursor on `gamma.txt`.
+
+## A leading `NAME=value` was run as a program — 2026-09-01
+
+`fs` broke with *An error occurred trying to start process 'FZF_DEFAULT_COMMAND=locate home'*.
+
+`CommandLine.TrySplit` decides whether a line can be run without a shell, and its last test was
+only whether the first word is a shell builtin. A leading `NAME=value` is equally the shell's —
+`execve` has no notion of it — so `FZF_DEFAULT_COMMAND='locate home' fzf -e -i` split into
+`["FZF_DEFAULT_COMMAND=locate home", "fzf", "-e", "-i"]` and Canger tried to start a file by that
+name.
+
+**It had been latent since the fast path was written.** Every other line in the shipped and user
+configuration that sets a variable this way also carries a metacharacter, so it was sent to the
+shell for a different reason and the hole never showed. The neighbouring `fzf_select` is the
+clearest case: it sets `FZF_DEFAULT_COMMAND` too, but its command contains `|` and `{}`. Writing
+one line without a metacharacter was all it took.
+
+The first word is now also refused when it is a shell identifier followed by `=`. The identifier
+rule is what keeps ordinary arguments out: `--width=80` begins with a dash, `./build=x` with a dot,
+and only the *first* word decides, so `make CC=clang -j4` still takes the fast path.
+
+Nine tests, seven on the splitter and two through the real runner — because the splitter refusing
+the line is not the same as the line working, and the report was from the running end. With the
+test put back to builtins alone, five fail, including the end-to-end one.
+
+### How it got there
+
+Found by breaking it. `fzf_locate` piped into fzf, and fzf drains its standard input to the end
+before exiting, so pressing Escape half a second in left the screen blank for the 1.66 s `locate`
+still had to run. Rewriting it as `FZF_DEFAULT_COMMAND='locate home' fzf` — which is how the
+neighbouring `fzf_select` was already written, and which lets fzf kill the producer — takes that to
+0.13 s. That rewrite is what exposed this.
+
+**A mechanism I proposed and had to withdraw.** I suggested repainting as soon as the child gave
+the terminal back, detected with `tcgetpgrp`. Measured on the real binary: the tty's foreground
+process group is Canger's own pid throughout, including while fzf is up, because .NET's `Process`
+does not `setpgid` the child. There is no transition to observe, and job control would not help
+either — the whole pipeline is one group owned by the shell, which outlives fzf. Offered before
+checking; the check took one probe.
+
+## Noticing a `chmod` made in another terminal — 2026-09-01
+
+Carried in *What is left* as "not worth doing unasked". Asked for, and done.
+
+A directory's mtime changes when an entry is added, removed or renamed, and that is all
+`LoadIfOutdated` watches. It does **not** change when an entry itself changes. A `chmod` in
+another terminal, a `chown`, or a file being written to all leave it alone, so the permissions,
+owner, size and modification time on screen stayed as they were first read — for the whole session
+if nothing else forced a reload. Ranger has the same gap and this is a deliberate divergence.
+
+`DirectoryNode.RefreshMetadata(first, count)` re-reads a range of entries in place, and
+`BrowserColumn` calls it for exactly the rows it is about to draw. **Only the rows on screen**,
+which is what makes it affordable: a directory of twenty thousand entries costs the same as one of
+twenty. Nodes are updated through the existing `FsNode.UpdateStatus` rather than replaced, so
+marks, tags and the cursor survive.
+
+Three decisions worth keeping:
+
+- **It does not re-sort or re-filter.** A file growing while you watch it would otherwise move
+  under the cursor in a size-sorted listing, and a background timer moving the cursor is worse than
+  a size that lags until the next reload.
+- **Change is judged field by field, not by the record's own equality.** `FileStatus` is a
+  `readonly record struct`, so `==` would compare the access time too — and reading a file bumps
+  that, so it would report a change on nearly every pass and ask for a repaint that draws the same
+  thing. A `chmod` is still caught, because it moves `Mode` as well as the change time.
+- **`freeze_files` suppresses it.** Holding the listing exactly as it is, then quietly re-reading
+  the metadata behind it, would be the same surprise in a smaller form.
+
+Capped at four passes a second. The cost is one `stat` per visible row — a hundred or so across
+three columns, nothing locally and not nothing on a network share.
+
+**Two controls, because there are two halves.** Seven unit tests against a real temporary tree;
+disabling `RefreshMetadata` fails three of them. That says nothing about the call site, which is
+the seam this file has been caught by twice — so the wiring was checked with `tools/screen.py`:
+start Canger on a file at mode 600, `chmod` it to 644 from outside, and watch the status line.
+
+```
+before chmod : -rw------- 1 manuj manuj 6 B 2026-09-01 12:54
+after  chmod : -rw-r--r-- 1 manuj manuj 6 B 2026-09-01 12:54
+noticed after 1.71s without a keystroke
+```
+
+With the call in `BrowserColumn` commented out and republished, it is never noticed. The 1.71 s is
+`idle_delay` — it appears on the next redraw, which is when anything else would have appeared too.
+
+## Large directories: measured, and nothing to fix — 2026-09-01
+
+*What is left* carried "performance work on very large directories — nothing is known to be slow;
+nothing has been measured either" as a placeholder. Measured now, so it can stop being a question.
+
+Fixtures: 200 files, 50 000 files and 20 000 subdirectories, on tmpfs **and** on the real btrfs
+home — the scratchpad is RAM and would have flattered every I/O number. Three passes, reading the
+warmed one: the first pass made btrfs look faster than tmpfs, which was JIT and page cache rather
+than a filesystem result, and would have been published as one.
+
+**Nothing a person feels degrades with size.** Worst-case cursor jump, `gg` then `G`, forcing a
+full repaint and a scroll across the whole listing:
+
+| | 200 files | 50 000 files | 20 000 dirs |
+|---|---|---|---|
+| `vcs_aware false` | 10 ms | 10 ms | 10 ms |
+| `vcs_aware true` | 10 ms | 10 ms | 11 ms |
+
+10 ms is the polling floor, so the truth is at or below it everywhere. Opening a 50 000-file
+directory costs 0.74 s against 0.83 s for 200 files — that is startup, not the listing.
+
+Component costs at 50 000 entries, for the record: refilter (a `show_hidden` toggle) 8.7 ms, a sort
+change 78 ms, the status bar's marked count 0.35 ms per frame, and the metadata re-stat added the
+same day 0.19 ms and flat regardless of size.
+
+### The one real cost, and why it was left
+
+Opening a directory of many *subdirectories* is slow, and it is entirely the version-control scan:
+
+```
+20k dirs   vcs_aware=true    2.66s        50k files  vcs_aware=true    1.22s
+20k dirs   vcs_aware=false   1.10s        50k files  vcs_aware=false   1.25s
+```
+
+About 78 µs per subdirectory, once, on the first frame. Files cost nothing because the test is
+`e.IsDirectory && …`. Each of the twenty thousand subdirectories walks up the tree testing for four
+backend markers at every ancestor level, and they all share the same ancestors, so the same answer
+is computed twenty thousand times. It is cached per queried path afterwards, which is why the warm
+cost is 8 ms.
+
+The fix would be to cache "there is no repository at or above here" per ancestor. **Not done, and
+recommended against**: it needs invalidating when a `git init` happens underneath, and a stale
+cache is this file's commonest defect shape — nine instances of a mechanism nothing feeds. The
+symptom needs thousands of subdirectories in one place, with `vcs_aware` on, once per entry.
+`~/Projects` has dozens.
+
+A second hypothesis was tested and **disproved**: `automatically_count_files` is not involved
+(2.76 s on, 2.60 s off).
+
+### The instrument, twice
+
+`tools/screen.py` caught two faults in its own measurements. The first protocol pressed `G` five
+times and averaged — but `G` at the bottom of a listing is a no-op, so four of the five rounds
+measured a screen that was already correct and reported 0 ms. The second was in the harness: a read
+boundary landing mid-escape-sequence printed the body as text, so a row came out as
+`27;1H| file-l0024.2xttxt`, which reads as a rendering bug in Canger. Both were visible only
+because `require` prints the screen when it fails. The harness now holds back a partial sequence
+for the next chunk.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
@@ -4352,39 +4969,51 @@ Nothing from ranger. Possible directions from here:
 - **A `canger.desktop` and a man page install path.** `./build.sh dist` produces the tarballs; what
   is missing is the desktop entry and somewhere for `doc/canger.1` to land so `?` → `m` works
   without the tarball's own directory.
-- **Noticing a `chmod` made in another terminal.** Both Canger and ranger judge staleness by the
-  directory's mtime, which a `chmod` does not touch, so neither sees it. Fixing it means
-  re-statting the visible rows on a timer — bounded, but a real divergence from ranger, and not
-  worth doing unasked.
-- **Performance work on very large directories.** Nothing is known to be slow; nothing has been
-  measured either.
+- **An ancestor cache for the version-control scan.** Measured, deliberately not done — see
+  *Large directories: measured, and nothing to fix*. It is 1.5 s once, on entering a directory of
+  thousands of subdirectories, and the fix is the kind of cache that has gone wrong here nine
+  times.
 
 ### Watch these in daily use
 
-Refreshed at 0.3.0. The previous batch — `unload-idle-directories`, `numbered-clash-suffixes`,
-`reload-visible-directories` — has now had a day of real use with nothing reported, so it comes off
-this list.
+Refreshed after the version-control verification pass. The previous batch — devicons leaving the
+core, the preview-collapse fix, the version-control marks — has had releases of real use with
+nothing reported, so it comes off this list.
 
-What is new and least exercised:
+What is new and least exercised, most consequential first:
 
-- **Devicons leaving the core.** The failure mode is silent: a generator emitting code that does
-  not compile leaves the linemode simply absent, and `default_linemode devicons` falls back to
-  plain names with no complaint anyone would notice. `ShippedDeviconsTests` compiles the shipped
-  plugin for exactly this reason, and it is a day old.
-- **The preview-collapse fix.** The only change here that was never seen working in a terminal —
-  it was demonstrated by forcing forty redraws inside a two-hundred-millisecond window, against a
-  control. It should show as the preview column no longer twitching while a PDF is generated.
-- **The version-control marks.** Four changes in a row over the same twenty lines: the glyph
-  table, the colours, which side of the row they sit on, and the reserved columns. Each was
-  confirmed by eye, but they interact, and one of the four was a mistake I made and had to undo
-  within the hour.
+- **Re-reading the metadata of rows on screen.** New, and it runs on every draw of every column.
+  It should show as a `chmod` or a growing file updating within a couple of seconds without a
+  keystroke, and should show as nothing at all otherwise — a listing that flickers or a cursor that
+  moves on its own would be this.
+- **`find` and `search_inc` now move the cursor instead of narrowing.** The largest behavioural
+  change in a long while, in a key pressed constantly, and the one most likely to feel wrong before
+  it feels right. `travel`, `filter` and `hide` should be unchanged; if any of them stops narrowing,
+  the flag rule is what to look at.
+- **Renaming a symbolic link goes through `Directory.Move`.** It touches the one thing that must
+  never be got wrong. The no-overwrite contract was measured against a file, a directory and a
+  dangling link at the destination, and `CopyJob` reaches the same call — so a cut-and-paste of a
+  link within one filesystem now takes the fast path it never took before.
+- **The status line's repository block.** Five parts where there were two, and it draws on every
+  frame in any repository. The thing to watch is width: it is dropped whole rather than truncated
+  when the line is tight, so on a narrow terminal the commit date and summary disappear before the
+  branch does.
+- **`show_hidden` and the sort settings now reach the preview column.** They are applied to every
+  visible directory rather than the pathway, which is a few more property comparisons per frame and
+  should be invisible.
+- **The svn and bzr status parsers reject lines that are not records.** Both were verified against
+  real conflicted working copies, but only the conflict case — an unusual output shape from either
+  program is the thing that would slip through.
 
 ### Verifying by driving the real binary
 
 Several defects in this file were found only by running the published binary under a pty and
-reconstructing the screen from the escape stream — the unit tests could not see them. There is no
-committed harness; the scripts were written per-investigation in a scratch directory and are gone.
-What is worth knowing before writing the next one:
+reconstructing the screen from the escape stream — the unit tests could not see them.
+
+**There is a committed harness now: `tools/screen.py`.** It was written from scratch about five
+times across these sessions, each copy in a scratch directory that no longer exists, and each copy
+fell into the same traps. It has a command line for the simple case and is importable for the rest;
+the `pty-verify` skill has the recipes. What is worth knowing, and what the harness handles:
 
 - The window size must be set explicitly with `TIOCSWINSZ`. Without it the pty reports 0x0 and
   nothing lays out.
@@ -4395,3 +5024,15 @@ What is worth knowing before writing the next one:
   responding. `less` searching correctly was misdiagnosed twice this way.
 - Reading per-cell SGR state is what proves a colour question. `1;7;93` on one word and nothing on
   the next is the difference between a fix and a plausible-looking one.
+- Prove the state before measuring it. Twice a probe pressed a key, timed the result and
+  published a number, and the thing it thought it had opened had never opened — both numbers were
+  withdrawn. `Session.require` fails loudly with the screen contents instead.
+- Two things that are not traps but cost time anyway: `canger.sh` runs the last
+  `./build.sh publish` rather than the working tree, and the user's real configuration is loaded,
+  so `f` is a keychain prefix and `f` then `g` runs `fg`, not `find`.
+
+Writing the harness immediately caught one of its own: `--cwd` changes directory before `exec`, so
+a relative `./canger.sh` stopped resolving and the failure arrived as a Python traceback drawn onto
+the screen under test. `require` printed it, which is exactly what it is for. The program is
+resolved to an absolute path before the fork now.
+

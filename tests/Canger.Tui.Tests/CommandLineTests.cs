@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.Processes;
 using Canger.Tui;
 
 namespace Canger.Tui.Tests;
@@ -174,5 +175,94 @@ public class CommandLineTests
     public void AProgramWhoseNameMerelyContainsABuiltinIsNotOne()
     {
         Assert.Equal(["echoserver", "--port", "80"], Split("echoserver --port 80"));
+    }
+    [Fact]
+    public void ALeadingVariableAssignmentNeedsTheShell()
+    {
+        // The reported break. `execve` has no notion of `NAME=value`, so running this directly
+        // tried to start a file called `FZF_DEFAULT_COMMAND=locate home`.
+        Assert.Empty(Split("FZF_DEFAULT_COMMAND='locate home' fzf -e -i"));
+    }
+
+    [Fact]
+    public void SeveralAssignmentsNeedTheShellToo()
+    {
+        Assert.Empty(Split("A=1 B=2 env"));
+    }
+
+    [Fact]
+    public void AnAssignmentWithNoValueStillNeedsTheShell()
+    {
+        Assert.Empty(Split("EDITOR= vim notes.txt"));
+    }
+
+    [Fact]
+    public void AnUnderscoredNameIsStillAnAssignment()
+    {
+        Assert.Empty(Split("_MY_VAR2=x prog"));
+    }
+
+    [Fact]
+    public void AnArgumentContainingAnEqualsIsNotAnAssignment()
+    {
+        // The names that must not be mistaken for one: a long option begins with a dash, and a
+        // relative path with a dot or a slash, so neither is a shell identifier.
+        Assert.Equal(["prog", "--width=80"], Split("prog --width=80"));
+        Assert.Equal(["--width=80"], Split("--width=80"));
+        Assert.Equal(["./build=x"], Split("./build=x"));
+    }
+
+    [Fact]
+    public void AWordBeginningWithAnEqualsIsNotAnAssignment()
+    {
+        Assert.Equal(["=weird"], Split("=weird"));
+    }
+
+    [Fact]
+    public void AProgramWhoseArgumentsContainAssignmentsIsStillDirect()
+    {
+        // Only the first word decides. `make CC=clang` is a program with an argument that happens
+        // to look like one, and sending it to the shell would lose the fast path for no reason.
+        Assert.Equal(["make", "CC=clang", "-j4"], Split("make CC=clang -j4"));
+    }
+
+}
+
+/// <summary>
+/// Running a line that sets a variable before the program.
+/// </summary>
+/// <remarks>
+/// The splitter refusing the line is not the same as the line working, and the reported break was
+/// at the running end: <c>An error occurred trying to start process
+/// 'FZF_DEFAULT_COMMAND=locate home'</c>. These go through the real runner, with no terminal to
+/// suspend.
+/// </remarks>
+public class EnvironmentPrefixRunTests
+{
+    [Fact]
+    public void TheVariableReachesTheProgram()
+    {
+        TerminalProcessRunner runner = new();
+
+        ProcessResult result = runner.RunCapturingOutput(
+            new ProcessRequest("CANGER_TEST_VAR=hello printenv CANGER_TEST_VAR",
+                               ProcessFlags.None, Path.GetTempPath()));
+
+        Assert.Null(result.Error);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal("hello", result.Output.Trim());
+    }
+
+    [Fact]
+    public void APlainProgramStillRunsWithoutAShell()
+    {
+        // The fast path must still be the fast path: this is the case the splitter exists for.
+        TerminalProcessRunner runner = new();
+
+        ProcessResult result = runner.RunCapturingOutput(
+            new ProcessRequest("printenv HOME", ProcessFlags.None, Path.GetTempPath()));
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.False(string.IsNullOrWhiteSpace(result.Output));
     }
 }

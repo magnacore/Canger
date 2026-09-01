@@ -167,15 +167,79 @@ public sealed class SubversionBackend : IVcsBackend
 
         foreach (string line in output.Split('\n'))
         {
+            if (!IsStatusRecord(line))
+            {
+                continue;
+            }
+
             // A space in the first column means the file itself is unchanged; the columns after
             // it describe properties and locks, which are not shown.
-            if (line.Length <= PathColumn || line[0] == ' ')
+            if (line[0] == ' ')
             {
                 continue;
             }
 
             yield return (line[PathColumn..].Trim().TrimEnd('/'), Translate(line[0]));
         }
+    }
+
+    /// <summary>What each of the seven status columns is allowed to contain.</summary>
+    /// <remarks>
+    /// From <c>svn help status</c>, in order: the item itself, its properties, whether the working
+    /// copy is locked, whether a commit carries history with it, whether it is switched, the lock
+    /// token, and whether it is a tree conflict. A space always means "nothing to say".
+    /// </remarks>
+    private static readonly string[] StatusColumns =
+    [
+        " ACDIMRX?!~", " CM", " L", " +", " S", " KOTB", " C",
+    ];
+
+    /// <summary>Whether a line of <c>svn status</c> output is a status record at all.</summary>
+    /// <param name="line">One line, as printed.</param>
+    /// <returns><see langword="true"/> when the seven status columns and the separator all fit.</returns>
+    /// <remarks>
+    /// <para>
+    /// <c>svn status</c> does not print only records. When there are conflicts it ends with a
+    /// summary block:
+    /// </para>
+    /// <code>
+    /// ?       untracked.txt
+    /// Summary of conflicts:
+    ///   Text conflicts: 1
+    /// </code>
+    /// <para>
+    /// Reading the first column of <c>Summary of conflicts:</c> gives <c>S</c>, which matches no
+    /// rule and so becomes <c>unknown</c>, and column eight onwards gives the "path"
+    /// <c>of conflicts:</c> — a subpath that cannot exist. Ranger has the same defect
+    /// (<c>ext/vcs/svn.py:100-116</c>, which tests only <c>line[0] == ' '</c>) and Canger
+    /// reproduced it exactly. It is inert today, because nothing looks that name up and the
+    /// summary only appears alongside a conflict, which outranks <c>unknown</c> — but a wrong
+    /// entry in a status table is a wrong entry, and this is a deliberate divergence from ranger
+    /// rather than an oversight.
+    /// </para>
+    /// <para>
+    /// Checking every column rather than just the first is what makes this robust: any prose line
+    /// fails at column one, where <c>u</c> of <c>Summary</c> is not a property status. Testing
+    /// column zero alone would let <c>Assertion …</c> or <c>Merge …</c> straight through.
+    /// </para>
+    /// </remarks>
+    private static bool IsStatusRecord(string line)
+    {
+        // Seven columns, a separating space, and at least one character of path.
+        if (line.Length <= PathColumn || line[PathColumn - 1] != ' ')
+        {
+            return false;
+        }
+
+        for (int column = 0; column < StatusColumns.Length; column++)
+        {
+            if (!StatusColumns[column].Contains(line[column], StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private string? RemoteUrl(string root)

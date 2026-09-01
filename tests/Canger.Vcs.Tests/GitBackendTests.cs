@@ -19,8 +19,29 @@ public sealed class GitBackendTests : IDisposable
 
     private readonly GitBackend _git = new();
 
+    /// <summary>Whether git is present and able to run.</summary>
+    /// <remarks>
+    /// The doc comment above has claimed since this file was written that these tests skip where
+    /// git is not installed. They did not — there was no skip in the file, so on a machine without
+    /// git the constructor threw and every test failed. Checked here rather than per test because
+    /// the repository is built in the constructor, and a skip raised there is honoured.
+    /// </remarks>
+    private static bool Usable()
+    {
+        try
+        {
+            return VcsProcess.Run("git", Path.GetTempPath(), "--version").Length > 0;
+        }
+        catch (Exception e) when (e is VcsException or IOException)
+        {
+            return false;
+        }
+    }
+
     public GitBackendTests()
     {
+        Assert.SkipUnless(Usable(), "git is not installed");
+
         Directory.CreateDirectory(_root);
 
         // Explicit identity and branch name, so the tests do not depend on the machine's git

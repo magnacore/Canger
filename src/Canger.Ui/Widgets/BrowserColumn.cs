@@ -148,6 +148,12 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
         _hasRepositoryChild = Vcs is not null &&
                               directory.Entries.Any(e => e.IsDirectory && IsRepositoryRoot(e));
 
+        // The rows about to be drawn are re-read from disk first, so a `chmod`, `chown` or write
+        // made in another terminal shows. The directory's own mtime does not change for any of
+        // those, so nothing else here would ever notice. Only what is on screen, and no more
+        // often than `MetadataRefreshInterval`.
+        directory.RefreshMetadata(_scrollOffset, Bounds.Height);
+
         for (int row = 0; row < Bounds.Height; row++)
         {
             int index = _scrollOffset + row;
@@ -513,11 +519,11 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
         bool binary = Linemodes?.BinaryPrefix ?? false;
         bool exact = Linemodes?.ExactBytes ?? false;
 
-        return entry.IsDirectory
-            ? LinemodeText.Size(entry, binary, countFiles, exact)
-            : entry.Size is { } size
-                ? HumanReadable.Format(size, binary, exact: exact)
-                : string.Empty;
+        // One call for both, rather than a directory going through the linemode and a file being
+        // formatted here. The two agreed on the figure, so the split looked harmless — until the
+        // linemode learned to mark a link with `->` and only directories got it, because only
+        // directories went through it.
+        return LinemodeText.Size(entry, binary, countFiles, exact);
     }
 
     /// <summary>Works out which contexts apply to an entry.</summary>

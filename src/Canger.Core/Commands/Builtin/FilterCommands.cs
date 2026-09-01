@@ -37,6 +37,13 @@ public sealed class ScoutCommand : CangerCommand
             return;
         }
 
+        // The cursor moves first, and whatever the flags say. Ranger opens its `execute` with
+        // `count = self._count(move=True)` before it marks, filters or anything else — so
+        // `:mark foo` puts the cursor on the first match as well as marking the rest, and `fm`
+        // takes you to what you searched for. Canger moved only when it was doing nothing else,
+        // so marking left the cursor where it was and the search appeared to have missed.
+        bool found = MoveToFirstMatch(pattern, flags);
+
         // Remembered so `n` can repeat it. Ranger does the same at this point
         // (config/commands.py:1607-1608), which is what connects `/` to `search_next`.
         FileManager.CurrentTab.LastSearch = pattern;
@@ -61,7 +68,10 @@ public sealed class ScoutCommand : CangerCommand
             return;
         }
 
-        JumpToFirstMatch(pattern, flags);
+        if (!found)
+        {
+            FileManager.Notify($"no match: {pattern}");
+        }
     }
 
     /// <inheritdoc />
@@ -69,20 +79,49 @@ public sealed class ScoutCommand : CangerCommand
     {
         (string flags, string pattern) = Line.ParseFlags();
 
-        // 't' means act as the user types, which is what makes a filter narrow the listing live.
-        if (!flags.Contains('t', StringComparison.Ordinal) || pattern.Length == 0)
+        // 't' means act as the user types. Without it nothing happens until Enter.
+        if (!flags.Contains('t', StringComparison.Ordinal))
         {
             return false;
         }
 
         DirectoryNode directory = FileManager.CurrentDirectory;
-        _applied = BuildFilter(pattern, flags);
-        directory.PreviewFilter = _applied;
-        directory.Refilter();
 
-        // 'a' closes the prompt as soon as only one entry is left, so a unique match needs no
-        // Enter. That is what makes travelling through a deep tree quick.
-        return flags.Contains('a', StringComparison.Ordinal) && directory.Count == 1;
+        // Whether the listing narrows, which is *not* the same question as whether to act as the
+        // user types. Ranger narrows only for 'f' (a temporary filter) or for 'p' with 't' (a
+        // permanent one) — `config/commands.py`, `scout.quick`. Canger narrowed whenever 't' was
+        // set, which is every one of these aliases, so `find` and `search_inc` hid the listing
+        // they were meant to be walking. Both are ranger's most-used searches:
+        //
+        //     find       scout -aets     no 'f', no 'p' — moves the cursor, never narrows
+        //     search_inc scout -rts      the same
+        //     travel     scout -aefklst  'f', so it narrows *and* moves
+        //     filter     scout -prts     'p' with 't', so it narrows
+        //
+        // Both narrowing kinds go through `PreviewFilter` here, which is Canger's one live-filter
+        // mechanism; 'p' is made permanent by `Execute` pushing it onto the filter stack when the
+        // prompt is accepted, so a cancelled `:filter` still leaves nothing behind.
+        bool narrows = flags.Contains('f', StringComparison.Ordinal) ||
+                       (flags.Contains('p', StringComparison.Ordinal) &&
+                        flags.Contains('t', StringComparison.Ordinal));
+
+        if (narrows)
+        {
+            _applied = BuildFilter(pattern, flags);
+            directory.PreviewFilter = _applied;
+            directory.Refilter();
+        }
+
+        // The cursor follows the pattern as it is typed. Ranger counts and moves in one pass —
+        // `self._count(move=asyoutype)` — so the count is over whatever the listing is *now*,
+        // after any narrowing above.
+        int matches = CountMatches(pattern, flags, move: true);
+
+        // 'a' closes the prompt as soon as exactly one thing matches, so a unique match needs no
+        // Enter. That is what makes travelling through a deep tree quick. The test is the number
+        // of *matches*, not the number of rows left: without narrowing the listing never shrinks,
+        // so counting rows meant `find` could only ever auto-open in a directory of one file.
+        return matches == 1 && flags.Contains('a', StringComparison.Ordinal);
     }
 
     /// <inheritdoc />
@@ -210,20 +249,73 @@ public sealed class ScoutCommand : CangerCommand
         }
     }
 
-    private void JumpToFirstMatch(string pattern, string flags)
-    {
-        IFileFilter filter = BuildFilter(pattern, flags);
-        DirectoryNode directory = FileManager.CurrentDirectory;
+    private bool MoveToFirstMatch(string pattern, string flags) =>
+        CountMatches(pattern, flags, move: true) > 0;
 
-        FsNode? match = directory.Entries.FirstOrDefault(filter.Accepts);
-        if (match is not null)
+    /// <summary>Counts what the pattern matches, and optionally goes to the first of them.</summary>
+    /// <param name="pattern">The pattern as typed.</param>
+    /// <param name="flags">The scout flags, which decide how the pattern is read.</param>
+    /// <param name="move">Whether the cursor moves to the first match.</param>
+    /// <returns>The number of matches, counted no further than two.</returns>
+    /// <remarks>
+    /// <para>
+    /// Ranger's <c>_count</c>, which is one pass doing both jobs: it rotates the listing to start
+    /// at the cursor, moves there on the first match when asked, and stops as soon as it knows
+    /// there is more than one — the only two answers any caller needs are "exactly one" and "more
+    /// than one".
+    /// </para>
+    /// <para>
+    /// An empty pattern and a lone <c>.</c> count nothing, as they do there. Ranger also counts
+    /// <c>..</c> as exactly one, which with <c>-a</c> closes the prompt on a unique match; that is
+    /// not copied, because no listing here holds an entry called <c>..</c>, so the prompt would
+    /// close and the command that followed would report finding nothing.
+    /// </para>
+    /// </remarks>
+    private int CountMatches(string pattern, string flags, bool move)
+    {
+        DirectoryNode directory = FileManager.CurrentDirectory;
+        IReadOnlyList<FsNode> entries = directory.Entries;
+
+        if (entries.Count == 0 || pattern.Length == 0 ||
+            string.Equals(pattern, ".", StringComparison.Ordinal))
         {
-            FileManager.CurrentTab.MoveCursorTo(match);
+            return 0;
         }
-        else
+
+        IFileFilter filter = BuildFilter(pattern, flags);
+
+        // From where the cursor is, wrapping — not from the top of the listing. Ranger rotates
+        // the entries by the cursor's position before looking (`_count`), so a search finds the
+        // next match rather than jumping backwards to an earlier one, and searching for what you
+        // are already standing on leaves you there. Starting at the top instead would walk
+        // backwards every time `n` was pressed on a pattern with a match above.
+        int from = directory.Cursor.Index;
+
+        int count = 0;
+
+        for (int step = 0; step < entries.Count; step++)
         {
-            FileManager.Notify($"no match: {pattern}");
+            FsNode candidate = entries[(from + step) % entries.Count];
+
+            if (!filter.Accepts(candidate))
+            {
+                continue;
+            }
+
+            count++;
+
+            if (move && count == 1)
+            {
+                FileManager.CurrentTab.MoveCursorTo(candidate);
+            }
+
+            if (count > 1)
+            {
+                return count;
+            }
         }
+
+        return count;
     }
 
     private void Clear()
