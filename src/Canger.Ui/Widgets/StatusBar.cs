@@ -109,7 +109,11 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             return;
         }
 
-        string permissions = PermissionString(status);
+        // `l` for a link, with the permission bits of whatever it points at. That is what ranger
+        // shows — the type character comes from `is_link` while the bits come from the followed
+        // stat (`container/fsobject.py:347-358`) — and it is why a linked directory reads
+        // `lrwxr-xr-x` there and read `drwxr-xr-x` here, saying nothing about being a link.
+        string permissions = PermissionString(status, entry.IsSymbolicLink);
         bool ownedByUser = status.Uid == UserDatabase.CurrentUserId;
 
         CellStyle permissionStyle = colorScheme.Resolve(
@@ -125,15 +129,34 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
                           $"{UserDatabase.UserName(status.Uid)} {UserDatabase.GroupName(status.Gid)}",
                           baseStyle);
 
-        if (ShowSize && !entry.IsDirectory)
+        // Where it points, in place of the size and the date rather than beside them. Ranger
+        // makes the same trade (`gui/widgets/statusbar.py:180-186`): for a link the destination
+        // is the one fact worth the room, and the size and time belong to the target and are
+        // already a keystroke away.
+        if (entry.IsSymbolicLink)
         {
-            x += screen.Write(x, Bounds.Y, " " + Size(status.Size), baseStyle);
-        }
+            CellStyle linkStyle = colorScheme.Resolve(
+                StyleContext.Of(ContextKey.InStatusbar, ContextKey.Link)
+                            .With(!entry.IsBrokenSymbolicLink, ContextKey.Good)
+                            .With(entry.IsBrokenSymbolicLink, ContextKey.Bad));
 
-        x += screen.Write(x, Bounds.Y,
-                          " " + status.ModifyTime.ToLocalTime()
-                                      .ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
-                          baseStyle);
+            // A question mark when the link cannot be read, as ranger does — the row still says
+            // that it is a link and that where it goes could not be found out.
+            x += screen.Write(x, Bounds.Y, " -> " + (entry.LinkTarget ?? "?"), linkStyle);
+        }
+        else
+        {
+            if (ShowSize && !entry.IsDirectory)
+            {
+                x += screen.Write(x, Bounds.Y, " " + Size(status.Size), baseStyle);
+            }
+
+            x += screen.Write(x, Bounds.Y,
+                              " " + status.ModifyTime.ToLocalTime()
+                                          .ToString("yyyy-MM-dd HH:mm",
+                                                    CultureInfo.InvariantCulture),
+                              baseStyle);
+        }
 
         DrawCommit(screen, x, baseStyle, limit);
     }
@@ -409,9 +432,14 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     /// <summary>Renders the mode bits the way <c>ls -l</c> does.</summary>
     /// <param name="status">The file's metadata.</param>
     /// <returns>A ten-character permission string.</returns>
-    public static string PermissionString(FileStatus status)
+    /// <param name="isLink">
+    /// Whether the entry is a symbolic link, which decides the type character alone. The
+    /// permission bits still come from <paramref name="status"/>, which describes what the link
+    /// points at — the same split ranger makes.
+    /// </param>
+    public static string PermissionString(FileStatus status, bool isLink = false)
     {
-        char type = status.Kind switch
+        char type = isLink ? 'l' : status.Kind switch
         {
             FileKind.Directory => 'd',
             FileKind.SymbolicLink => 'l',

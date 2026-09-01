@@ -255,4 +255,56 @@ public class BrowserColumnRenderTests
 
         Assert.DoesNotContain("2.05 k", screen.TextAt(0), StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Draw_MarksALinkedFileWithAnArrowBeforeItsSize()
+    {
+        // The column formatted a file's size itself and only sent directories through the
+        // linemode. The two agreed on the figure, so the split looked harmless — until the
+        // linemode learned to mark a link and only directories got the mark.
+        InMemoryFileSystem fs = new InMemoryFileSystem()
+            .AddFile("/home/plain.txt", "hello world!")
+            .AddSymbolicLink("/home/linked.txt", "/home/plain.txt");
+
+        (BrowserColumn column, ScreenBuffer screen, _) = Build(fs, width: 40);
+        column.ShowSize = true;
+        column.Render(screen);
+
+        string linked = Enumerable.Range(0, 10)
+                                  .Select(screen.TextAt)
+                                  .First(l => l.Contains("linked.txt", StringComparison.Ordinal));
+
+        Assert.Contains("->", linked, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Draw_MarksALinkedDirectoryWithAnArrowBeforeItsCount()
+    {
+        InMemoryFileSystem fs = new InMemoryFileSystem()
+            .AddFile("/home/target/a.txt")
+            .AddFile("/home/target/b.txt")
+            .AddSymbolicLink("/home/linked-dir", "/home/target");
+
+        (BrowserColumn column, ScreenBuffer screen, _) = Build(fs, width: 40);
+        column.ShowSize = true;
+        column.Render(screen);
+
+        string linked = Enumerable.Range(0, 10)
+                                  .Select(screen.TextAt)
+                                  .First(l => l.Contains("linked-dir", StringComparison.Ordinal));
+
+        Assert.Contains("->", linked, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Draw_LeavesAPlainFileUnmarked()
+    {
+        InMemoryFileSystem fs = new InMemoryFileSystem().AddFile("/home/plain.txt", "hello");
+
+        (BrowserColumn column, ScreenBuffer screen, _) = Build(fs, width: 40);
+        column.ShowSize = true;
+        column.Render(screen);
+
+        Assert.DoesNotContain("->", screen.TextAt(0), StringComparison.Ordinal);
+    }
 }
