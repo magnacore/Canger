@@ -298,7 +298,7 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
                 // they could be read.
                 Console.Out.Write("\nPress any key to continue...");
                 Console.Out.Flush();
-                WaitForAnyKey();
+                WaitForAnyKey(terminal);
             }
 
             return new ProcessResult(process.ExitCode);
@@ -419,8 +419,18 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
     }
 
     /// <summary>Waits for a single key, with the terminal in its normal cooked mode.</summary>
-    private static void WaitForAnyKey()
+    private static void WaitForAnyKey(Terminal? terminal)
     {
+        if (terminal is not null)
+        {
+            // Through Canger's own terminal, never System.Console: reading from `Console.In`
+            // hands it the tty, and it reconfigures it — measured turning `ICRNL` off, which
+            // Canger's raw mode deliberately leaves on. It also does its own line editing, so
+            // "press any key" accepted only Enter and echoed every other key onto the screen.
+            terminal.WaitForKeyPress();
+            return;
+        }
+
         try
         {
             Console.In.Read();

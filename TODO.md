@@ -4958,6 +4958,56 @@ boundary landing mid-escape-sequence printed the body as text, so a row came out
 because `require` prints the screen when it fails. The harness now holds back a partial sequence
 for the next chunk.
 
+## "Press any key" took the terminal away from Canger — 2026-09-01
+
+Reported as two things: `efc` blocked the interface instead of turning in the task view, and
+afterwards **every Enter was inserted into the console as `?`** — `:trash????????` — until Canger
+was restarted. They turned out to share a cause.
+
+### The `?`
+
+`ScreenBuffer` draws any control character as `?` (`Rendering/ScreenBuffer.cs:251`), so the `?` was
+Enter itself, arriving at the console as *text* rather than as the accept key.
+
+Canger's raw mode **deliberately leaves `ICRNL` on** so that Enter arrives as a newline, which is
+what the `<CR>` binding is on (`Terminal.cs:459`). `WaitForAnyKey` read through `Console.In`, and
+System.Console reconfigures the terminal the first time it is used. Measured under a pty rather
+than reasoned about:
+
+```
+at rest                          ICRNL=on   ICANON=off  ECHO=off
+at the press-any-key prompt      ICRNL=OFF  ICANON=off  ECHO=off      <- .NET's doing
+after Enter, back in the browser ICRNL=on
+```
+
+With `ICRNL` off, Enter is a carriage return, which is bound to nothing, so the console inserted it
+as text and the screen drew it as `?`. The window is normally closed again by `Resume`, which is
+why it took a slow compression and some impatient keypresses to leave it open.
+
+The same call explains the rest of the report. System.Console does its own line editing in
+userspace — which is why "press any key to continue" accepted only Enter, and echoed every other
+key onto the screen.
+
+`Terminal.cs:70` had already written down the rule and the reason: *"Deliberately not
+`Console.OpenStandardInput`. System.Console reconfigures the terminal."* Canger's own main input
+path obeys it; this one call did not. **A rule stated in a comment is not a rule the code follows.**
+
+`Terminal.WaitForKeyPress` now sets one-character-no-echo on the suspended settings, reads a single
+byte with `Termios.Read`, and puts the settings back. Verified: `ICRNL` stays on throughout, and
+pressing `q` — not Enter — dismisses the prompt.
+
+### The compression
+
+Not a regression: `compress` in `plugins/archives.cs` had always run in front of the interface with
+the `w` flag, while `extract` beside it was queued. What *was* fixed for `efc` earlier was the
+console prompt text, which is probably the memory. It is queued now, as its neighbour is, so it
+turns in the task view with the spinner and asks for no keypress at all — which also keeps it away
+from the bug above.
+
+Verified end to end with `tools/screen.py`: `efc` gives `:compress .tar.lz`, a name and Enter puts
+`Compressing:` in the task view, the archive appears in the listing and on disk, no prompt is
+shown, and the console still takes Enter afterwards.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

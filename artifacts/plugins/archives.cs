@@ -301,12 +301,24 @@ public sealed class CompressCommand : CangerCommand
         string files = string.Join(
             ' ', selection.Select(e => ArchiveFormats.Quote(e.RelativePath)));
 
-        FileManager.Runner.Run(new ProcessRequest(
-            Build(name, flags, files), new ProcessFlags("w"),
-            FileManager.CurrentDirectory.Path));
+        string directory = FileManager.CurrentDirectory.Path;
 
-        FileManager.ReloadCurrentDirectory();
-        FileManager.Notify($"Compressed {selection.Count} into {name}");
+        // Queued, exactly as `extract` above is. Compressing a tree of any size takes long enough
+        // that running it in front of the interface means the terminal is taken away and the
+        // screen sits blank until it finishes — and then asks for a keypress before giving it
+        // back. This way it turns in the task view with the spinner, can be cancelled from there,
+        // and the browser stays usable. Ranger's archive plugin queues both halves for the same
+        // reason (`ranger-archives/compress.py`, through `CommandLoader`).
+        FileManager.RunInBackground(
+            $"Compressing: {name}",
+            Build(name, flags, files),
+            directory,
+
+            // The archive appears out of nowhere when the archiver finishes; nothing else here
+            // would notice, because writing a file does not change the directory's timestamp.
+            _ => FileManager.ReloadDirectory(directory));
+
+        FileManager.Notify($"Compressing {selection.Count} into {name}");
     }
 
     /// <inheritdoc />
