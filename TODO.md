@@ -4535,6 +4535,41 @@ filesystem as `CdCompletionTests` does. **Control run**: the branch mutated off 
 which compiles clean) fails five of them. The tilde and the no-such-path tests pass either way —
 both can succeed vacuously, and they are documentation more than proof.
 
+## A link to a folder could not be renamed — 2026-09-01
+
+`yy` a folder, `pl` to make a link, then `cr` on the link: `rename: Could not find file '<path>'`.
+A link to a *file* renamed perfectly well, which is what made it look arbitrary.
+
+`LocalFileSystem.Rename` stats without following the link — correctly, since a link must be renamed
+as a link — and then branched on `IsDirectory`. Under `lstat` a link to a directory **is not a
+directory**, so it fell through to `File.Move`, which does not consider it a file either and throws
+`FileNotFoundException: Could not find file`. Neither .NET call would take it.
+
+Measured rather than guessed, across every combination:
+
+| call | link to dir | link to file | dangling link | plain file |
+|---|---|---|---|---|
+| `File.Move` | **FileNotFoundException** | ok | ok | ok |
+| `Directory.Move` | ok | ok | ok | ok |
+
+`Directory.Move` moves the *link* in every case — the target is untouched, verified by reading a
+file inside it afterwards. So the branch is now `IsDirectory or IsSymbolicLink`.
+
+**The no-overwrite contract survives the switch**, which was the thing worth checking before
+changing it. `Directory.Move` refuses an occupied destination more strictly than
+`File.Move(overwrite: false)`: a file, a directory and even a dangling link at the destination each
+stop it with an `IOException`, and none of them is disturbed.
+
+`CopyJob` calls `Rename` too (`CopyJob.cs:373`), so cutting and pasting a directory link within one
+filesystem was hitting the same exception — silently, because it is caught and falls through to
+copy-then-delete, and `CopyEngine` recreates a link properly (`CopyEngine.cs:135`). The result was
+right and the fast path was simply never taken. It is now, and the move is atomic.
+
+Six tests in `LocalFileSystemTests`. **Control**: with the condition put back to `IsDirectory`
+alone, three of them fail. The dangling-link and link-to-file tests pass either way — `File.Move`
+handles both, as the table says — and the overwrite test discriminates only on the exception's
+exact type, so it is documentation rather than proof.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

@@ -222,7 +222,20 @@ public sealed class LocalFileSystem : IFileSystem
     public void Rename(string sourcePath, string destinationPath)
     {
         FileStatus? status = Stat(sourcePath, followSymbolicLinks: false);
-        if (status is { IsDirectory: true })
+
+        // A symbolic link is renamed as a link whatever it points at, so the link's own status is
+        // what decides — and under `lstat` a link to a directory is not a directory. That sent it
+        // to `File.Move`, which refuses it outright: to `File.Move` a link to a directory is not a
+        // file either, and it throws `FileNotFoundException: Could not find file`, which is how
+        // the defect was reported. A link to a *file* renamed perfectly well, which is what made
+        // it look arbitrary.
+        //
+        // `Directory.Move` is the one call that renames the link itself in every case — measured
+        // here against links to directories, links to files and dangling links, all of which it
+        // moves as links, leaving the target untouched. It also refuses an occupied destination
+        // more strictly than `File.Move(overwrite: false)`: a file, a directory and even a
+        // dangling link at the destination each stop it, and none of them is disturbed.
+        if (status is { IsDirectory: true } or { IsSymbolicLink: true })
         {
             Directory.Move(sourcePath, destinationPath);
         }
