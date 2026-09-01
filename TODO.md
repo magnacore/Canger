@@ -6,41 +6,6 @@ behaviour; `../ranger_settings/` is a real user configuration that must parse un
 
 This file is the resume point between sessions. Update it at the end of every phase.
 
-## `:shell` completing a path — 2026-09-01
-
-`:shell sudo mv canger /us<Tab>` completed nothing. Reported as a parity gap; it is not one.
-
-**Ranger does not complete that either.** `shell.tab` matches the typed word against the basenames
-in the current directory (`config/commands.py:342`), and no basename begins with `/`, so nothing
-can match. Verified by driving ranger's own command class rather than by reading it — a stand-in
-`fm`, ranger's real `shell` class from `/opt/ranger-master`:
-
-```
-:shell sudo mv canger /us   -> none
-:shell sudo mv canger can   -> ['shell sudo mv canger canger']
-```
-
-Two probes were wasted before that: a pty harness that never found ranger's console row (it printed
-`:abort` and a "nested ranger instance" warning — `RANGER_LEVEL=1` is in this environment, because
-Claude Code was launched from inside ranger). Driving the class directly was both cheaper and
-exact. **When the question is "what does this code do", run the code, not the UI around it.**
-
-**Fixed past ranger, deliberately.** Once the word carries a separator the listing is simply the
-wrong set to search, so Canger reads the directory the path points at instead. `CompleteDirectories`
-already did this for `:cd`; its core is now `CangerCommand.CompletePath(typed, directoriesOnly)`,
-returning the resolved directory, the head as typed, and the matching names. `:cd` keeps
-directories only; `:shell` takes files too, since a shell argument is as likely to be either.
-
-Only the final name is escaped — `dir/'two words/'` is one word to the shell, and leaving the head
-outside the quotes is what keeps a leading `~` expanding rather than reaching the program as a
-literal tilde. A word without a separator still goes to the listing, which is ranger's behaviour
-and the right one: the hidden-file setting and the sort order are the ones the user is looking at.
-
-Eight new tests in `tests/Canger.Core.Tests/Commands/ShellPathCompletionTests.cs`, against the real
-filesystem as `CdCompletionTests` does. **Control run**: the branch mutated off (`'/'` -> `'\0'`,
-which compiles clean) fails five of them. The tilde and the no-such-path tests pass either way —
-both can succeed vacuously, and they are documentation more than proof.
-
 ## Build and test
 
 ```bash
@@ -4534,6 +4499,41 @@ as well, which was the same lag in the other direction and nobody had noticed.
 
 The flag must also stop being set, or the loop would redraw for ever and never idle — which is
 its own test.
+
+## `:shell` completing a path — 2026-09-01
+
+`:shell sudo mv canger /us<Tab>` completed nothing. Reported as a parity gap; it is not one.
+
+**Ranger does not complete that either.** `shell.tab` matches the typed word against the basenames
+in the current directory (`config/commands.py:342`), and no basename begins with `/`, so nothing
+can match. Verified by driving ranger's own command class rather than by reading it — a stand-in
+`fm`, ranger's real `shell` class from `/opt/ranger-master`:
+
+```
+:shell sudo mv canger /us   -> none
+:shell sudo mv canger can   -> ['shell sudo mv canger canger']
+```
+
+Two probes were wasted before that: a pty harness that never found ranger's console row (it printed
+`:abort` and a "nested ranger instance" warning — `RANGER_LEVEL=1` is in this environment, because
+Claude Code was launched from inside ranger). Driving the class directly was both cheaper and
+exact. **When the question is "what does this code do", run the code, not the UI around it.**
+
+**Fixed past ranger, deliberately.** Once the word carries a separator the listing is simply the
+wrong set to search, so Canger reads the directory the path points at instead. `CompleteDirectories`
+already did this for `:cd`; its core is now `CangerCommand.CompletePath(typed, directoriesOnly)`,
+returning the resolved directory, the head as typed, and the matching names. `:cd` keeps
+directories only; `:shell` takes files too, since a shell argument is as likely to be either.
+
+Only the final name is escaped — `dir/'two words/'` is one word to the shell, and leaving the head
+outside the quotes is what keeps a leading `~` expanding rather than reaching the program as a
+literal tilde. A word without a separator still goes to the listing, which is ranger's behaviour
+and the right one: the hidden-file setting and the sort order are the ones the user is looking at.
+
+Eight new tests in `tests/Canger.Core.Tests/Commands/ShellPathCompletionTests.cs`, against the real
+filesystem as `CdCompletionTests` does. **Control run**: the branch mutated off (`'/'` -> `'\0'`,
+which compiles clean) fails five of them. The tilde and the no-such-path tests pass either way —
+both can succeed vacuously, and they are documentation more than proof.
 
 ## What is left
 
