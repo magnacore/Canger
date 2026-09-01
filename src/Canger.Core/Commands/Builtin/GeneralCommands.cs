@@ -392,6 +392,21 @@ public sealed class ShellCommand : CangerCommand
         string before = Line.Line[..(lastSpace + 1)];
         string typed = Line.Line[(lastSpace + 1)..];
 
+        // A word carrying a separator is a path being typed, not a name from this directory, and
+        // matching it against the listing can only ever fail: `/us` is not the start of any name
+        // here and never will be. Ranger has the same hole and simply completes nothing there
+        // (`config/commands.py:342`, verified against its own code); the listing it consults is
+        // the wrong set, so Canger reads the directory the path actually points at instead.
+        if (typed.Contains('/', StringComparison.Ordinal) || typed.StartsWith('~'))
+        {
+            PathCompletion path = CompletePath(typed, directoriesOnly: false);
+
+            // Only the final name is escaped. The head is what the user typed and is left exactly
+            // as it stands, which is what keeps a leading `~` doing its job — quoted, the shell
+            // would hand the program a literal tilde instead of the home directory.
+            return [.. path.Names.Select(name => before + path.Head + Escape(name))];
+        }
+
         // Matched against the plain name rather than the escaped one. Ranger compares the escaped
         // form (`config/commands.py:342`), which works there because its escaping leaves an
         // ordinary name alone; Canger quotes unconditionally when it quotes at all, so comparing
