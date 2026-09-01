@@ -162,6 +162,47 @@ public static class CommandLine
             return null;
         }
 
-        return Builtins.Contains(words[0]) ? null : words;
+        // A leading `NAME=value` is the shell's, not a program's. `execve` has no notion of it, so
+        // running the line directly tries to start a file called `FZF_DEFAULT_COMMAND=locate home`
+        // and reports that there is no such thing — which is exactly what
+        // `FZF_DEFAULT_COMMAND='locate home' fzf -e -i` did. It went unnoticed because every other
+        // line that sets a variable this way happened to carry a metacharacter as well: the
+        // neighbouring `fzf_select` sets one too, but its command also contains `|` and `{}`, so it
+        // had always been sent to the shell for a different reason.
+        return Builtins.Contains(words[0]) || IsEnvironmentAssignment(words[0]) ? null : words;
+    }
+
+    /// <summary>Whether a word is a <c>NAME=value</c> prefix rather than a program to run.</summary>
+    /// <param name="word">The first word of the line.</param>
+    /// <returns><see langword="true"/> when a shell would read it as setting a variable.</returns>
+    /// <remarks>
+    /// The name has to be a shell identifier — a letter or underscore, then letters, digits and
+    /// underscores — which is what keeps ordinary arguments out. <c>--width=80</c> begins with a
+    /// dash and <c>./build=x</c> with a dot, so neither is mistaken for an assignment, and no
+    /// program is named with an <c>=</c> in it.
+    /// </remarks>
+    private static bool IsEnvironmentAssignment(string word)
+    {
+        int equals = word.IndexOf('=', StringComparison.Ordinal);
+
+        if (equals <= 0)
+        {
+            return false;
+        }
+
+        if (!char.IsAsciiLetter(word[0]) && word[0] != '_')
+        {
+            return false;
+        }
+
+        for (int i = 1; i < equals; i++)
+        {
+            if (!char.IsAsciiLetterOrDigit(word[i]) && word[i] != '_')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
