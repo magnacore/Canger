@@ -4680,12 +4680,15 @@ same repository, both dumped as JSON and compared.
 
 Three things worth keeping.
 
-**Ranger's svn parser has a bug, and Canger reproduces it exactly.** `svn status` ends with a
+**Ranger's svn parser has a bug, and Canger reproduced it exactly.** `svn status` ends with a
 `Summary of conflicts:` block when there are conflicts, and both parsers read those trailing lines
-as status records — both produce a phantom subpath `"of conflicts:"` with status `unknown`. It is
-inert: no real path ever matches that key, and it only appears alongside a conflict, which outranks
-`unknown` in the directory precedence. Left alone deliberately; it is a faithful port, and the
-divergence would be worth less than the fidelity.
+as status records — both produced a phantom subpath `"of conflicts:"` with status `unknown`.
+
+> **Superseded the same day.** This section originally ended "left alone deliberately; it is a
+> faithful port, and the divergence would be worth less than the fidelity". The user overruled
+> that and set a standing rule: **a logical bug in Canger gets fixed even when ranger has it too.**
+> Both this and a worse one in the Bazaar parser are fixed — see *Two status parsers read prose as
+> filenames*. Nothing below this line is still open.
 
 **Ranger's bzr head commit never works, and Canger's does.** Ranger's `_log` matches
 `-+\n(.+?)\n(?:-|\Z)` against the output of `bzr log --log-format long`, but its own `_run` strips
@@ -4832,23 +4835,30 @@ Nothing from ranger. Possible directions from here:
 
 ### Watch these in daily use
 
-Refreshed at 0.3.0. The previous batch — `unload-idle-directories`, `numbered-clash-suffixes`,
-`reload-visible-directories` — has now had a day of real use with nothing reported, so it comes off
-this list.
+Refreshed after the version-control verification pass. The previous batch — devicons leaving the
+core, the preview-collapse fix, the version-control marks — has had releases of real use with
+nothing reported, so it comes off this list.
 
-What is new and least exercised:
+What is new and least exercised, most consequential first:
 
-- **Devicons leaving the core.** The failure mode is silent: a generator emitting code that does
-  not compile leaves the linemode simply absent, and `default_linemode devicons` falls back to
-  plain names with no complaint anyone would notice. `ShippedDeviconsTests` compiles the shipped
-  plugin for exactly this reason, and it is a day old.
-- **The preview-collapse fix.** The only change here that was never seen working in a terminal —
-  it was demonstrated by forcing forty redraws inside a two-hundred-millisecond window, against a
-  control. It should show as the preview column no longer twitching while a PDF is generated.
-- **The version-control marks.** Four changes in a row over the same twenty lines: the glyph
-  table, the colours, which side of the row they sit on, and the reserved columns. Each was
-  confirmed by eye, but they interact, and one of the four was a mistake I made and had to undo
-  within the hour.
+- **`find` and `search_inc` now move the cursor instead of narrowing.** The largest behavioural
+  change in a long while, in a key pressed constantly, and the one most likely to feel wrong before
+  it feels right. `travel`, `filter` and `hide` should be unchanged; if any of them stops narrowing,
+  the flag rule is what to look at.
+- **Renaming a symbolic link goes through `Directory.Move`.** It touches the one thing that must
+  never be got wrong. The no-overwrite contract was measured against a file, a directory and a
+  dangling link at the destination, and `CopyJob` reaches the same call — so a cut-and-paste of a
+  link within one filesystem now takes the fast path it never took before.
+- **The status line's repository block.** Five parts where there were two, and it draws on every
+  frame in any repository. The thing to watch is width: it is dropped whole rather than truncated
+  when the line is tight, so on a narrow terminal the commit date and summary disappear before the
+  branch does.
+- **`show_hidden` and the sort settings now reach the preview column.** They are applied to every
+  visible directory rather than the pathway, which is a few more property comparisons per frame and
+  should be invisible.
+- **The svn and bzr status parsers reject lines that are not records.** Both were verified against
+  real conflicted working copies, but only the conflict case — an unusual output shape from either
+  program is the thing that would slip through.
 
 ### Verifying by driving the real binary
 
