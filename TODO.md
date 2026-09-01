@@ -4705,6 +4705,67 @@ differently (`log --limit 1 --revision last:1 --log-format line`) and gets the c
   an environment quirk, not obsolescence. Removal was proposed on the condition that it was
   outdated; the condition is false, so nothing was removed.
 
+## Two status parsers read prose as filenames — 2026-09-01
+
+**Standing rule, set by the user and applied here for the first time: a logical bug in Canger gets
+fixed even when ranger has the same bug.** The 1-1 mandate governs behaviour and shortcuts, not the
+reproduction of ranger's mistakes. Both fixes below are deliberate divergences.
+
+Found while verifying the backends. `git` and `hg` are structurally immune — one parses
+NUL-separated porcelain, the other JSON — so only the two line-parsers were affected.
+
+### Subversion
+
+`svn status` ends with a summary block when there are conflicts:
+
+```
+?       untracked.txt
+Summary of conflicts:
+  Text conflicts: 1
+```
+
+Both parsers test only `line[0] == ' '` (`ext/vcs/svn.py:100-116`), so `Summary of conflicts:`
+becomes a record: column zero is `S`, which matches no rule and gives `unknown`, and column eight
+onwards gives the "path" `of conflicts:`. The second line is skipped only because it happens to
+start with a space.
+
+Fixed by validating **all seven status columns** against what `svn help status` says each may hold,
+rather than the first alone. Any prose line fails at column one — `u` of `Summary` is not a
+property status. Testing column zero alone would still let `Assertion …` or `Merge …` through,
+which is why the check is not the smaller one it could have been.
+
+### Bazaar
+
+Worse, because the payload of two codes is never a path. Mid-merge:
+
+```
+ M  f.txt
+C   Text conflict in f.txt
+P   T 2026-09-01 theirs
+```
+
+`C` introduces a human-readable conflict description and `P` a pending merge's revision line. Read
+as records they become the subpaths `Text conflict in f.txt` and `T 2026-09-01 theirs`, both
+`unknown`, and — the part that actually costs the user something — **a conflicted file was never
+reported as conflicted**. `C` is in no translation table, so `f.txt` showed as its status line
+alone, which is ` M` → staged.
+
+Both codes are now skipped, and the real conflicts are read back from `bzr conflicts --text`, which
+names the files rather than describing them; it is the only machine-readable form the command
+offers. It covers text conflicts, which is what a merge leaves behind in almost every case. Other
+kinds go unmarked, which is what happened before and is better than inventing a subpath.
+
+### Verification
+
+Six tests across `SubversionBackendTests` and `BazaarBackendTests`, each building a real working
+copy left mid-conflict — without one the defect cannot appear at all. **Controls**: the svn column
+check reverted to `line[0]` fails one; the bzr skip and conflict lookup reverted fail two.
+
+Both skip properly when the program is missing, using `Assert.SkipUnless` — `GitBackendTests` has
+claimed in its doc comment since it was written that it "skips where git is not installed", and it
+has no skip in it. Measured rather than assumed: with `/usr/bin` first on PATH, `skipped: 0`;
+without it, `skipped: 3`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
