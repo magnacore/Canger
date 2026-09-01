@@ -4680,12 +4680,15 @@ same repository, both dumped as JSON and compared.
 
 Three things worth keeping.
 
-**Ranger's svn parser has a bug, and Canger reproduces it exactly.** `svn status` ends with a
+**Ranger's svn parser has a bug, and Canger reproduced it exactly.** `svn status` ends with a
 `Summary of conflicts:` block when there are conflicts, and both parsers read those trailing lines
-as status records — both produce a phantom subpath `"of conflicts:"` with status `unknown`. It is
-inert: no real path ever matches that key, and it only appears alongside a conflict, which outranks
-`unknown` in the directory precedence. Left alone deliberately; it is a faithful port, and the
-divergence would be worth less than the fidelity.
+as status records — both produced a phantom subpath `"of conflicts:"` with status `unknown`.
+
+> **Superseded the same day.** This section originally ended "left alone deliberately; it is a
+> faithful port, and the divergence would be worth less than the fidelity". The user overruled
+> that and set a standing rule: **a logical bug in Canger gets fixed even when ranger has it too.**
+> Both this and a worse one in the Bazaar parser are fixed — see *Two status parsers read prose as
+> filenames*. Nothing below this line is still open.
 
 **Ranger's bzr head commit never works, and Canger's does.** Ranger's `_log` matches
 `-+\n(.+?)\n(?:-|\Z)` against the output of `bzr log --log-format long`, but its own `_run` strips
@@ -4766,6 +4769,52 @@ claimed in its doc comment since it was written that it "skips where git is not 
 has no skip in it. Measured rather than assumed: with `/usr/bin` first on PATH, `skipped: 0`;
 without it, `skipped: 3`.
 
+## `f` narrowed the listing where ranger moves the cursor — 2026-09-01
+
+Carried on this file since the `fm` cursor fix, deliberately left because it is a visible change to
+a key pressed constantly. Now done.
+
+`find` is `scout -aets`. There is no `-f` and no `-p`, so ranger applies no filter at all: it moves
+the cursor as you type and opens on a unique match. Canger narrowed the listing whenever `-t` was
+set — which is every one of these aliases — and never moved the cursor:
+
+```
+find       scout -aets     no 'f', no 'p'  ->  move, never narrow
+search_inc scout -rts      the same
+travel     scout -aefklst  'f'             ->  narrow *and* move
+filter     scout -prts     'p' with 't'    ->  narrow
+hide       scout -prtsv    the same
+search     scout -rs       no 't'          ->  nothing until Enter
+mark       scout -mr       the same
+```
+
+So two of ranger's most-used searches hid the listing they were meant to be walking, and
+`search_inc` — an incremental search — was not incremental in the one way that matters.
+
+`scout.quick` narrows for `-f`, or for `-p` with `-t`, and calls `_count(move=asyoutype)` either
+way. Both narrowing kinds go through `PreviewFilter` here, Canger's one live-filter mechanism;
+admitting `-p`-with-`-t` is what stops the fix turning `:filter` into a regression.
+
+**`_count` is one pass doing two jobs**, and copying that shape mattered. It rotates the listing to
+start at the cursor, moves there on the first match when asked, and stops as soon as it knows there
+is more than one. `MoveToFirstMatch` already had the rotation, so it became a thin wrapper over the
+new `CountMatches`. The auto-open test changed with it: ranger asks whether exactly one thing
+*matches*, and Canger asked how many rows were *left* — a test that only ever came out true because
+the listing had been narrowed. Without narrowing it could have fired only in a directory of one
+file.
+
+Ranger's `_count` also returns 1 for `..`, which with `-a` closes the prompt. Not copied: no
+listing here holds an entry called `..`, so the prompt would close and the command behind it would
+report finding nothing. The empty-pattern and lone-`.` cases, which return 0, are copied.
+
+Nine tests. **Two controls, because the change has two halves and one masks the other**: narrowing
+to a single row moves the cursor by itself, so a single mutation looked half-clean. Cursor movement
+removed, correct narrowing kept: three fail. Narrowing restored to every flag, movement kept: two
+fail.
+
+Confirmed on the real binary under a pty: `:find gam` in a directory of five leaves all five on
+screen, and the relative line numbers put the cursor on `gamma.txt`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
@@ -4786,23 +4835,30 @@ Nothing from ranger. Possible directions from here:
 
 ### Watch these in daily use
 
-Refreshed at 0.3.0. The previous batch — `unload-idle-directories`, `numbered-clash-suffixes`,
-`reload-visible-directories` — has now had a day of real use with nothing reported, so it comes off
-this list.
+Refreshed after the version-control verification pass. The previous batch — devicons leaving the
+core, the preview-collapse fix, the version-control marks — has had releases of real use with
+nothing reported, so it comes off this list.
 
-What is new and least exercised:
+What is new and least exercised, most consequential first:
 
-- **Devicons leaving the core.** The failure mode is silent: a generator emitting code that does
-  not compile leaves the linemode simply absent, and `default_linemode devicons` falls back to
-  plain names with no complaint anyone would notice. `ShippedDeviconsTests` compiles the shipped
-  plugin for exactly this reason, and it is a day old.
-- **The preview-collapse fix.** The only change here that was never seen working in a terminal —
-  it was demonstrated by forcing forty redraws inside a two-hundred-millisecond window, against a
-  control. It should show as the preview column no longer twitching while a PDF is generated.
-- **The version-control marks.** Four changes in a row over the same twenty lines: the glyph
-  table, the colours, which side of the row they sit on, and the reserved columns. Each was
-  confirmed by eye, but they interact, and one of the four was a mistake I made and had to undo
-  within the hour.
+- **`find` and `search_inc` now move the cursor instead of narrowing.** The largest behavioural
+  change in a long while, in a key pressed constantly, and the one most likely to feel wrong before
+  it feels right. `travel`, `filter` and `hide` should be unchanged; if any of them stops narrowing,
+  the flag rule is what to look at.
+- **Renaming a symbolic link goes through `Directory.Move`.** It touches the one thing that must
+  never be got wrong. The no-overwrite contract was measured against a file, a directory and a
+  dangling link at the destination, and `CopyJob` reaches the same call — so a cut-and-paste of a
+  link within one filesystem now takes the fast path it never took before.
+- **The status line's repository block.** Five parts where there were two, and it draws on every
+  frame in any repository. The thing to watch is width: it is dropped whole rather than truncated
+  when the line is tight, so on a narrow terminal the commit date and summary disappear before the
+  branch does.
+- **`show_hidden` and the sort settings now reach the preview column.** They are applied to every
+  visible directory rather than the pathway, which is a few more property comparisons per frame and
+  should be invisible.
+- **The svn and bzr status parsers reject lines that are not records.** Both were verified against
+  real conflicted working copies, but only the conflict case — an unusual output shape from either
+  program is the thing that would slip through.
 
 ### Verifying by driving the real binary
 
