@@ -107,11 +107,19 @@ class Screen:
 
     # -- feeding it ---------------------------------------------------------------------
 
-    def feed(self, data: bytes) -> None:
+    def feed(self, data: bytes) -> bytes:
+        """Consume what is complete and hand back any escape sequence cut in half.
+
+        A read boundary lands in the middle of a sequence often enough to matter: without this
+        the parser prints the body as text, and a row comes out as `27;1H| file-l0024.2xttxt`.
+        The caller prepends the remainder to the next chunk.
+        """
         i = 0
         while i < len(data):
             b = data[i]
             if b == 0x1B:
+                if i + 1 >= len(data):                  # nothing after ESC yet
+                    return data[i:]
                 m = OSC.match(data, i)
                 if m:                                   # window titles and the like
                     i = m.end()
@@ -121,7 +129,9 @@ class Screen:
                     self._csi(m.group(1).decode("ascii", "replace"), m.group(2))
                     i = m.end()
                     continue
-                if i + 1 < len(data) and data[i + 1] == 0x4D:   # ESC M, reverse index
+                if data[i + 1] in (0x5B, 0x5D):         # CSI or OSC begun but not finished
+                    return data[i:]
+                if data[i + 1] == 0x4D:                 # ESC M, reverse index
                     self._reverse_index()
                     i += 2
                     continue
@@ -139,11 +149,22 @@ class Screen:
                 end = i
                 while end < len(data) and data[end] >= 0x20 and data[end] != 0x1B:
                     end += 1
-                for ch in data[i:end].decode("utf-8", "replace"):
+                chunk = data[i:end]
+                if end == len(data) and chunk[-1:] >= b"\x80":
+                    # A UTF-8 character split across reads would decode as a replacement
+                    # character and never recover, so hold the tail back too.
+                    tail = len(chunk) - len(chunk.rstrip(bytes(range(0x80, 0x100))))
+                    if tail and tail < 4:
+                        for ch in chunk[:-tail].decode("utf-8", "replace"):
+                            self._put(ch)
+                        return data[end - tail:]
+                for ch in chunk.decode("utf-8", "replace"):
                     self._put(ch)
                 i = end
                 continue
             i += 1
+
+        return b""
 
     def _put(self, ch: str) -> None:
         if self.col >= self.cols:                       # wrap, as a terminal does
@@ -247,6 +268,7 @@ class Session:
         program = os.path.abspath(shutil.which(argv[0]) or argv[0])
         argv = [program, *argv[1:]]
 
+        self._pending = b""
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.environ["TERM"] = "xterm-256color"
@@ -286,7 +308,7 @@ class Session:
             if not data:
                 self.closed = True
                 return
-            self.screen.feed(data)
+            self._pending = self.screen.feed(self._pending + data)
 
     settle = wait
 
