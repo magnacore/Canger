@@ -4665,6 +4665,46 @@ Under a pty, in a repository with every status. Before the fix the line ended
 and the mark follows the cursor: `+` changed, `X` conflict, `?` untracked, nothing at all on an
 entry whose status is `none` — which is ranger's `' '.strip()`.
 
+## All four version-control backends verified — 2026-09-01
+
+`hg`, `svn` and `bzr` installed, so the method used for git was repeated for the other three:
+ranger's own backend class driven directly with a stand-in object, Canger's backend pointed at the
+same repository, both dumped as JSON and compared.
+
+| backend | repository built | result |
+|---|---|---|
+| git | staged, changed, deleted, real merge conflict, untracked, ignored, rename, ignored dir, empty dir; plus four remote states, a detached head and no remote | **identical** |
+| hg | modified, added, removed, missing, untracked, ignored dir and file, clean | **identical** |
+| svn | added, modified, real text conflict, deleted, missing, unversioned, ignored | **identical** |
+| bzr | added, modified, missing, removed, untracked, ignored | identical but for the head commit |
+
+Three things worth keeping.
+
+**Ranger's svn parser has a bug, and Canger reproduces it exactly.** `svn status` ends with a
+`Summary of conflicts:` block when there are conflicts, and both parsers read those trailing lines
+as status records — both produce a phantom subpath `"of conflicts:"` with status `unknown`. It is
+inert: no real path ever matches that key, and it only appears alongside a conflict, which outranks
+`unknown` in the directory precedence. Left alone deliberately; it is a faithful port, and the
+divergence would be worth less than the fidelity.
+
+**Ranger's bzr head commit never works, and Canger's does.** Ranger's `_log` matches
+`-+\n(.+?)\n(?:-|\Z)` against the output of `bzr log --log-format long`, but its own `_run` strips
+the trailing newline the `\n\Z` needs. Measured, not inferred: zero entries as ranger runs it, one
+if the newline is kept. So ranger shows no commit on the status line for a Bazaar tree. Canger asks
+differently (`log --limit 1 --revision last:1 --log-format line`) and gets the commit.
+
+**Two things I had said were wrong, both corrected by measuring.**
+
+* I said there was no `chg` on Debian and therefore ranger's Mercurial backend could not run. There
+  is no *package* called `chg`, but the `mercurial` package ships `/usr/bin/chg`. Ranger's hg
+  backend runs fine, and the hg comparison above is a clean like-for-like.
+* I said Bazaar was the deadest of the four and the likeliest thing to drop. **`bzr` is not
+  outdated.** On Debian 13 it is an alternatives symlink to Breezy 3.3.11, which is maintained, and
+  it works: `PATH=/usr/bin:/bin bzr --version` reports `Breezy (brz) 3.3.11`. It fails in this
+  user's shell only because anaconda's `python3` comes first on `PATH` and has no `breezy` module —
+  an environment quirk, not obsolescence. Removal was proposed on the condition that it was
+  outdated; the condition is false, so nothing was removed.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
