@@ -2181,30 +2181,68 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <summary>Pushes the current settings onto the directories being shown.</summary>
-    private void ApplySettingsToDirectory()
+    private void ApplySettingsToDirectory() =>
+        ApplySettings(
+            CurrentTab,
+            Tabs,
+            Settings.Viewmode,
+            new SortOrder(
+                SortOrder.ParseKey(Settings.Sort),
+                Settings.SortReverse,
+                Settings.SortDirectoriesFirst,
+                Settings.SortCaseInsensitive,
+                Settings.SortUnicode),
+            Settings.ShowHidden,
+            Settings.HiddenFilter,
+            Settings.AutoupdateCumulativeSize);
+
+    /// <summary>Gives each directory the settings that decide what it lists and in what order.</summary>
+    /// <param name="current">The tab in front of the user.</param>
+    /// <param name="tabs">Every open tab, for the view mode that shows them all at once.</param>
+    /// <param name="viewmode">The <c>viewmode</c> setting.</param>
+    /// <param name="order">The <c>sort</c> family, already resolved.</param>
+    /// <param name="showHidden">The <c>show_hidden</c> setting.</param>
+    /// <param name="hiddenPattern">The <c>hidden_filter</c> setting.</param>
+    /// <param name="autoupdate">The <c>autoupdate_cumulative_size</c> setting.</param>
+    /// <remarks>
+    /// <para>
+    /// Every setter here re-derives the listing on a change and returns immediately on a
+    /// non-change, so this is cheap to call each frame and there is nothing to remember to
+    /// invalidate.
+    /// </para>
+    /// <para>
+    /// The set is <see cref="VisibleDirectories"/>, and it has to be: this walked
+    /// <c>Pathway</c> instead, which leaves out the preview column. Pressing backspace to show
+    /// hidden files updated every column except the one on the right, which kept the listing it
+    /// had — and so did a change of sort order. Ranger has no such gap because every directory
+    /// binds itself to these settings when it is created
+    /// (<c>container/directory.py:140-148</c>), so all of them refilter at once.
+    /// </para>
+    /// <para>
+    /// The set is chosen <em>here</em>, from the tab, rather than passed in. Taking a ready-made
+    /// list read better and was worse: the defect was the choice of set, so a test that handed
+    /// this method the right one passed while the caller went on handing it the wrong one. With
+    /// the choice inside, there is no seam left to get wrong and the tests reach it.
+    /// </para>
+    /// <para>
+    /// Static, and given everything it needs, so the rule can be checked without standing up a
+    /// terminal — as <see cref="VisibleDirectories"/> and <see cref="FocusedOn"/> are.
+    /// </para>
+    /// </remarks>
+    internal static void ApplySettings(Tab current, IReadOnlyDictionary<int, Tab> tabs,
+                                       string? viewmode, SortOrder order, bool showHidden,
+                                       string hiddenPattern, bool autoupdate)
     {
-        SortOrder order = new(
-            SortOrder.ParseKey(Settings.Sort),
-            Settings.SortReverse,
-            Settings.SortDirectoriesFirst,
-            Settings.SortCaseInsensitive,
-            Settings.SortUnicode);
+        ArgumentNullException.ThrowIfNull(current);
+        ArgumentNullException.ThrowIfNull(tabs);
+        ArgumentNullException.ThrowIfNull(hiddenPattern);
 
-        bool autoupdate = Settings.AutoupdateCumulativeSize;
-
-        foreach (DirectoryNode directory in CurrentTab.Pathway)
+        foreach (DirectoryNode directory in VisibleDirectories(current, tabs, viewmode))
         {
-            directory.ShowHidden = Settings.ShowHidden;
-            directory.HiddenPattern = Settings.HiddenFilter;
+            directory.ShowHidden = showHidden;
+            directory.HiddenPattern = hiddenPattern;
             directory.SortOrder = order;
             directory.AutoupdateCumulativeSize = autoupdate;
-        }
-
-        // The directory shown to the right is measured and re-read like any other, so it needs the
-        // setting too — and it is the one a `dc` is most often aimed at, since the cursor is on it.
-        if (CurrentTab.SelectedDirectory is { } selected)
-        {
-            selected.AutoupdateCumulativeSize = autoupdate;
         }
     }
 

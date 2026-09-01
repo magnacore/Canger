@@ -4570,6 +4570,41 @@ alone, three of them fail. The dangling-link and link-to-file tests pass either 
 handles both, as the table says — and the overwrite test discriminates only on the exception's
 exact type, so it is documentation rather than proof.
 
+## Backspace did not reach the preview column — 2026-09-01
+
+`<backspace>` is `set show_hidden!`. It updated every column except the one on the right, which
+kept the listing it already had.
+
+`Browser.ApplySettingsToDirectory` pushed `show_hidden`, `hidden_filter` and the whole `sort`
+family onto `CurrentTab.Pathway` — the ancestry and the current directory. The preview directory
+was handled by a separate two-line block that gave it `autoupdate_cumulative_size` **and nothing
+else**. The setters on `DirectoryNode` re-derive the listing the moment they change, so the
+mechanism was there and one directory was simply never fed. That is the eighth instance of that
+shape in this port.
+
+The same omission was quietly doing it to the sort order: the preview column kept whatever order
+it was loaded with however `sort`, `sort_reverse` or `sort_directories_first` changed.
+
+Ranger has no such gap because it is not a set at all — every `Directory` binds itself to
+`setopt.show_hidden`, `setopt.hidden_filter` and the sort options in its constructor
+(`container/directory.py:140-148`), so all of them refilter at once.
+
+`VisibleDirectories` was already the right set — pathway, plus the preview directory, plus every
+tab in multipane — and its own doc comment already claimed to be "the same set
+`ApplySettingsToDirectory` walks". It was not. It is now.
+
+**The interesting part is the test, not the fix.** The first version extracted
+`ApplySettings(IEnumerable<DirectoryNode>, …)` and handed it `VisibleDirectories(...)` from the
+test. Four tests, all green — and then the control: the production call reverted to `Pathway`,
+the bug fully back, **1868 of 1868 still passing**. The defect was the *choice of set*, and a test
+that makes that choice itself can never catch a caller making it differently. So the choice moved
+inside: `ApplySettings` now takes the tab and works out the set, leaving no seam. With the defect
+reintroduced *there*, three of the four tests fail.
+
+A second instrument fault caught the same way: `TheSortOrderReachesThePreviewColumnToo` passed
+under the mutation, because the preview directory had exactly one visible entry and reversing a
+one-element list changes nothing. It now asserts there is more than one before reversing.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
