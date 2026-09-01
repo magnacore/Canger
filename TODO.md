@@ -4899,6 +4899,65 @@ noticed after 1.71s without a keystroke
 With the call in `BrowserColumn` commented out and republished, it is never noticed. The 1.71 s is
 `idle_delay` — it appears on the next redraw, which is when anything else would have appeared too.
 
+## Large directories: measured, and nothing to fix — 2026-09-01
+
+*What is left* carried "performance work on very large directories — nothing is known to be slow;
+nothing has been measured either" as a placeholder. Measured now, so it can stop being a question.
+
+Fixtures: 200 files, 50 000 files and 20 000 subdirectories, on tmpfs **and** on the real btrfs
+home — the scratchpad is RAM and would have flattered every I/O number. Three passes, reading the
+warmed one: the first pass made btrfs look faster than tmpfs, which was JIT and page cache rather
+than a filesystem result, and would have been published as one.
+
+**Nothing a person feels degrades with size.** Worst-case cursor jump, `gg` then `G`, forcing a
+full repaint and a scroll across the whole listing:
+
+| | 200 files | 50 000 files | 20 000 dirs |
+|---|---|---|---|
+| `vcs_aware false` | 10 ms | 10 ms | 10 ms |
+| `vcs_aware true` | 10 ms | 10 ms | 11 ms |
+
+10 ms is the polling floor, so the truth is at or below it everywhere. Opening a 50 000-file
+directory costs 0.74 s against 0.83 s for 200 files — that is startup, not the listing.
+
+Component costs at 50 000 entries, for the record: refilter (a `show_hidden` toggle) 8.7 ms, a sort
+change 78 ms, the status bar's marked count 0.35 ms per frame, and the metadata re-stat added the
+same day 0.19 ms and flat regardless of size.
+
+### The one real cost, and why it was left
+
+Opening a directory of many *subdirectories* is slow, and it is entirely the version-control scan:
+
+```
+20k dirs   vcs_aware=true    2.66s        50k files  vcs_aware=true    1.22s
+20k dirs   vcs_aware=false   1.10s        50k files  vcs_aware=false   1.25s
+```
+
+About 78 µs per subdirectory, once, on the first frame. Files cost nothing because the test is
+`e.IsDirectory && …`. Each of the twenty thousand subdirectories walks up the tree testing for four
+backend markers at every ancestor level, and they all share the same ancestors, so the same answer
+is computed twenty thousand times. It is cached per queried path afterwards, which is why the warm
+cost is 8 ms.
+
+The fix would be to cache "there is no repository at or above here" per ancestor. **Not done, and
+recommended against**: it needs invalidating when a `git init` happens underneath, and a stale
+cache is this file's commonest defect shape — nine instances of a mechanism nothing feeds. The
+symptom needs thousands of subdirectories in one place, with `vcs_aware` on, once per entry.
+`~/Projects` has dozens.
+
+A second hypothesis was tested and **disproved**: `automatically_count_files` is not involved
+(2.76 s on, 2.60 s off).
+
+### The instrument, twice
+
+`tools/screen.py` caught two faults in its own measurements. The first protocol pressed `G` five
+times and averaged — but `G` at the bottom of a listing is a no-op, so four of the five rounds
+measured a screen that was already correct and reported 0 ms. The second was in the harness: a read
+boundary landing mid-escape-sequence printed the body as text, so a row came out as
+`27;1H| file-l0024.2xttxt`, which reads as a rendering bug in Canger. Both were visible only
+because `require` prints the screen when it fails. The harness now holds back a partial sequence
+for the next chunk.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
@@ -4910,8 +4969,10 @@ Nothing from ranger. Possible directions from here:
 - **A `canger.desktop` and a man page install path.** `./build.sh dist` produces the tarballs; what
   is missing is the desktop entry and somewhere for `doc/canger.1` to land so `?` → `m` works
   without the tarball's own directory.
-- **Performance work on very large directories.** Nothing is known to be slow; nothing has been
-  measured either.
+- **An ancestor cache for the version-control scan.** Measured, deliberately not done — see
+  *Large directories: measured, and nothing to fix*. It is 1.5 s once, on entering a directory of
+  thousands of subdirectories, and the fix is the kind of cache that has gone wrong here nine
+  times.
 
 ### Watch these in daily use
 
@@ -4921,6 +4982,10 @@ nothing reported, so it comes off this list.
 
 What is new and least exercised, most consequential first:
 
+- **Re-reading the metadata of rows on screen.** New, and it runs on every draw of every column.
+  It should show as a `chmod` or a growing file updating within a couple of seconds without a
+  keystroke, and should show as nothing at all otherwise — a listing that flickers or a cursor that
+  moves on its own would be this.
 - **`find` and `search_inc` now move the cursor instead of narrowing.** The largest behavioural
   change in a long while, in a key pressed constantly, and the one most likely to feel wrong before
   it feels right. `travel`, `filter` and `hide` should be unchanged; if any of them stops narrowing,
