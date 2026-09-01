@@ -168,4 +168,98 @@ public sealed class LocalFileSystemTests : IDisposable
         // resolved rather than against the literal path we built.
         Assert.Equal(_fs.ResolvePath(Path_("real")), _fs.ResolvePath(Path_("alias")));
     }
+    /// <summary>
+    /// Renaming a symbolic link, which is where the kernel and .NET disagree about what a link is.
+    /// </summary>
+    /// <remarks>
+    /// Reported as "a link to a file can be renamed, a link to a folder cannot", with
+    /// <c>rename: Could not find file '…'</c>. Under <c>lstat</c> a link to a directory is not a
+    /// directory, so <see cref="LocalFileSystem.Rename"/> sent it to <c>File.Move</c> — which
+    /// does not consider it a file either and throws <see cref="FileNotFoundException"/>.
+    /// <c>Directory.Move</c> renames the link itself in every case.
+    /// </remarks>
+    [Fact]
+    public void Rename_MovesALinkToADirectoryAsALink()
+    {
+        Directory.CreateDirectory(Path_("target"));
+        File.WriteAllText(Path.Join(Path_("target"), "inside.txt"), "kept");
+        File.CreateSymbolicLink(Path_("link"), Path_("target"));
+
+        _fs.Rename(Path_("link"), Path_("renamed"));
+
+        Assert.False(Path.Exists(Path_("link")));
+        Assert.NotNull(new FileInfo(Path_("renamed")).LinkTarget);
+        Assert.Equal(Path_("target"), new FileInfo(Path_("renamed")).LinkTarget);
+    }
+
+    [Fact]
+    public void Rename_LeavesTheDirectoryALinkPointsAtWhereItWas()
+    {
+        // The link moves; nothing behind it does. Renaming the target instead would be silent
+        // destruction of whatever was pointing at it.
+        Directory.CreateDirectory(Path_("target"));
+        File.WriteAllText(Path.Join(Path_("target"), "inside.txt"), "kept");
+        File.CreateSymbolicLink(Path_("link"), Path_("target"));
+
+        _fs.Rename(Path_("link"), Path_("renamed"));
+
+        Assert.True(Directory.Exists(Path_("target")));
+        Assert.Equal("kept", File.ReadAllText(Path.Join(Path_("target"), "inside.txt")));
+    }
+
+    [Fact]
+    public void Rename_MovesALinkWhoseTargetDoesNotExist()
+    {
+        // A dangling link is still a name in the directory and still renameable.
+        File.CreateSymbolicLink(Path_("link"), Path_("gone"));
+
+        _fs.Rename(Path_("link"), Path_("renamed"));
+
+        Assert.Equal(Path_("gone"), new FileInfo(Path_("renamed")).LinkTarget);
+    }
+
+    [Fact]
+    public void Rename_StillMovesALinkToAFileAsALink()
+    {
+        // The case that always worked; it must keep working, and keep being a link.
+        File.WriteAllText(Path_("target.txt"), "kept");
+        File.CreateSymbolicLink(Path_("link"), Path_("target.txt"));
+
+        _fs.Rename(Path_("link"), Path_("renamed"));
+
+        Assert.Equal(Path_("target.txt"), new FileInfo(Path_("renamed")).LinkTarget);
+        Assert.Equal("kept", File.ReadAllText(Path_("target.txt")));
+    }
+
+    [Fact]
+    public void Rename_RefusesToOverwriteWhateverIsAlreadyAtTheDestination()
+    {
+        // The no-overwrite contract, checked at the layer that has to keep it rather than only at
+        // the command that calls it.
+        Directory.CreateDirectory(Path_("target"));
+        File.CreateSymbolicLink(Path_("link"), Path_("target"));
+        File.WriteAllText(Path_("occupied"), "do not lose me");
+
+        // ThrowsAny, because what matters is that it refuses and nothing is lost — not which
+        // subclass the refusal arrives as. That also makes this test no help as a control: the
+        // two above it are what catch the defect.
+        Assert.ThrowsAny<IOException>(() => _fs.Rename(Path_("link"), Path_("occupied")));
+
+        Assert.Equal("do not lose me", File.ReadAllText(Path_("occupied")));
+        Assert.True(Path.Exists(Path_("link")));
+    }
+
+    [Fact]
+    public void Rename_StillMovesAPlainFileAndAPlainDirectory()
+    {
+        File.WriteAllText(Path_("file.txt"), "body");
+        Directory.CreateDirectory(Path_("dir"));
+
+        _fs.Rename(Path_("file.txt"), Path_("file-renamed.txt"));
+        _fs.Rename(Path_("dir"), Path_("dir-renamed"));
+
+        Assert.Equal("body", File.ReadAllText(Path_("file-renamed.txt")));
+        Assert.True(Directory.Exists(Path_("dir-renamed")));
+    }
+
 }
