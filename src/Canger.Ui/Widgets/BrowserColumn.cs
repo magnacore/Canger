@@ -513,11 +513,11 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
         bool binary = Linemodes?.BinaryPrefix ?? false;
         bool exact = Linemodes?.ExactBytes ?? false;
 
-        return entry.IsDirectory
-            ? LinemodeText.Size(entry, binary, countFiles, exact)
-            : entry.Size is { } size
-                ? HumanReadable.Format(size, binary, exact: exact)
-                : string.Empty;
+        // One call for both, rather than a directory going through the linemode and a file being
+        // formatted here. The two agreed on the figure, so the split looked harmless — until the
+        // linemode learned to mark a link with `->` and only directories got it, because only
+        // directories went through it.
+        return LinemodeText.Size(entry, binary, countFiles, exact);
     }
 
     /// <summary>Works out which contexts apply to an entry.</summary>

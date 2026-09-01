@@ -135,6 +135,53 @@ public abstract class FsNode : IEquatable<FsNode>
         }
     }
 
+    /// <summary>
+    /// Where the link points, written the way the link itself writes it.
+    /// </summary>
+    /// <remarks>
+    /// Not <see cref="RealPath"/>, which walks the whole chain to an absolute path. This is what
+    /// <c>readlink(2)</c> returns and what <c>ls -l</c> prints — so a link written as
+    /// <c>../shared</c> shows as <c>../shared</c> rather than as wherever that resolves to.
+    /// Ranger's status bar shows the same thing (<c>gui/widgets/statusbar.py:183</c>).
+    /// </remarks>
+    public string? LinkTarget
+    {
+        get
+        {
+            if (!IsSymbolicLink)
+            {
+                return null;
+            }
+
+            if (!_readLinkTarget)
+            {
+                _linkTarget = ReadLinkTarget();
+                _readLinkTarget = true;
+            }
+
+            return _linkTarget;
+        }
+    }
+
+    private string? _linkTarget;
+    private bool _readLinkTarget;
+
+    /// <summary>Reads the link's own contents, without following it.</summary>
+    private string? ReadLinkTarget()
+    {
+        try
+        {
+            // Whichever of the two describes it: a link to a directory answers on DirectoryInfo
+            // and a link to a file on FileInfo, and a broken one may answer on either.
+            return new System.IO.FileInfo(Path).LinkTarget
+                   ?? new System.IO.DirectoryInfo(Path).LinkTarget;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Whether this node is a symbolic link whose target could not be resolved.</summary>
     public bool IsBrokenSymbolicLink => IsSymbolicLink && Status is null;
 

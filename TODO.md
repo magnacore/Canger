@@ -4408,6 +4408,48 @@ Canger's never does.
 Left alone deliberately: it is a visible difference in a key used constantly, and worth changing on
 purpose rather than in passing.
 
+## A link looked like anything else
+
+Ranger marks a link twice over: the listing's info column is prefixed with `->`, so a linked
+folder reads `-> 3` rather than `3`, and the status bar replaces the size and the date with where
+the link goes. Canger did neither, so a shortcut was indistinguishable from the thing it points at
+except by colour.
+
+**Three separate causes for what looked like one.**
+
+The `->` existed in `LinemodeText.Size` — but only in the branch for a directory whose size had
+been measured with `dc`, which is the one case nobody starts from. Ranger prefixes the whole info
+column for any link, file and directory alike (`container/fsobject.py:342`,
+`container/directory.py:394`). Now computed once and prefixed once.
+
+The listing then only marked *directories*, because `BrowserColumn` sent directories through the
+linemode and formatted a file's size itself. The two agreed on the figure, so the split looked
+harmless — until the linemode learned something the other copy did not know. One call for both
+now, and the second copy is gone.
+
+The status bar had no idea what a link was: it showed the target's permissions, so a linked folder
+read `drwxrwxr-x`, saying nothing. Ranger takes the type character from the link and the
+permission bits from what it points at (`container/fsobject.py:347-358`) — which is why a link
+reads `lrwx------` — and puts ` -> destination` where the size and date would be
+(`gui/widgets/statusbar.py:180-186`). The destination is `readlink`, the link's own text, not the
+resolved path: a link written as `../shared` should say `../shared`.
+
+### The test double could not represent the thing being tested
+
+The first unit test said a linked *directory* had no count at all, while the live run showed `3`.
+`InMemoryFileSystem.ListDirectory` and `CountEntries` both required the path to be a directory,
+and a symlink is not one — so listing or counting a linked folder threw or answered null, and any
+test about one quietly measured nothing. `opendir(3)` follows links; the double does now.
+
+*A fixture that cannot express the case is worse than no fixture: it answers, and the answer looks
+like a result.*
+
+### And the fix for the file case had no test at all
+
+Removing the linemode change failed four tests; removing the `BrowserColumn` change failed none —
+which is exactly how the linked file shipped without its arrow while the linked directory had one.
+Three render tests cover it now, and removing that change fails one of them.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
