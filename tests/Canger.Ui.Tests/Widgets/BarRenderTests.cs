@@ -121,6 +121,25 @@ public class BarRenderTests
     }
 
     [Fact]
+    public void StatusBar_ShowsHowManyNamesTheFileHas()
+    {
+        // Between the permissions and the owner, where `ls -l` and ranger both put it. Nearly
+        // always 1, and worth showing for the moment it is not: deleting one name of a file with
+        // several does not delete the file, and nothing else on screen says so.
+        InMemoryFileSystem fs = new InMemoryFileSystem()
+            .AddFile("/home/user/alpha.txt", "content here");
+
+        Tab tab = new(new DirectoryCache(fs), "/home/user");
+        ScreenBuffer screen = new(80, 1);
+
+        StatusBar bar = new(new DefaultColorScheme()) { Tab = tab };
+        bar.Layout(new Rect(0, 0, 80, 1));
+        bar.Render(screen);
+
+        Assert.StartsWith("-rw-r--r-- 1 ", screen.TextAt(0), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StatusBar_ReportsThePositionInTheListing()
     {
         (Tab tab, _) = BuildTab();
