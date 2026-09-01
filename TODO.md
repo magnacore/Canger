@@ -4766,6 +4766,52 @@ claimed in its doc comment since it was written that it "skips where git is not 
 has no skip in it. Measured rather than assumed: with `/usr/bin` first on PATH, `skipped: 0`;
 without it, `skipped: 3`.
 
+## `f` narrowed the listing where ranger moves the cursor — 2026-09-01
+
+Carried on this file since the `fm` cursor fix, deliberately left because it is a visible change to
+a key pressed constantly. Now done.
+
+`find` is `scout -aets`. There is no `-f` and no `-p`, so ranger applies no filter at all: it moves
+the cursor as you type and opens on a unique match. Canger narrowed the listing whenever `-t` was
+set — which is every one of these aliases — and never moved the cursor:
+
+```
+find       scout -aets     no 'f', no 'p'  ->  move, never narrow
+search_inc scout -rts      the same
+travel     scout -aefklst  'f'             ->  narrow *and* move
+filter     scout -prts     'p' with 't'    ->  narrow
+hide       scout -prtsv    the same
+search     scout -rs       no 't'          ->  nothing until Enter
+mark       scout -mr       the same
+```
+
+So two of ranger's most-used searches hid the listing they were meant to be walking, and
+`search_inc` — an incremental search — was not incremental in the one way that matters.
+
+`scout.quick` narrows for `-f`, or for `-p` with `-t`, and calls `_count(move=asyoutype)` either
+way. Both narrowing kinds go through `PreviewFilter` here, Canger's one live-filter mechanism;
+admitting `-p`-with-`-t` is what stops the fix turning `:filter` into a regression.
+
+**`_count` is one pass doing two jobs**, and copying that shape mattered. It rotates the listing to
+start at the cursor, moves there on the first match when asked, and stops as soon as it knows there
+is more than one. `MoveToFirstMatch` already had the rotation, so it became a thin wrapper over the
+new `CountMatches`. The auto-open test changed with it: ranger asks whether exactly one thing
+*matches*, and Canger asked how many rows were *left* — a test that only ever came out true because
+the listing had been narrowed. Without narrowing it could have fired only in a directory of one
+file.
+
+Ranger's `_count` also returns 1 for `..`, which with `-a` closes the prompt. Not copied: no
+listing here holds an entry called `..`, so the prompt would close and the command behind it would
+report finding nothing. The empty-pattern and lone-`.` cases, which return 0, are copied.
+
+Nine tests. **Two controls, because the change has two halves and one masks the other**: narrowing
+to a single row moves the cursor by itself, so a single mutation looked half-clean. Cursor movement
+removed, correct narrowing kept: three fail. Narrowing restored to every flag, movement kept: two
+fail.
+
+Confirmed on the real binary under a pty: `:find gam` in a directory of five leaves all five on
+screen, and the relative line numbers put the cursor on `gamma.txt`.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
