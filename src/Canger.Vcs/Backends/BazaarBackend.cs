@@ -40,6 +40,11 @@ public sealed class BazaarBackend : IVcsBackend
             statuses.Add(Translate(line));
         }
 
+        if (ConflictedPaths(root).Any())
+        {
+            statuses.Add(VcsStatus.Conflict);
+        }
+
         return statuses.Count == 0 ? VcsStatus.Sync : VcsStatuses.Combine(statuses);
     }
 
@@ -68,6 +73,13 @@ public sealed class BazaarBackend : IVcsBackend
             {
                 statuses[line[PathColumn..].Trim().TrimEnd('/')] = Translate(line);
             }
+        }
+
+        // Last, so it outranks whatever the status line said: a conflicted file also shows as
+        // modified there, and a conflict is the more urgent of the two.
+        foreach (string path in ConflictedPaths(root))
+        {
+            statuses[path] = VcsStatus.Conflict;
         }
 
         return statuses;
@@ -175,9 +187,71 @@ public sealed class BazaarBackend : IVcsBackend
 
         foreach (string line in output.Split('\n'))
         {
-            if (line.Length >= 2)
+            if (line.Length >= 2 && !DescribesSomethingOtherThanAPath(line[0]))
             {
                 yield return line;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether a short-status line carries prose rather than a path.
+    /// </summary>
+    /// <param name="code">The line's first column.</param>
+    /// <returns><see langword="true"/> when nothing after column four is a filename.</returns>
+    /// <remarks>
+    /// <para>
+    /// Bazaar's first column is documented as the versioning state, and two of its values do not
+    /// introduce a path at all:
+    /// </para>
+    /// <code>
+    ///  M  f.txt
+    /// C   Text conflict in f.txt
+    /// P   T 2026-09-01 theirs
+    /// </code>
+    /// <para>
+    /// <c>C</c> is followed by a human-readable description of the conflict and <c>P</c> by a
+    /// pending merge's revision line. Read as records they become the subpaths
+    /// <c>Text conflict in f.txt</c> and <c>T 2026-09-01 theirs</c>, each with status
+    /// <c>unknown</c> because neither code appears in the translation table. Ranger has the same
+    /// defect (<c>ext/vcs/bzr.py:110-125</c>) and Canger reproduced it.
+    /// </para>
+    /// <para>
+    /// Skipping <c>C</c> here would lose the conflict, so it is read back from
+    /// <see cref="ConflictedPaths"/>, which names the files instead of describing them.
+    /// </para>
+    /// </remarks>
+    private static bool DescribesSomethingOtherThanAPath(char code) => code is 'C' or 'P';
+
+    /// <summary>The files Bazaar considers conflicted.</summary>
+    /// <param name="root">The working tree.</param>
+    /// <returns>Paths relative to the tree.</returns>
+    /// <remarks>
+    /// <c>bzr conflicts</c> prints descriptions; <c>--text</c> prints the paths instead, which is
+    /// the only machine-readable form it offers. It covers text conflicts, which is what a merge
+    /// leaves behind in almost every case. Other kinds are simply not marked — the same as before,
+    /// and better than inventing a subpath that cannot exist.
+    /// </remarks>
+    private IEnumerable<string> ConflictedPaths(string root)
+    {
+        string output;
+
+        try
+        {
+            output = VcsProcess.Run(Program, root, "conflicts", "--text");
+        }
+        catch (VcsException)
+        {
+            yield break;
+        }
+
+        foreach (string line in output.Split('\n'))
+        {
+            string path = line.Trim();
+
+            if (path.Length > 0)
+            {
+                yield return path.TrimEnd('/');
             }
         }
     }
