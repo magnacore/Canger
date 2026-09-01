@@ -4815,6 +4815,45 @@ fail.
 Confirmed on the real binary under a pty: `:find gam` in a directory of five leaves all five on
 screen, and the relative line numbers put the cursor on `gamma.txt`.
 
+## A leading `NAME=value` was run as a program — 2026-09-01
+
+`fs` broke with *An error occurred trying to start process 'FZF_DEFAULT_COMMAND=locate home'*.
+
+`CommandLine.TrySplit` decides whether a line can be run without a shell, and its last test was
+only whether the first word is a shell builtin. A leading `NAME=value` is equally the shell's —
+`execve` has no notion of it — so `FZF_DEFAULT_COMMAND='locate home' fzf -e -i` split into
+`["FZF_DEFAULT_COMMAND=locate home", "fzf", "-e", "-i"]` and Canger tried to start a file by that
+name.
+
+**It had been latent since the fast path was written.** Every other line in the shipped and user
+configuration that sets a variable this way also carries a metacharacter, so it was sent to the
+shell for a different reason and the hole never showed. The neighbouring `fzf_select` is the
+clearest case: it sets `FZF_DEFAULT_COMMAND` too, but its command contains `|` and `{}`. Writing
+one line without a metacharacter was all it took.
+
+The first word is now also refused when it is a shell identifier followed by `=`. The identifier
+rule is what keeps ordinary arguments out: `--width=80` begins with a dash, `./build=x` with a dot,
+and only the *first* word decides, so `make CC=clang -j4` still takes the fast path.
+
+Nine tests, seven on the splitter and two through the real runner — because the splitter refusing
+the line is not the same as the line working, and the report was from the running end. With the
+test put back to builtins alone, five fail, including the end-to-end one.
+
+### How it got there
+
+Found by breaking it. `fzf_locate` piped into fzf, and fzf drains its standard input to the end
+before exiting, so pressing Escape half a second in left the screen blank for the 1.66 s `locate`
+still had to run. Rewriting it as `FZF_DEFAULT_COMMAND='locate home' fzf` — which is how the
+neighbouring `fzf_select` was already written, and which lets fzf kill the producer — takes that to
+0.13 s. That rewrite is what exposed this.
+
+**A mechanism I proposed and had to withdraw.** I suggested repainting as soon as the child gave
+the terminal back, detected with `tcgetpgrp`. Measured on the real binary: the tty's foreground
+process group is Canger's own pid throughout, including while fzf is up, because .NET's `Process`
+does not `setpgid` the child. There is no transition to observe, and job control would not help
+either — the whole pipeline is one group owned by the shell, which outlives fzf. Offered before
+checking; the check took one probe.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
