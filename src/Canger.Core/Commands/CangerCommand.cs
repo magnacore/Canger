@@ -171,25 +171,36 @@ public abstract class CangerCommand
         ];
     }
 
-    /// <summary>Completes a directory path being typed.</summary>
-    /// <param name="includeBookmarks">
-    /// Whether bookmarks under a candidate are offered alongside it. The <c>cd_bookmarks</c>
-    /// setting, which is on by default and which <c>:cd</c> asks for.
+    /// <summary>What a partly-typed path could be finished with.</summary>
+    /// <param name="Directory">The directory the names were read from, fully resolved.</param>
+    /// <param name="Head">
+    /// The typed text up to and including the last separator, echoed back unchanged so a
+    /// <c>~</c> stays a <c>~</c> and an absolute path stays absolute rather than being rewritten
+    /// under the user's feet.
     /// </param>
-    /// <returns>The candidate lines.</returns>
-    /// <remarks>
-    /// The typed text is split into the directory part and the partial name, and the directory
-    /// part is what gets listed. Without that only names in the current directory completed, so
-    /// <c>:cd /usr/lo</c> and <c>:cd ~/Doc</c> did nothing at all — which is most of the typing a
-    /// <c>:cd</c> saves. Ranger splits it the same way (<c>config/commands.py:291-297</c>).
-    /// </remarks>
-    protected IReadOnlyList<string> CompleteDirectories(bool includeBookmarks = false)
-    {
-        string typed = Rest(1);
-        string prefix = Line.Word(0) + " ";
+    /// <param name="Names">
+    /// The matching names in <paramref name="Directory"/>, sorted, each with a trailing
+    /// <c>/</c> when it is a directory.
+    /// </param>
+    protected sealed record PathCompletion(
+        string Directory,
+        string Head,
+        IReadOnlyList<string> Names);
 
-        // What the user typed up to the last separator is echoed back unchanged, so a `~` stays a
-        // `~` and an absolute path stays absolute rather than being rewritten under their feet.
+    /// <summary>Reads the directory a path is being typed into and matches the partial name.</summary>
+    /// <param name="typed">The path fragment as typed.</param>
+    /// <param name="directoriesOnly">
+    /// Whether files are left out. <c>:cd</c> goes to directories, so a file among its candidates
+    /// is only ever a wrong guess; a shell argument can be either.
+    /// </param>
+    /// <returns>The split, and what could finish it.</returns>
+    /// <remarks>
+    /// Read from the filesystem rather than from the listing, because a path being completed is
+    /// usually one Canger has never loaded — the whole point of typing <c>/usr/lo</c> is that the
+    /// user is not there.
+    /// </remarks>
+    protected PathCompletion CompletePath(string typed, bool directoriesOnly)
+    {
         int separator = typed.LastIndexOf('/');
         string head = separator < 0 ? string.Empty : typed[..(separator + 1)];
         string tail = separator < 0 ? typed : typed[(separator + 1)..];
@@ -204,17 +215,23 @@ public abstract class CangerCommand
             directory = FileSystem.UserPath.Expand(head, directory);
         }
 
-        List<string> candidates = [];
+        List<string> names = [];
 
         try
         {
-            foreach (string entry in System.IO.Directory.EnumerateDirectories(directory))
+            IEnumerable<string> entries = directoriesOnly
+                ? System.IO.Directory.EnumerateDirectories(directory)
+                : System.IO.Directory.EnumerateFileSystemEntries(directory);
+
+            foreach (string entry in entries)
             {
                 string name = System.IO.Path.GetFileName(entry);
 
                 if (name.StartsWith(tail, StringComparison.OrdinalIgnoreCase))
                 {
-                    candidates.Add(name);
+                    // The trailing slash says "there is more below here" and lets the next Tab
+                    // carry straight on into it without the user typing the separator.
+                    names.Add(System.IO.Directory.Exists(entry) ? name + "/" : name);
                 }
             }
         }
@@ -224,9 +241,30 @@ public abstract class CangerCommand
             // right answer and refusing to complete anything else would not be.
         }
 
-        candidates.Sort(StringComparer.Ordinal);
+        names.Sort(StringComparer.Ordinal);
 
-        List<string> lines = [.. candidates.Select(name => prefix + head + name + "/")];
+        return new PathCompletion(directory, head, names);
+    }
+
+    /// <summary>Completes a directory path being typed.</summary>
+    /// <param name="includeBookmarks">
+    /// Whether bookmarks under a candidate are offered alongside it. The <c>cd_bookmarks</c>
+    /// setting, which is on by default and which <c>:cd</c> asks for.
+    /// </param>
+    /// <returns>The candidate lines.</returns>
+    /// <remarks>
+    /// The typed text is split into the directory part and the partial name, and the directory
+    /// part is what gets listed. Without that only names in the current directory completed, so
+    /// <c>:cd /usr/lo</c> and <c>:cd ~/Doc</c> did nothing at all — which is most of the typing a
+    /// <c>:cd</c> saves. Ranger splits it the same way (<c>config/commands.py:291-297</c>).
+    /// </remarks>
+    protected IReadOnlyList<string> CompleteDirectories(bool includeBookmarks = false)
+    {
+        string prefix = Line.Word(0) + " ";
+        PathCompletion completion = CompletePath(Rest(1), directoriesOnly: true);
+
+        List<string> lines =
+            [.. completion.Names.Select(name => prefix + completion.Head + name)];
 
         if (!includeBookmarks)
         {
@@ -240,13 +278,14 @@ public abstract class CangerCommand
 
         foreach (string target in FileManager.Bookmarks.Entries.Values)
         {
-            foreach (string name in candidates)
+            foreach (string name in completion.Names)
             {
-                string under = System.IO.Path.Join(directory, name) + "/";
+                string under = System.IO.Path.Join(completion.Directory, name);
 
                 if (target.StartsWith(under, StringComparison.Ordinal))
                 {
-                    bookmarks.Add(prefix + head + System.IO.Path.GetRelativePath(directory, target));
+                    bookmarks.Add(prefix + completion.Head +
+                                  System.IO.Path.GetRelativePath(completion.Directory, target));
                     break;
                 }
             }
