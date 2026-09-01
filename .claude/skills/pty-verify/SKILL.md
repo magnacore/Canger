@@ -60,7 +60,13 @@ Every one was learned by being fooled. They are not hypothetical.
    opened. Both numbers were withdrawn. Call `require` on something that could only be true in
    the state you meant to reach, *then* measure.
 
-A sixth, when running ranger for comparison: unset `RANGER_LEVEL` or ranger starts with a
+A sixth, found by the harness itself while measuring: **a read boundary lands in the middle of an
+escape sequence often enough to matter.** Left unhandled the parser prints the body as text and a
+row comes out as `27;1H| file-l0024.2xttxt`, which reads as a rendering bug in the program under
+test. `Screen.feed` now hands back any sequence cut in half and `Session` prepends it to the next
+chunk. The same is done for a UTF-8 character split across reads.
+
+A seventh, when running ranger for comparison: unset `RANGER_LEVEL` or ranger starts with a
 "nested instance" warning over the screen. `Session` clears it.
 
 ## Two things that are not traps but cost time anyway
