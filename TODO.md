@@ -4854,6 +4854,51 @@ does not `setpgid` the child. There is no transition to observe, and job control
 either — the whole pipeline is one group owned by the shell, which outlives fzf. Offered before
 checking; the check took one probe.
 
+## Noticing a `chmod` made in another terminal — 2026-09-01
+
+Carried in *What is left* as "not worth doing unasked". Asked for, and done.
+
+A directory's mtime changes when an entry is added, removed or renamed, and that is all
+`LoadIfOutdated` watches. It does **not** change when an entry itself changes. A `chmod` in
+another terminal, a `chown`, or a file being written to all leave it alone, so the permissions,
+owner, size and modification time on screen stayed as they were first read — for the whole session
+if nothing else forced a reload. Ranger has the same gap and this is a deliberate divergence.
+
+`DirectoryNode.RefreshMetadata(first, count)` re-reads a range of entries in place, and
+`BrowserColumn` calls it for exactly the rows it is about to draw. **Only the rows on screen**,
+which is what makes it affordable: a directory of twenty thousand entries costs the same as one of
+twenty. Nodes are updated through the existing `FsNode.UpdateStatus` rather than replaced, so
+marks, tags and the cursor survive.
+
+Three decisions worth keeping:
+
+- **It does not re-sort or re-filter.** A file growing while you watch it would otherwise move
+  under the cursor in a size-sorted listing, and a background timer moving the cursor is worse than
+  a size that lags until the next reload.
+- **Change is judged field by field, not by the record's own equality.** `FileStatus` is a
+  `readonly record struct`, so `==` would compare the access time too — and reading a file bumps
+  that, so it would report a change on nearly every pass and ask for a repaint that draws the same
+  thing. A `chmod` is still caught, because it moves `Mode` as well as the change time.
+- **`freeze_files` suppresses it.** Holding the listing exactly as it is, then quietly re-reading
+  the metadata behind it, would be the same surprise in a smaller form.
+
+Capped at four passes a second. The cost is one `stat` per visible row — a hundred or so across
+three columns, nothing locally and not nothing on a network share.
+
+**Two controls, because there are two halves.** Seven unit tests against a real temporary tree;
+disabling `RefreshMetadata` fails three of them. That says nothing about the call site, which is
+the seam this file has been caught by twice — so the wiring was checked with `tools/screen.py`:
+start Canger on a file at mode 600, `chmod` it to 644 from outside, and watch the status line.
+
+```
+before chmod : -rw------- 1 manuj manuj 6 B 2026-09-01 12:54
+after  chmod : -rw-r--r-- 1 manuj manuj 6 B 2026-09-01 12:54
+noticed after 1.71s without a keystroke
+```
+
+With the call in `BrowserColumn` commented out and republished, it is never noticed. The 1.71 s is
+`idle_delay` — it appears on the next redraw, which is when anything else would have appeared too.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
@@ -4865,10 +4910,6 @@ Nothing from ranger. Possible directions from here:
 - **A `canger.desktop` and a man page install path.** `./build.sh dist` produces the tarballs; what
   is missing is the desktop entry and somewhere for `doc/canger.1` to land so `?` → `m` works
   without the tarball's own directory.
-- **Noticing a `chmod` made in another terminal.** Both Canger and ranger judge staleness by the
-  directory's mtime, which a `chmod` does not touch, so neither sees it. Fixing it means
-  re-statting the visible rows on a timer — bounded, but a real divergence from ranger, and not
-  worth doing unasked.
 - **Performance work on very large directories.** Nothing is known to be slow; nothing has been
   measured either.
 
