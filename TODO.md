@@ -4467,6 +4467,39 @@ a file with one name beside it reads `-rw-rw-r-- 1`, both matching `ls -l`.
 The colour context was already there — `nlink` is one of ranger's, so it came in with the
 generated set — and had never been used by anything.
 
+## The preview column stayed wrong for two seconds
+
+With `collapse_preview` on: enter an empty directory, come back, and the preview column is
+collapsed and the listing stretched across it — then two seconds later everything snaps back.
+
+Not intended, and the two seconds names the cause exactly: `idle_delay` is 2000 ms.
+
+**The layout is one frame behind by design.** Whether the column is worth its width cannot be known
+until the preview has been asked for, and the preview cannot be asked for until it has been told
+how much room it has. Ranger makes the same compromise and calls it `old_collapse`.
+
+Being a frame behind is invisible while frames keep coming, and very visible when they stop. The
+keystroke drew one frame using the previous frame's answer — which was "nothing to preview",
+because inside an empty directory nothing is selected — and then nothing asked for another. The
+correction waited for the idle timer.
+
+So a frame that ends knowing its own layout was wrong now says so, and the loop draws once more
+immediately. Measured, by the position of the column rules:
+
+```
+                            before            after
+parent, cursor on EMPTY     0 12 48 99        0 12 48 99
+inside EMPTY                0 12 48 99        0 12 92 99   ← collapses at once now
+back out, 0.4s later        0 12 92 99        0 12 48 99   ← was wrong for two seconds
+back out, 3.4s later        0 12 48 99        0 12 48 99
+```
+
+It settles in both directions: entering the empty directory used to take two seconds to collapse
+as well, which was the same lag in the other direction and nobody had noticed.
+
+The flag must also stop being set, or the loop would redraw for ever and never idle — which is
+its own test.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

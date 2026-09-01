@@ -2461,6 +2461,16 @@ public sealed class Browser : IFileManager, IDisposable
             else
             {
                 _view.Render(_screen, BrowserBounds(), CurrentTab);
+
+                // The preview column's width is decided from an answer that only arrives while
+                // drawing, so a frame can end knowing its own layout was wrong. Asking for
+                // another now settles it immediately; without this the correction waited for the
+                // idle timer, and leaving an empty directory left the columns visibly wrong for
+                // `idle_delay` — two seconds by default — before they snapped back.
+                if (_view.NeedsAnotherFrame)
+                {
+                    Volatile.Write(ref _needsRedraw, true);
+                }
             }
         }
 
