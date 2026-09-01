@@ -344,6 +344,104 @@ public sealed class DirectoryNode : FsNode
         return true;
     }
 
+    /// <summary>How long a re-read of the visible entries' metadata is reused.</summary>
+    /// <remarks>
+    /// The refresh costs one <c>stat</c> per row on screen — a hundred or so across three
+    /// columns, which is nothing locally and is not nothing on a network share. Capping it at
+    /// four times a second keeps the cost bounded there while still reading as immediate: the
+    /// listing is redrawn on the idle timer anyway, and that is two seconds.
+    /// </remarks>
+    public static TimeSpan MetadataRefreshInterval { get; set; } = TimeSpan.FromMilliseconds(250);
+
+    private long _metadataRefreshedAt;
+
+    /// <summary>Re-reads the metadata of the entries in a range, in place.</summary>
+    /// <param name="first">Index of the first entry to re-read.</param>
+    /// <param name="count">How many entries.</param>
+    /// <returns>Whether anything on show actually changed.</returns>
+    /// <remarks>
+    /// <para>
+    /// A directory's mtime changes when an entry is added, removed or renamed, and
+    /// <see cref="LoadIfOutdated"/> watches it. It does <em>not</em> change when an entry itself
+    /// changes: a <c>chmod</c> in another terminal, a <c>chown</c>, or a file being written to
+    /// all leave the directory's mtime alone. So permissions, owner, size and modification time
+    /// stayed as they were first read, sometimes for a whole session. Ranger has the same gap;
+    /// this is a deliberate divergence.
+    /// </para>
+    /// <para>
+    /// Only the rows on screen, which is what makes it affordable — a directory of twenty
+    /// thousand entries costs the same as one of twenty. The nodes are updated in place rather
+    /// than replaced, so marks, tags and the cursor survive.
+    /// </para>
+    /// <para>
+    /// Deliberately does <em>not</em> re-sort or re-filter. A file growing while you watch it
+    /// would otherwise move under the cursor in a size-sorted listing, and a background timer
+    /// moving the cursor is worse than a size that lags until the next reload.
+    /// </para>
+    /// </remarks>
+    public bool RefreshMetadata(int first, int count)
+    {
+        // Frozen means the listing is held exactly as it is, which is the whole point of the
+        // setting; re-reading metadata behind it would be the same surprise in a smaller form.
+        // Flat mode is excluded for the reason `LoadIfOutdated` excludes it: the entries listed
+        // are not this directory's own.
+        if (!IsLoaded || IsFlat || _cache is { Frozen: true })
+        {
+            return false;
+        }
+
+        long now = Environment.TickCount64;
+
+        if (_metadataRefreshedAt != 0 &&
+            now - _metadataRefreshedAt < (long)MetadataRefreshInterval.TotalMilliseconds)
+        {
+            return false;
+        }
+
+        _metadataRefreshedAt = now;
+
+        int start = Math.Max(first, 0);
+        int stop = Math.Min(start + Math.Max(count, 0), _entries.Count);
+        bool changed = false;
+
+        for (int i = start; i < stop; i++)
+        {
+            FsNode entry = _entries[i];
+            FileStatus? status = _fileSystem.GetStatus(entry.Path, followSymbolicLinks: true);
+            FileStatus? linkStatus = _fileSystem.GetStatus(entry.Path, followSymbolicLinks: false);
+
+            if (ShowsDifferently(entry.Status, status) ||
+                ShowsDifferently(entry.LinkStatus, linkStatus))
+            {
+                changed = true;
+            }
+
+            entry.UpdateStatus(status, linkStatus);
+        }
+
+        return changed;
+    }
+
+    /// <summary>Whether two snapshots would draw differently.</summary>
+    /// <remarks>
+    /// Compared field by field rather than with the record's own equality, which would also
+    /// compare the access and change times. Reading a file bumps its access time, so whole-record
+    /// equality would report a change on almost every pass and ask for a redraw that draws the
+    /// same thing. A <c>chmod</c> is still caught, because it changes <c>Mode</c> as well as the
+    /// change time.
+    /// </remarks>
+    private static bool ShowsDifferently(FileStatus? before, FileStatus? after)
+    {
+        if (before is not { } a || after is not { } b)
+        {
+            return before.HasValue != after.HasValue;
+        }
+
+        return a.Kind != b.Kind || a.Mode != b.Mode || a.Size != b.Size ||
+               a.HardLinkCount != b.HardLinkCount || a.Uid != b.Uid || a.Gid != b.Gid ||
+               a.ModifyTime != b.ModifyTime;
+    }
+
     /// <summary>
     /// Whether this directory has been removed since it was read.
     /// </summary>
