@@ -91,7 +91,14 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
                             .With(MessageIsError, ContextKey.Bad)
                             .With(!MessageIsError, ContextKey.Good));
 
-            screen.Write(Bounds.X, Bounds.Y, new WideString(message).Truncate(Bounds.Width), style);
+            // A running task gets a left margin. The progress tint is drawn the full width of the
+            // bar, and a description starting in the very first cell sits against the edge of it
+            // with nothing to separate the two. A message the user asked for keeps ranger's
+            // flush-left placement, because nothing is drawn behind it.
+            string headlineText = Message is { Length: > 0 } ? message : " " + message;
+
+            screen.Write(Bounds.X, Bounds.Y,
+                         new WideString(headlineText).Truncate(Bounds.Width), style);
 
             // Underneath the line, not instead of it. This returned here, so the one moment the
             // bar had something to say — a copy running, its description filling the bar — was

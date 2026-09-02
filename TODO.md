@@ -5362,6 +5362,24 @@ unmutated code — a green result that meant nothing. Written down because it is
 file records the same thing: a mutation that does not take is not a control, and the only defence
 is to make the edit assert that it found its target.
 
+## The status bar's task line sat against the edge — 2026-09-02
+
+The task view's margin was fixed and the status bar's was not — they are separate widgets, and the
+report was about the second. The progress tint is drawn the full width of the bar, so a description
+starting in the very first cell sits against the edge of it with nothing between the two.
+
+A running task gets a leading space now. **A message does not**, and that is deliberate: nothing is
+drawn behind a message, and ranger puts one at the very edge. Both placements are pinned, because
+the existing tint test asserted `StartsWith("copying")` and caught the change — correctly, but for
+a reason incidental to what that test is for. It asserts the words and the tint are both present
+now, and the placement has tests of its own.
+
+**What the status bar still does not show for an archive**: figures. `QueueSummary.Describe`
+returns the running job's name alone when only one thing is queued, and a copy shows a percentage
+there only because `CopyJob` builds it into its own description. So an archive gets the moving tint
+and the name, and the percentage, bytes and remaining time are in the task view. Left as it is
+rather than changed unasked, since altering `Describe` would change what a copy shows too.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
