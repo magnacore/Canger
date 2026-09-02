@@ -91,11 +91,14 @@ Nine things go deliberately beyond ranger:
   two and a half thousand filenames to a program does not fail on Linux's 131 072-byte limit for a
   single argument.
 
+Releases carry a `.deb`, an AppImage and two tarballs:
+<https://github.com/magnacore/Canger/releases>. There is no apt repository, so the `.deb` is
+installed from the file.
+
 Known gaps: five of ranger's eight image protocols (w3m, iterm2, sixel, terminology, urxvt) are
-not implemented and fall back to no image; nothing is published anywhere, so there is no
-repository to install from — `./build.sh` makes a `.deb`, an AppImage and two tarballs, and you
-fetch them yourself. `TODO.md` is the honest record of what is done, what was measured, and what
-is known to be missing.
+not implemented and fall back to no image; only `linux-x64` is built, though `CANGER_RID` will
+cross-compile. `TODO.md` is the honest record of what is done, what was measured, and what is
+known to be missing.
 
 
 Design goals
@@ -135,7 +138,7 @@ You need the **.NET 10 SDK** (10.0.302 or newer — `global.json` rolls forward 
 band) and a Linux machine. You build from a clone and run it there.
 
 ```
-git clone <this repository> canger
+git clone https://github.com/magnacore/Canger.git canger
 cd canger
 
 ./build.sh              # Debug — the development loop
@@ -144,6 +147,7 @@ cd canger
 ./build.sh dist         # tarballs to hand to somebody else
 ./build.sh deb          # a Debian package
 ./build.sh appimage     # one executable file
+./build.sh release      # check everything, build all four, publish to GitHub
 ./test.sh               # the whole suite
 ```
 
@@ -161,6 +165,25 @@ exist outside Microsoft's own apt repository.
 ```
 sudo apt install ./dist/canger_0.7.1_amd64.deb
 ```
+
+`release` is the one that publishes, and it is separate from `dist` on purpose: `dist` is a build
+step, run to inspect a package or try a change, and publishing from it would ship whatever happened
+to be lying around. `release` refuses unless the working tree is clean, `HEAD` is tagged, the tag
+matches `<Version>`, and the tag has not been released already — then it rebuilds all four
+artifacts from scratch and checks them before uploading:
+
+```
+./build.sh release --dry-run    # every check and the full build, prints the command instead
+./build.sh release              # the same, then gh release create
+```
+
+Its value is the refusals rather than the upload. Each is a mistake that has happened here: a
+`.deb` whose metadata disagreed with the binary inside it, artifacts built at one version while the
+tag said another, and a packaged manual describing the maintainer's own key bindings rather than
+the defaults. That last check is a comparison against what `canger --clean --man` produces, not a
+search for whatever leaked last time.
+
+It needs the [GitHub CLI](https://cli.github.com), logged in with `gh auth login`.
 
 `appimage` writes `dist/Canger-VERSION-x86_64.AppImage` — one already-executable file that needs
 nothing installed except FUSE. It bundles the .NET runtime and Canger's own configuration, and
@@ -501,6 +524,19 @@ git switch develop && git merge --no-ff feature/what-it-does
 ```
 
 Keep `./test.sh` green in every commit that lands on `develop`.
+
+**Pull requests go to `develop`, not `main`.** `main` is the default branch here because it is what
+someone arriving to *use* Canger should land on — the released, tagged state — but under git-flow
+work starts from `develop` and merges back there. `main` only moves when a release does.
+
+**Cutting a release.** Bump `<Version>` in `Directory.Build.props` on a `release/*` branch, merge
+it to `main` and to `develop`, tag `main` with `vVERSION` — the tag message becomes the release
+notes — and then:
+
+```
+./build.sh release --dry-run    # see that everything agrees
+./build.sh release              # build, check, publish
+```
 
 
 About

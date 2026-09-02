@@ -8,6 +8,8 @@
 #   ./build.sh Release         Release build
 #   ./build.sh publish         Release + ReadyToRun, which is what canger.sh prefers to run
 #   ./build.sh dist            Release tarballs to hand to somebody else
+#   ./build.sh deb             A Debian package
+#   ./build.sh appimage        One executable file, needing only FUSE
 #   ./build.sh release         Check, build all four artifacts, and publish them to GitHub
 #
 # `publish` is the one that matters for speed: ReadyToRun precompiles the IL ahead of time and
