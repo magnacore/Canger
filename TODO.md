@@ -5153,12 +5153,18 @@ Nothing from ranger. Possible directions from here:
 
 ### Watch these in daily use
 
-Refreshed after the version-control verification pass. The previous batch — devicons leaving the
-core, the preview-collapse fix, the version-control marks — has had releases of real use with
-nothing reported, so it comes off this list.
+Refreshed at 0.7.0. The devicons plugin, the preview-collapse fix and the version-control marks
+have had releases of real use with nothing reported, so they come off this list.
 
 What is new and least exercised, most consequential first:
 
+- **The shared copy buffer.** New, off by default, and the only feature that lets one Canger
+  change what another is showing. Watch for a cut that will not clear, two windows disagreeing
+  about what is dimmed, or a buffer surviving longer than expected — it outlives every window by
+  design, so a cut made yesterday is still armed today.
+- **`cw` is `rename_stem` now.** Ranger's `cw` moved to `cW`. A key pressed constantly, changed
+  deliberately, and the compound-extension rule (`.tar.lz` counts as one) is the part most likely
+  to surprise.
 - **Re-reading the metadata of rows on screen.** New, and it runs on every draw of every column.
   It should show as a `chmod` or a growing file updating within a couple of seconds without a
   keystroke, and should show as nothing at all otherwise — a listing that flickers or a cursor that
