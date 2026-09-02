@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.FileOperations;
 using Canger.Core.Processes;
 
 namespace Canger.Core.Tasks;
@@ -50,6 +51,17 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
 
     /// <summary>The measuring walk, created once.</summary>
     private IEnumerator<Unit>? _sizing;
+
+    /// <summary>How fast the command is getting through its work.</summary>
+    /// <remarks>
+    /// The same smoothed rate a copy uses, fed from the readings the progress source collects.
+    /// Timed from the first reading rather than from when the job was queued, so waiting behind
+    /// another task does not count as time spent working.
+    /// </remarks>
+    private readonly TransferRate _rate = new();
+
+    private DateTimeOffset? _startedReporting;
+    private long _lastReading;
 
     /// <summary>Creates a queued command.</summary>
     /// <param name="runner">Starts the program.</param>
@@ -163,11 +175,20 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
 
     /// <inheritdoc />
     /// <remarks>
-    /// Not reported. The queue uses a rate to predict an ending, and an archiver's is meaningless
-    /// for that: the bytes counted here are what has been read, while the time is spent
-    /// compressing them, so the two describe different work.
+    /// This was left unreported at first, on the grounds that the bytes counted are what has been
+    /// read while the time goes on compressing them. That was too cautious: tar reads at whatever
+    /// pace the compressor allows, so the rate at which the input is consumed is exactly what
+    /// predicts when the input will run out — which is when the job ends.
     /// </remarks>
-    public double? BytesPerSecond => null;
+    public double? BytesPerSecond => _rate.BytesPerSecond;
+
+    /// <summary>How much longer it should take, once there is enough to say.</summary>
+    /// <remarks>
+    /// Needs a total, so it appears for an archive being measured or unpacked and not for one
+    /// merely watched growing — the same line the percentage draws.
+    /// </remarks>
+    public TimeSpan? Estimate =>
+        RemainingBytes is { } remaining ? _rate.Estimate(remaining) : null;
 
     /// <inheritdoc />
     public string Subject => Description;
@@ -193,6 +214,7 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
             // Offered the whole of standard error each time. A source that parses it keeps no
             // position of its own, and one that watches a file ignores it.
             _progress?.Update(_process.StandardError);
+            RecordRate();
             yield return Unit.Value;
         }
 
@@ -213,6 +235,35 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         _process?.Kill();
         _process?.Dispose();
         _process = null;
+    }
+
+    /// <summary>Feeds the rate from whatever the source has counted so far.</summary>
+    /// <remarks>
+    /// Timed from the first reading, not from the start of the job: an archiver says nothing until
+    /// its first checkpoint, and counting that silence as working time would halve the rate and
+    /// double the estimate for as long as it took to arrive.
+    /// </remarks>
+    private void RecordRate()
+    {
+        if (_progress?.Completed is not { } completed || completed <= 0)
+        {
+            return;
+        }
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        if (_startedReporting is not { } since)
+        {
+            _startedReporting = now;
+            _lastReading = completed;
+            return;
+        }
+
+        if (completed != _lastReading)
+        {
+            _lastReading = completed;
+            _rate.Record(completed, now - since);
+        }
     }
 
     /// <summary>Passes on whatever the program complained about.</summary>

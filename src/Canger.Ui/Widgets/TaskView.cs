@@ -142,15 +142,25 @@ public sealed class TaskView(IColorScheme colorScheme, TaskQueue queue) : Widget
         // holding one of each does not read as ragged.
         const int FigureWidth = 6;
 
-        string figure = task.Progress is { } fraction
-            ? ((fraction * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
-                .PadLeft(FigureWidth) + "  "
-            : task.Transferred is { } moved
-                ? HumanReadable.Format(moved).PadLeft(FigureWidth) + "  "
-                : string.Empty;
+        // The field is always drawn, even when there is no figure for it. Left out, a row with
+        // nothing to report sat flush against the edge while its neighbours were indented, and
+        // the descriptions stepped in and out as the first checkpoint arrived.
+        string figure =
+            (task.Progress is { } fraction
+                ? (fraction * 100).ToString("F0", CultureInfo.InvariantCulture) + "%"
+                : task.Transferred is { } moved
+                    ? HumanReadable.Format(moved)
+                    : string.Empty)
+            .PadLeft(FigureWidth) + "  ";
+
+        // How much longer, where the work can say. After the description rather than before it, so
+        // a name is not pushed about by a figure that comes and goes.
+        string estimate = task.Estimate is { } remaining
+            ? "  " + HumanReadable.Duration(remaining) + " left"
+            : string.Empty;
 
         screen.Write(Bounds.X, row,
-                     new WideString(figure + state + task.Description).Truncate(Bounds.Width),
+                     new WideString(figure + state + task.Description + estimate).Truncate(Bounds.Width),
                      style);
 
         // The filled portion is tinted rather than drawn as a bar, so the description stays
