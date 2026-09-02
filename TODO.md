@@ -5135,6 +5135,52 @@ B: two.txt style before='' after='0;1;90'   changed=True     (B was never touche
 and the same again with the setting off: nothing pasted, nothing dimmed, and no buffer file
 created at all.
 
+## The press-any-key prompt left the cursor mid-line — 2026-09-01
+
+Reported as a separator line breaking: `Press any key to continue...──── Summing media duration ────`
+on one row, wrapping onto the next. The user guessed it came from the `trash????????` fix. It did.
+
+**The prompt in the picture belongs to the *previous* command.** `media-length` prints that rule as
+its very first action, so it cannot have run before the prompt appeared. `Suspend` leaves the
+alternate screen without clearing, so the primary buffer — and its cursor — come back exactly as
+the last external program left them. The keystroke is now read raw and never echoed, so the cursor
+stops immediately after the `...`; the next `-w` command a while later starts drawing there.
+
+The old `Console.In.Read()` did its own line editing and echoed the Enter that ended it, which left
+the cursor at column zero **by accident**. Replacing it removed a newline nobody knew was load
+bearing. One line puts it back on purpose.
+
+### The instrument was wrong first, and had to be fixed before the bug could be seen
+
+The first attempt to reproduce this came out clean, and the result was wrong: `tools/screen.py`
+modelled the alternate screen as "switch buffer, home the cursor". `CSI ?1049h` **saves** the
+cursor and `?1049l` **restores** it — that is what the sequence is for — so a harness that homes it
+can never see a program continue from where the last one stopped. It reported a tidy screen while
+the defect was in front of it.
+
+With the cursor saved and restored, the reproduction is immediate:
+
+```
+before          after
+ 0|first          0|first
+ 2|Press any key to continue...SECOND      2|Press any key to continue...
+ 4|Press any key to continue...            3|SECOND
+```
+
+and the reported case with the real program:
+
+```
+ 2|Press any key to continue...
+ 3|──────────────────────────── Summing media duration ────────────────
+```
+
+**Control**: with the newline mutated away and republished, the harness sees
+`continue...SECOND` again.
+
+Recorded as the seventh trap in `pty-verify`. It is the second time in two days that the harness
+has been wrong in a way that reported success — the first was escape sequences split across reads.
+Both were found by a result that looked too clean, which is worth more suspicion than a failure.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
