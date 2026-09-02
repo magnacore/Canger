@@ -367,9 +367,39 @@ public class StatusBarTests
 
         bar.Render(screen);
 
-        Assert.StartsWith("copying", screen.TextAt(0), StringComparison.Ordinal);
+        // The margin below is why this is not `StartsWith`; what this test is for is that the words
+        // and the tint are both there.
+        Assert.Contains("copying", screen.TextAt(0), StringComparison.Ordinal);
         Assert.Equal(Color.Blue, screen[0, 0].Style.Background);
         Assert.NotEqual(Color.Blue, screen[Width - 1, 0].Style.Background);
+    }
+
+    [Fact]
+    public void Progress_LeavesAMarginBeforeTheTaskDescription()
+    {
+        // Reported: the description sat against the very edge of the tinted bar with nothing to
+        // separate the two.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ShowProgressBar = true;
+        bar.Progress = 0.5;
+        bar.TaskDescription = "Compressing: demo.tar.lz";
+
+        bar.Render(screen);
+
+        Assert.StartsWith(" Compressing", screen.TextAt(0), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMessageKeepsRangersFlushLeftPlacement()
+    {
+        // Nothing is drawn behind a message, so it needs no margin — and ranger puts one at the
+        // very edge.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.Message = "rename: already exists";
+
+        bar.Render(screen);
+
+        Assert.StartsWith("rename:", screen.TextAt(0), StringComparison.Ordinal);
     }
 
     [Fact]
