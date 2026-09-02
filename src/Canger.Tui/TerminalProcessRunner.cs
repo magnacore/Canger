@@ -299,6 +299,15 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
                 Console.Out.Write("\nPress any key to continue...");
                 Console.Out.Flush();
                 WaitForAnyKey(terminal);
+
+                // The keystroke is read raw and never echoed, so without this the cursor stops
+                // immediately after the "...". `Suspend` leaves the primary screen and its cursor
+                // exactly as they are, so the *next* external program began drawing onto the end
+                // of this line -- `Press any key to continue...──── Summing media duration ────`,
+                // a run and a half later. The old `Console.In.Read()` ended on an echoed Enter and
+                // left the cursor at column zero by accident; this does it on purpose.
+                Console.Out.Write('\n');
+                Console.Out.Flush();
             }
 
             return new ProcessResult(process.ExitCode);

@@ -46,7 +46,13 @@ Every one of these was learned by being fooled by it.  They are not hypothetical
     thing it thought it had opened had never opened.  `require()` exists for this: it fails
     loudly rather than letting a measurement of nothing look like a measurement.
 
-A sixth, specific to running ranger for comparison: unset RANGER_LEVEL, or ranger sees itself as
+6.  The alternate screen keeps its cursor.  `CSI ?1049h` saves the cursor and `?1049l` restores
+    it, so a program leaving the alternate screen finds the primary buffer exactly as it left it
+    and carries on from there.  Modelling that as "home the cursor" is what hid a real defect:
+    Canger's press-any-key prompt left the cursor mid-line, and the next external program drew
+    its first line onto the end of it.  The harness said the screen was fine.
+
+A seventh, specific to running ranger for comparison: unset RANGER_LEVEL, or ranger sees itself as
 nested and starts with a warning over the screen.  `Session` clears it.
 """
 
@@ -80,6 +86,7 @@ class Screen:
         self.row = self.col = 0
         self.style = ""
         self.top, self.bottom = 0, rows - 1
+        self._saved: tuple[int, int] | None = None
 
     def _blank(self):
         return [[(" ", "") for _ in range(self.cols)] for _ in range(self.rows)]
@@ -201,14 +208,7 @@ class Screen:
 
         if private and final in (b"h", b"l"):
             if nums and nums[0] in (47, 1047, 1049):    # the alternate screen
-                want_alt = final == b"h"
-                target = self._alt if want_alt else self._main
-                if self.cells is not target:
-                    if want_alt:
-                        self._alt = self._blank()
-                        target = self._alt
-                    self.cells = target
-                    self.row = self.col = 0
+                self._switch_screen(to_alt=final == b"h", with_cursor=nums[0] == 1049)
             return
 
         if final == b"H" or final == b"f":
@@ -247,6 +247,31 @@ class Screen:
                 self._erase(self.row, 0, self.row, self.cols - 1)
         elif final == b"m":
             self.style = "" if not body or body == "0" else body
+
+    def _switch_screen(self, to_alt: bool, with_cursor: bool) -> None:
+        """Move between the primary and alternate buffers.
+
+        `CSI ?1049h` saves the cursor and `CSI ?1049l` restores it -- which is the whole point of
+        the sequence, and modelling it as "home the cursor" hides a real class of bug. A program
+        that leaves the alternate screen finds the primary exactly as it left it, cursor included,
+        so whatever prints next continues from there rather than from column zero. Canger uses
+        1049; `?47` and `?1047` only switch buffers and leave the cursor alone.
+        """
+        target = self._alt if to_alt else self._main
+
+        if self.cells is target:
+            return
+
+        if to_alt:
+            if with_cursor:
+                self._saved = (self.row, self.col)
+            self._alt = self._blank()
+            target = self._alt
+            self.row = self.col = 0
+        elif with_cursor and self._saved is not None:
+            self.row, self.col = self._saved
+
+        self.cells = target
 
     def _erase(self, r0: int, c0: int, r1: int, c1: int) -> None:
         for r in range(r0, r1 + 1):
