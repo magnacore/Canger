@@ -413,7 +413,7 @@ src/
 tests/              one test project per source project, plus Canger.TestSupport
 config/             the shipped cc.conf, rifle.conf, scope.sh, commands.cs
 tools/              code generators, and `screen.py` for driving Canger in a real terminal
-doc/                the man page
+doc/                the icon; the man page is generated, never stored
 artifacts/          a real user's ported configuration, compiled by the tests as a fixture
 ```
 
