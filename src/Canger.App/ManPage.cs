@@ -137,6 +137,32 @@ public static class ManPage
                    .BR :stage " and " :unstage
                    move the selection in and out of the index.
 
+                   .SS Plugins
+                   .B commands.cs
+                   and every
+                   .B plugins/*.cs
+                   are C#, compiled by Canger itself when it starts. Nothing is built by hand and
+                   no SDK is needed. A compilation is cached under
+                   .B ~/.cache/canger/plugins
+                   against a hash of the file names and their contents, so an unchanged
+                   configuration costs nothing and an edited one is rebuilt on the next launch.
+                   Editing a plugin while Canger is running has no effect until it is restarted.
+                   .PP
+                   Every
+                   .B .cs
+                   in the plugin directory is compiled as one assembly, in filename order, so a
+                   plugin may rely on naming to load after another \(em and a syntax error in any
+                   one of them stops them all from loading, not merely the file at fault.
+                   .B canger --config
+                   reports each compilation, and prints the compiler's own diagnostics with file,
+                   line and column when one fails; it is the quickest way to find out why a plugin
+                   went missing.
+                   .PP
+                   A file whose name begins with an underscore is skipped, which disables a plugin
+                   without deleting it. A prebuilt
+                   .B .dll
+                   placed in the same directory is loaded directly, without compilation.
+
                    """);
     }
 

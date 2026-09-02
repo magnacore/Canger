@@ -146,7 +146,7 @@ no .NET runtime at all, so a framework-dependent package would depend on somethi
 exist outside Microsoft's own apt repository.
 
 ```
-sudo apt install ./dist/canger_0.6.0_amd64.deb
+sudo apt install ./dist/canger_0.6.1_amd64.deb
 ```
 
 `appimage` writes `dist/Canger-VERSION-x86_64.AppImage` — one already-executable file that needs
@@ -159,7 +159,7 @@ AppImages are famous for wanting; this runtime bundles libfuse statically. `fuse
 default nearly everywhere, and where it is not:
 
 ```
-./Canger-0.6.0-x86_64.AppImage --appimage-extract-and-run
+./Canger-0.6.1-x86_64.AppImage --appimage-extract-and-run
 ```
 
 Building one needs `appimagetool`, which Debian does not package — take the `x86_64` build from
@@ -257,6 +257,37 @@ canger --copy-config=all      # or: cc, rifle, commands, scope
 | `scope.sh` | `scope.sh` | preview generation — identical contract |
 | `plugins/*.cs` | `plugins/*.py` | commands, linemodes and hooks |
 | `colorschemes/*.cs` | `colorschemes/*.py` | colours |
+
+### Plugins compile themselves
+
+`commands.cs` and every `plugins/*.cs` are C#, and **Canger compiles them itself when it starts**.
+You never build a plugin by hand, and no SDK is needed to write one — edit the file, restart
+Canger, and it is live. Change an icon in `plugins/devicons.cs` and the next launch has it; drop a
+new `.cs` into `plugins/` and it is found without being registered anywhere.
+
+The build is cached under `~/.cache/canger/plugins`, keyed by a hash of the file names and their
+contents, so an unchanged configuration costs nothing at startup and an edited one is rebuilt once.
+There is no hot reload: editing a plugin while Canger is running does nothing until you restart it.
+
+Two things worth knowing before you edit one:
+
+- **Every `.cs` in `plugins/` is compiled as a single assembly**, in filename order — so a plugin
+  can rely on naming to load after another, and **a syntax error in any one of them stops them all
+  from loading**, not just the file at fault. Fumble a brace in `devicons.cs` and your archive and
+  zoxide commands disappear with the icons. `commands.cs` is compiled separately, so a mistake
+  there does not take the plugins down with it.
+- **`canger --config` tells you why.** It reports each compilation and, when one fails, prints the
+  compiler's own diagnostics with file, line and column:
+
+  ```
+  plugin plugins-ba34a68f: did not compile
+    …/broken.cs(2,1): error CS1002: ; expected
+  ```
+
+  Run it after editing a plugin; a plugin that failed to compile is otherwise silent.
+
+A filename beginning with `_` is skipped, which disables a plugin without deleting it. A prebuilt
+`.dll` dropped into `plugins/` is loaded directly, with no compilation.
 
 Three flags exist for inspecting what a full-screen interface would hide, and are the quickest way
 to answer "why does this not work":
@@ -382,7 +413,7 @@ src/
 tests/              one test project per source project, plus Canger.TestSupport
 config/             the shipped cc.conf, rifle.conf, scope.sh, commands.cs
 tools/              code generators, and `screen.py` for driving Canger in a real terminal
-doc/                the man page
+doc/                the icon; the man page is generated, never stored
 artifacts/          a real user's ported configuration, compiled by the tests as a fixture
 ```
 

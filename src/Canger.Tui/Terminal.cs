@@ -432,6 +432,51 @@ public sealed class Terminal : IDisposable
     /// <summary>
     /// Switches the driver to deliver keys as they are typed, without echoing them.
     /// </summary>
+    /// <summary>Waits for a single keystroke while another program has the terminal.</summary>
+    /// <remarks>
+    /// <para>
+    /// Read here rather than through <c>Console.In</c>, for the reason given where
+    /// <see cref="_input"/> is opened: System.Console reconfigures the terminal when it is first
+    /// used. Measured — at the "press any key" prompt it turned <c>ICRNL</c> off, and Canger's raw
+    /// mode deliberately leaves that on so Enter arrives as a newline for the <c>&lt;CR&gt;</c>
+    /// binding. While it was off, Enter reached the console as a carriage return, which is bound
+    /// to nothing, so it was inserted as text and drawn as <c>?</c> — <c>:trash????????</c>.
+    /// </para>
+    /// <para>
+    /// It also does its own line editing in userspace, which is why "press any key" would only
+    /// accept Enter and echoed everything else onto the screen.
+    /// </para>
+    /// </remarks>
+    public void WaitForKeyPress()
+    {
+        if (!_hasTerminal)
+        {
+            return;
+        }
+
+        // The suspended terminal is in the settings the program before us was given. One
+        // character, no line editing, no echo, and then put it back exactly as it was.
+        TermiosSettings settings = _originalSettings;
+        settings.LocalFlags &= ~(TermiosFlags.LocalEcho | TermiosFlags.LocalCanonical);
+        settings.Control[TermiosFlags.MinimumCharacters] = 1;
+        settings.Control[TermiosFlags.ReadTimeout] = 0;
+
+        if (Termios.SetAttributes(StandardInput, TermiosFlags.ApplyNow, settings) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            Span<byte> one = stackalloc byte[1];
+            Termios.Read(StandardInput, one, 1);
+        }
+        finally
+        {
+            Termios.SetAttributes(StandardInput, TermiosFlags.ApplyAfterFlush, _originalSettings);
+        }
+    }
+
     private void EnterRawMode()
     {
         TermiosSettings settings = _originalSettings;
