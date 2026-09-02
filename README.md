@@ -25,17 +25,17 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 
 | | |
 |---|---|
-| Settings | 83, with ranger's global / path-regex / tag scopes |
-| Commands | 114 built in, plus whatever `commands.cs` adds |
+| Settings | 85 — ranger's 83, plus `unlock_prompt` and `shared_copy_buffer` — with ranger's global / path-regex / tag scopes |
+| Commands | 115 built in, plus whatever `commands.cs` adds |
 | Key bindings | 295 in the browser, 36 console, 35 pager, 33 task view, 29 devices |
 | Colour contexts | 82, matching ranger's names exactly |
 | Colourschemes | `default`, `jungle`, `snow`, `solarized` |
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 1918 |
+| Tests | 1947 |
 
-Seven things go deliberately beyond ranger:
+Nine things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -72,6 +72,19 @@ Seven things go deliberately beyond ranger:
   modified. `:stage` and `:unstage` are bound to the add and reset that ranger implements in every
   backend and never reaches from a key. All four backends were checked by running ranger's own
   Python and Canger's C# over the same repositories and diffing the results.
+- **A copy buffer shared between windows** (`shared_copy_buffer`, off by default). Copy in one
+  Canger and paste in another; cut in one and the rows go dim in the other within a redraw.
+  Ranger cannot do this at all — its copy buffer is an in-memory set on the file manager. The
+  buffer lives beside the bookmarks and tags in `~/.local/share/canger`, outlives the windows the
+  way a clipboard does, and is written whole so two windows copying at once end with whichever
+  copied last. Off unless asked for, because two Cangers open on unrelated work should not have
+  `dd` in one arm `pp` in the other.
+- **`rename_stem`.** `cw` clears the whole name, extension and all, so renaming
+  `2024-01-07_15-06-24-part-005-019r-021p.mkv` means typing `.mkv` back for no reason; `a` keeps
+  the name and leaves the stem to be deleted by hand. `:rename_stem` is the missing third — the
+  stem gone, the extension kept, the cursor where the new name starts — and it treats `.tar.gz`
+  and its family as one extension. Not bound by default, so the shipped bindings stay ranger's:
+  `map cw rename_stem` in your `cc.conf` puts it where it is wanted.
 - **Shell commands that behave.** `-q` puts a long command on the task queue instead of freezing
   the interface behind it; `Tab` completes a path and not merely a name in the current directory;
   and a line is run directly when it safely can be, rather than always through `sh -c`, so passing
@@ -146,7 +159,7 @@ no .NET runtime at all, so a framework-dependent package would depend on somethi
 exist outside Microsoft's own apt repository.
 
 ```
-sudo apt install ./dist/canger_0.6.1_amd64.deb
+sudo apt install ./dist/canger_0.7.0_amd64.deb
 ```
 
 `appimage` writes `dist/Canger-VERSION-x86_64.AppImage` — one already-executable file that needs
@@ -159,7 +172,7 @@ AppImages are famous for wanting; this runtime bundles libfuse statically. `fuse
 default nearly everywhere, and where it is not:
 
 ```
-./Canger-0.6.1-x86_64.AppImage --appimage-extract-and-run
+./Canger-0.7.0-x86_64.AppImage --appimage-extract-and-run
 ```
 
 Building one needs `appimagetool`, which Debian does not package — take the `x86_64` build from

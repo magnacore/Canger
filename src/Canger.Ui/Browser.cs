@@ -171,18 +171,30 @@ public sealed class Browser : IFileManager, IDisposable
     /// <param name="clipboard">
     /// The system clipboard, or <see langword="null"/> to find a helper program the usual way.
     /// </param>
+    /// <param name="sharedCopyBuffer">
+    /// The buffer shared with every other running Canger, or <see langword="null"/> to share
+    /// nothing.
+    /// </param>
     public Browser(Terminal terminal, CangerSettings settings, KeyMaps keyMaps,
                    CommandRegistry commands, DirectoryCache cache, string startPath,
                    IFileSystem fileSystem, IProcessRunner runner, IFileOpener opener,
                    IPreviewProvider? previews = null, IImageDisplay? images = null,
                    Bookmarks? bookmarks = null, Tags? tags = null,
-                   LinemodeRegistry? linemodes = null, IClipboard? clipboard = null)
+                   LinemodeRegistry? linemodes = null, IClipboard? clipboard = null,
+                   SharedCopyBuffer? sharedCopyBuffer = null)
     {
         Clipboard = clipboard ?? new SystemClipboard();
         Previews = previews;
         _images = images;
         Bookmarks = bookmarks ?? new Bookmarks(fileSystem, "/dev/null");
         Tags = tags ?? new Tags("/dev/null");
+
+        // Defaulted the same way as the two above: a browser built without one shares nothing,
+        // which is what the tests and `--clean` want.
+        _sharedCopyBuffer = sharedCopyBuffer ?? new SharedCopyBuffer("/dev/null")
+        {
+            Persistent = false,
+        };
 
         // The fileinfo linemode needs a describer, and the describer needs to be able to ask for
         // a redraw once an answer arrives; registering a configured instance over the built-in is
@@ -521,18 +533,21 @@ public sealed class Browser : IFileManager, IDisposable
     public VcsService? Vcs { get; }
 
     /// <inheritdoc />
-    public IReadOnlyList<FsNode> CopyBuffer { get; private set; } = [];
+    public IReadOnlyList<string> CopyBuffer { get; private set; } = [];
 
-    /// <summary>The same buffer as a set of paths, for the listing to dim as it draws.</summary>
+    /// <summary>The same buffer as a set, for the listing to dim as it draws.</summary>
     /// <remarks>
     /// Kept in step with <see cref="CopyBuffer"/> rather than rebuilt per frame. Ranger rebuilds
     /// its list on every draw (<c>gui/widgets/browsercolumn.py:294</c>), which it can afford at
     /// its refresh rate; this is the same answer without paying for it sixty times a second.
     /// </remarks>
-    private readonly HashSet<string> _copyBufferPaths = new(StringComparer.Ordinal);
+    private HashSet<string> _copyBufferPaths = new(StringComparer.Ordinal);
 
     /// <inheritdoc />
     public bool IsCutPending { get; private set; }
+
+    /// <summary>The buffer shared with every other running Canger, when that is switched on.</summary>
+    private readonly SharedCopyBuffer _sharedCopyBuffer;
 
     /// <inheritdoc />
     public void Notify(string message, bool isError = false)
@@ -845,17 +860,57 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <inheritdoc />
-    public void SetCopyBuffer(IEnumerable<FsNode> files, bool cut)
-    {
-        CopyBuffer = [.. files];
-        IsCutPending = cut;
+    public void SetCopyBuffer(IEnumerable<FsNode> files, bool cut) =>
+        SetCopyBufferPaths(files.Select(f => f.Path), cut);
 
-        _copyBufferPaths.Clear();
-        foreach (FsNode file in CopyBuffer)
+    /// <inheritdoc />
+    public void SetCopyBufferPaths(IEnumerable<string> paths, bool cut)
+    {
+        Adopt([.. paths], cut);
+
+        // Written out so another running Canger can paste it. Off by default; see
+        // `shared_copy_buffer`.
+        if (Settings.SharedCopyBuffer)
         {
-            _copyBufferPaths.Add(file.Path);
+            _sharedCopyBuffer.Write(CopyBuffer, cut);
         }
     }
+
+    /// <summary>Takes a buffer as this instance's own, without writing it anywhere.</summary>
+    private void Adopt(IReadOnlyList<string> paths, bool cut)
+    {
+        CopyBuffer = paths;
+        IsCutPending = cut;
+        _copyBufferPaths = new HashSet<string>(paths, StringComparer.Ordinal);
+    }
+
+    /// <summary>Picks up a copy or cut made in another running Canger.</summary>
+    /// <remarks>
+    /// <para>
+    /// Called on every draw. It reads a file of a few hundred bytes and rebuilds nothing unless
+    /// the contents actually differ — cheaper than the per-row `stat` that
+    /// <c>DirectoryNode.RefreshMetadata</c> already does beside it. Doing this here rather than
+    /// only at paste time is what keeps the two windows agreeing about which rows are dimmed: cut
+    /// three files in one and they go dim in the other within a redraw.
+    /// </para>
+    /// <para>
+    /// A read that fails is ignored rather than treated as an empty buffer, so a transient error
+    /// cannot quietly disarm a pending cut.
+    /// </para>
+    /// </remarks>
+    private void RefreshSharedCopyBuffer()
+    {
+        if (!Settings.SharedCopyBuffer)
+        {
+            return;
+        }
+
+        if (_sharedCopyBuffer.ReadIfChanged() is { } shared)
+        {
+            Adopt(shared.Paths, shared.Cut);
+        }
+    }
+
 
     /// <inheritdoc />
     public bool Execute(string line, int? quantifier = null, IReadOnlyList<int>? wildcards = null) =>
@@ -2463,6 +2518,7 @@ public sealed class Browser : IFileManager, IDisposable
         // Settings can change under a running session, so the view is configured each frame
         // rather than once. It is a handful of property reads.
         ApplySettingsToDirectory();
+        RefreshSharedCopyBuffer();
         _screen.Clear();
 
         _titleBar.Layout(new Rect(0, 0, _screen.Width, 1));

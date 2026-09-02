@@ -55,9 +55,15 @@ public interface IFileManager
     CommandRegistry Commands { get; }
 
     /// <summary>
-    /// The files waiting to be pasted, and whether they are being moved rather than copied.
+    /// The paths waiting to be pasted, and whether they are being moved rather than copied.
     /// </summary>
-    IReadOnlyList<FsNode> CopyBuffer { get; }
+    /// <remarks>
+    /// Paths rather than nodes, because a buffer filled by another running Canger has no nodes to
+    /// offer — only names it read from a file. Every consumer reduced to the path anyway.
+    /// <see cref="SetCopyBuffer"/> still takes nodes, which is what the browser and any plugin
+    /// have to hand.
+    /// </remarks>
+    IReadOnlyList<string> CopyBuffer { get; }
 
     /// <summary>Whether the copy buffer will be moved rather than copied.</summary>
     bool IsCutPending { get; }
@@ -154,7 +160,20 @@ public interface IFileManager
     /// <summary>Records what should be pasted, and how.</summary>
     /// <param name="files">The files.</param>
     /// <param name="cut">Whether they should be moved rather than copied.</param>
+    /// <remarks>
+    /// Kept taking nodes rather than paths: it is what the browser and a plugin have to hand, and
+    /// changing it would break configurations for nothing.
+    /// </remarks>
     void SetCopyBuffer(IEnumerable<FsNode> files, bool cut);
+
+    /// <summary>Records what should be pasted, by path.</summary>
+    /// <param name="paths">Absolute paths.</param>
+    /// <param name="cut">Whether they should be moved rather than copied.</param>
+    /// <remarks>
+    /// The form the shared buffer speaks, since a buffer read from another running Canger is only
+    /// ever a list of names.
+    /// </remarks>
+    void SetCopyBufferPaths(IEnumerable<string> paths, bool cut);
 
     /// <summary>Runs a command line, as if the user had typed it.</summary>
     /// <param name="line">The command and its arguments.</param>

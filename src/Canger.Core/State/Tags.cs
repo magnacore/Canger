@@ -324,46 +324,14 @@ public sealed class Tags(string path)
 
         try
         {
-            string? directory = System.IO.Path.GetDirectoryName(Path);
-            if (directory is { Length: > 0 })
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            string temporary = Path + ".new";
-
-            File.WriteAllLines(
-                temporary,
+            StateFile.Replace(
+                Path,
                 _tags.OrderBy(e => e.Key, StringComparer.Ordinal)
                      .Select(e => e.Value == DefaultTag ? e.Key : $"{e.Value}:{e.Key}"));
-
-            File.Move(temporary, RealPath(Path), overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // Losing tags is unfortunate; failing because of it would be worse.
-        }
-    }
-    /// <summary>Where a state file really lives, following a link if it is one.</summary>
-    /// <param name="path">The configured path.</param>
-    /// <returns>The path to rename over.</returns>
-    /// <remarks>
-    /// <c>rename(2)</c> replaces a symbolic link rather than what it points at, so replacing the
-    /// file in place would break the link and leave later changes accumulating in an untracked
-    /// regular file — until the next re-install of the dotfiles put the stale copy back and took
-    /// everything since with it. Keeping this file as a link into a dotfiles repository is a
-    /// common enough arrangement that ranger has the same branch
-    /// (<c>container/bookmarks.py:200-204</c>).
-    /// </remarks>
-    private static string RealPath(string path)
-    {
-        try
-        {
-            return File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            return path;
         }
     }
 

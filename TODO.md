@@ -5043,6 +5043,98 @@ Verified on rebuilt artifacts: no mention of `efc`, `fzf_locate` or `file_conver
 the `.deb` or the tarball manual, both headed `canger 0.6.0`, and all three of the newest sections
 present.
 
+## `rename_stem` — 2026-09-01
+
+`cw` clears the whole name, extension and all, so renaming
+`2024-01-07_15-06-24-part-005-019r-021p.mkv` means typing `.mkv` back for no reason. `a`
+(`rename_append`) is the other half of the problem: it keeps the name and puts the cursor before
+the extension, leaving the stem to be deleted by hand.
+
+**There was already a two-key answer, and measuring it is what showed why a command was needed.**
+`a` then `Ctrl-W` gives `:rename .txt` on `demo.txt` — but `delete_word` stops at the first
+separator, so on the file above it removes `021p` and leaves the rest, and on `backup.tar.gz` it
+takes `tar` out of the middle. `Ctrl-U` is worse: it deletes the command word too, giving `:.txt`.
+Ranger behaves the same on both.
+
+A config-only binding was tried and measured not to work:
+`map cw chain rename_append; eval fm.ui.console.delete_word()` runs the chain but the `eval` never
+reaches the console.
+
+So: a built-in command. `.tar.gz` and family count as one extension — taking the last dot would
+leave `archive.tar` behind, which is useless on exactly the files it is most wanted for. The test
+is whether the component before the last is `tar`, rather than a list of suffixes, so `.tar.zst`
+works without being enumerated. The extension keeps its case, where `FsNode.Extension` lowercases
+for matching.
+
+**Not bound in the shipped `cc.conf`.** The command is general and belongs to everyone; the choice
+to spend `cw` on it is personal, and the shipped bindings stay ranger's. It is bound in the user's
+own configuration, with ranger's original `cw` moved to `cW` so nothing is lost.
+
+Twelve tests. **Two controls, one per half**: dropping compound extensions fails four, putting the
+cursor at the end instead of before the dot fails nine.
+
+Verified on the real binary: `cw` gives `:rename .mkv`, `:rename .tar.lz` and `:rename .txt`.
+
+**A gotcha found while binding it**: a trailing comment on a `map` line is not stripped, so
+`map cW console rename%space  # ranger's cw` opened the console holding the comment. Ranger's
+parser does not strip one either, so this is parity rather than a defect — but the user's
+configuration has several such lines, and they work only by luck (a `shell` command hands the
+comment to a shell, which ignores it).
+
+## A copy buffer shared between running Cangers — 2026-09-01
+
+Copy in one window, paste in another. Ranger cannot: `fm.copy_buffer` is an in-memory set on the
+file manager, and Canger's was the same. A ninth deliberate addition, behind
+`shared_copy_buffer`, off by default — two Cangers open on unrelated work should not have `dd` in
+one arm `pp` in the other.
+
+`~/.local/share/canger/copybuffer`, beside the bookmarks and tags: first line `copy` or `cut`, then
+one path per line. `State/Tags.cs` had already learned the rules — replace through a temporary and
+rename, follow a symlink rather than break it, `Persistent` off under `--clean`, and never let a
+failed read write emptiness over real data — so `RealPath` and the atomic replace moved into
+`State/StateFile.cs` and both classes use them. Unlike tags there is no read-before-write merge: a
+copy buffer is replaced whole, so two windows copying at once should end with whichever went last,
+which is what a clipboard does.
+
+### The buffer became paths
+
+`IFileManager.CopyBuffer` was `IReadOnlyList<FsNode>` and is now `IReadOnlyList<string>`. A buffer
+written by another instance has no nodes to offer, only names read from a file, and every consumer
+already reduced to the path — the paste, `%c`, the symlink paste, the add/remove merge.
+`SetCopyBuffer(IEnumerable<FsNode>, bool)` keeps its signature, because the user's `commands.cs`
+calls it and breaking a configuration to save a conversion is a poor trade.
+
+### Modification time was the wrong signal, and the test found it
+
+The first design asked "has the file changed?" with one `stat`, comparing modification times. It
+was wrong, and not subtly: **five rewrites in quick succession left `mtime_ns` identical every
+time** on this filesystem, because the clock behind it is coarse. The check would have failed in
+precisely the case it existed for — two windows acting within the same instant — and the failure
+would have looked like a missed update rather than a bug.
+
+`ReadIfChanged` compares the file's *contents* instead. It cannot be fooled, the file is a few
+hundred bytes, and it is cheaper than the per-row `stat` that `RefreshMetadata` already does beside
+it on every draw. The two questions collapsed into one honest method: `null` means "nothing new, or
+nothing readable", and both mean the same thing to the caller — keep what you have.
+
+### Verification
+
+Nine tests on the file itself and eight across two file managers sharing one. **Two controls**:
+writing disabled fails eleven, the change check disabled fails seven.
+
+Then the part the unit tests cannot reach, since the browser's wiring is a seam — **two real Canger
+processes** under `tools/screen.py`, sharing a state directory through `XDG_DATA_HOME`:
+
+```
+A: yy on one.txt
+B: :paste dest=dst        -> one.txt in dst
+A: dd on two.txt
+B: two.txt style before='' after='0;1;90'   changed=True     (B was never touched)
+```
+
+and the same again with the setting off: nothing pasted, nothing dimmed, and no buffer file
+created at all.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
@@ -5061,12 +5153,18 @@ Nothing from ranger. Possible directions from here:
 
 ### Watch these in daily use
 
-Refreshed after the version-control verification pass. The previous batch — devicons leaving the
-core, the preview-collapse fix, the version-control marks — has had releases of real use with
-nothing reported, so it comes off this list.
+Refreshed at 0.7.0. The devicons plugin, the preview-collapse fix and the version-control marks
+have had releases of real use with nothing reported, so they come off this list.
 
 What is new and least exercised, most consequential first:
 
+- **The shared copy buffer.** New, off by default, and the only feature that lets one Canger
+  change what another is showing. Watch for a cut that will not clear, two windows disagreeing
+  about what is dimmed, or a buffer surviving longer than expected — it outlives every window by
+  design, so a cut made yesterday is still armed today.
+- **`cw` is `rename_stem` now.** Ranger's `cw` moved to `cW`. A key pressed constantly, changed
+  deliberately, and the compound-extension rule (`.tar.lz` counts as one) is the part most likely
+  to surprise.
 - **Re-reading the metadata of rows on screen.** New, and it runs on every draw of every column.
   It should show as a `chmod` or a growing file updating within a couple of seconds without a
   keystroke, and should show as nothing at all otherwise — a listing that flickers or a cursor that

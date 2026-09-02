@@ -233,6 +233,13 @@ internal static class Program
 
             Tags tags = new(paths.Data("tagged")) { Persistent = !options.Clean };
 
+            // Beside the tags, and inert unless `shared_copy_buffer` is on. Nothing is read or
+            // written under --clean, as with everything else in this directory.
+            SharedCopyBuffer sharedCopyBuffer = new(paths.Data("copybuffer"))
+            {
+                Persistent = !options.Clean,
+            };
+
             if (!options.Clean)
             {
                 bookmarks.Load();
@@ -246,7 +253,8 @@ internal static class Program
             using Browser browser = new(terminal, settings, keyMaps, commands, cache, path,
                                         fileSystem, runner, opener,
                                         previews,
-                                        images, bookmarks, tags, linemodes);
+                                        images, bookmarks, tags, linemodes,
+                                        sharedCopyBuffer: sharedCopyBuffer);
 
             // The console history lives beside the bookmarks and tags, in the same file ranger
             // uses. --clean reads none and writes none.
