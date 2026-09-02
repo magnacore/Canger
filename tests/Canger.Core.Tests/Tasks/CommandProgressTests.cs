@@ -27,6 +27,54 @@ public class CommandProgressTests
     }
 
     [Fact]
+    public void DropsATotalTheCommandsOwnOutputOvershoots()
+    {
+        // Reported as "the extraction goes on for a few more seconds after the progress bar shows
+        // 100%". Extraction was given the archive's size on disk, but tar counts the uncompressed
+        // stream: a 4 456-byte .tar.lz reported 26 603 520 bytes read. Clamping turned that
+        // contradiction into a bar pinned at the top while the work ran on. Once the count has
+        // passed the total, the total was the wrong quantity and the bytes are the only truth left.
+        MarkerProgress progress = new("canger-bytes:", total: 4456);
+
+        progress.Update("canger-bytes:26603520\n");
+
+        Assert.Null(progress.Total);
+        Assert.Equal(26603520, progress.Completed);
+    }
+
+    [Fact]
+    public void KeepsATotalTheCountOnlyReaches()
+    {
+        // A plain .tar does end exactly on its own size, and that is the case worth keeping a
+        // percentage for. Equal is not overshooting.
+        MarkerProgress progress = new("canger-bytes:", total: 1000);
+
+        progress.Update("canger-bytes:1000\n");
+
+        Assert.Equal(1000, progress.Total);
+    }
+
+    [Fact]
+    public void StopsReportingAPercentageOnceTheTotalIsDisproved()
+    {
+        // The whole point of dropping it: the task view asks the task, not the source, and what it
+        // must stop being told is a fraction. Pinned here rather than on MarkerProgress alone
+        // because a Total that goes null while Progress keeps clamping would fix nothing.
+        MarkerProgress source = new("canger-bytes:", total: 4456);
+        CommandTask task = new(new FakeFileManager.RecordingProcessRunner(),
+                               new ProcessRequest("tar -xf big.tar.lz", default, "/w"),
+                               "Extracting: big.tar.lz",
+                               notify: null,
+                               finished: null,
+                               progress: source);
+
+        source.Update("canger-bytes:26603520\n");
+
+        Assert.Null(task.Progress);
+        Assert.Equal(26603520, task.Transferred);
+    }
+
+    [Fact]
     public void SaysNothingUntilTheCommandHasReported()
     {
         // A spinner until the first checkpoint, rather than a bar sitting at zero.

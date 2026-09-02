@@ -1,5 +1,41 @@
 # Canger — port status
 
+## Extraction sat at 100% while it carried on running
+
+Reported: "the extraction goes on for a few more seconds after the progress bar shows 100%".
+
+**Cause.** Extraction handed `MarkerProgress` the archive's size *on disk*, but
+`tar --checkpoint-action=echo='canger-bytes:%{}T'` counts the **uncompressed** stream. Measured on
+a text tree: a 4 456-byte `.tar.lz` had tar reporting 26 603 520 bytes read. `Math.Clamp` turned
+that contradiction into a bar pinned at the top while the work ran on.
+
+**Why the end-to-end test passed when it shipped.** The fixture was `/dev/urandom` — incompressible,
+so archive size ≈ uncompressed size and the ratio happened to be 1. The fixture masked the bug.
+Compressible data is now the fixture; 66 KB on disk holding 443 MB makes the ratio impossible to
+miss.
+
+**Fixed in both halves.**
+
+1. `artifacts/plugins/archives.cs` — `Decompression.UncompressedSize` states a total only for a
+   plain `.tar`, where the file *is* the stream. Compressed archives get no total, so the task view
+   shows bytes, which is always true. `lzip -l`, `gzip -l` and `xz --robot --list` can each name the
+   uncompressed size cheaply (measured), but that is three output formats to keep parsing and would
+   mean starting a program while the interface is up; a bar that lies is worse than a figure that
+   admits what it does not know.
+2. `src/Canger.Core/Tasks/MarkerProgress.cs` — a total the command's own output overshoots is
+   **discarded, not clamped**. A count past its total proves the total was the wrong quantity.
+
+**Controls.** Two, because the fix has two halves.
+- Core guard removed → 2 fail (`DropsATotalTheCommandsOwnOutputOvershoots`,
+  `StopsReportingAPercentageOnceTheTotalIsDisproved`). Mutation compiled: 1982 tests ran.
+- Plugin choice reverted → **0 of 1982 fail.** Nothing pins which value a plugin passes, and the
+  format knowledge belongs in the plugin, so there is no seam to close there. **Tenth instance** of
+  "the mechanism exists and nothing feeds it" / a test that pins what a thing *is* saying nothing
+  about *where* it is. That is exactly why the guard went in core: with the plugin defect
+  deliberately left in place, a pty run over the 443 MB fixture showed the wrong total discarded on
+  the first checkpoint and the display falling back to bytes — 92.1 M → 463 M → `[done]`. The
+  symptom is gone even when the caller is wrong.
+
 Canger is a 1-1 C# / .NET 10 port of [ranger](https://ranger.fm), the Python TUI file manager.
 The Python source under `../ranger-master/` is the reference implementation and the authority on
 behaviour; `../ranger_settings/` is a real user configuration that must parse unchanged.

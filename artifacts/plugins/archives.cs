@@ -127,6 +127,30 @@ internal static class Decompression
         ArchiveFormats.Match(archive) is var (rule, _) &&
         rule.Kind is ArchiveKind.Tar or ArchiveKind.TarOnly;
 
+    /// <summary>How much will come out, when that is knowable without reading the archive.</summary>
+    /// <param name="archive">The archive being unpacked.</param>
+    /// <returns>The uncompressed size, or <see langword="null"/> when it cannot be had cheaply.</returns>
+    /// <remarks>
+    /// <para>
+    /// Only for a plain <c>.tar</c>, where the file on disk *is* the stream tar reads and the two
+    /// numbers are the same. For a compressed one they are not: measured on a text tree, a
+    /// 4 456-byte <c>.tar.lz</c> had tar reporting 26 603 520 bytes read. Using the file size there
+    /// sent the bar to 100% almost immediately and left it there while the extraction ran on for
+    /// seconds — which is how this was reported.
+    /// </para>
+    /// <para>
+    /// The compressors can each say: <c>lzip -l</c>, <c>gzip -l</c>, <c>xz --robot --list</c>. Each
+    /// prints a different shape, which is three parsers to keep working, and asking would mean
+    /// starting a program while the interface is up. Returning nothing costs a percentage and
+    /// keeps the byte count, which is always true — and a bar that lies is worse than a figure that
+    /// admits what it does not know.
+    /// </para>
+    /// </remarks>
+    internal static long? UncompressedSize(FsNode archive) =>
+        ArchiveFormats.Match(archive.Basename) is var (rule, _) && rule.Kind is ArchiveKind.TarOnly
+            ? archive.Status?.Size
+            : null;
+
     /// <summary>The command line to extract an archive.</summary>
     /// <param name="archive">The archive's name, relative to where the command runs.</param>
     /// <param name="flags">Extra flags the user supplied.</param>
@@ -280,11 +304,15 @@ internal static class Extraction
                 // files that appeared out of nowhere are not otherwise noticed.
                 _ => fileManager.ReloadDirectory(workingDirectory),
 
-                // Unpacking is the half where a percentage is free: the archive's own size is in
-                // the listing, so there is nothing to measure. What tar reports while extracting
-                // is the bytes it has read out of the archive, against exactly that.
+                // What tar counts while extracting is the *uncompressed* stream, not the file it
+                // is reading. Measured: a 4 456-byte archive reported 26 603 520 bytes read. So
+                // the archive's own size is a total only for a plain `.tar`, where the two are the
+                // same thing; for a compressed one it is wrong by the compression ratio, and using
+                // it made the bar reach 100% almost at once and sit there while the extraction ran
+                // on. Without a total the task view shows the bytes, which is always true.
                 Decompression.SupportsCheckpoints(archive.Basename)
-                    ? new MarkerProgress(Decompression.CheckpointMarker, archive.Status?.Size)
+                    ? new MarkerProgress(Decompression.CheckpointMarker,
+                                         Decompression.UncompressedSize(archive))
                     : null);
 
             started++;

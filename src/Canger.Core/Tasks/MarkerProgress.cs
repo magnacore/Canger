@@ -29,9 +29,20 @@ public sealed class MarkerProgress(string marker, long? total) : ICommandProgres
                                      : marker;
 
     private long? _completed;
+    private long? _total = total;
 
     /// <inheritdoc />
-    public long? Total { get; } = total;
+    /// <remarks>
+    /// Dropped the moment the command's own output exceeds it, because a count that runs past its
+    /// total proves the total was the wrong quantity — and once that is known, showing bytes is
+    /// honest where showing a percentage is not. It was reported as "the extraction goes on for a
+    /// few more seconds after the progress bar shows 100%": extraction had been given the archive's
+    /// size on disk while tar counts the uncompressed stream, so a 4 456-byte archive reported
+    /// 26 603 520 bytes and the bar sat pinned at the top. The caller was fixed too, but clamping
+    /// is what let a wrong total look like a finished one, and any future caller can get it wrong
+    /// the same way.
+    /// </remarks>
+    public long? Total => _total;
 
     /// <inheritdoc />
     public long? Completed => _completed;
@@ -79,6 +90,11 @@ public sealed class MarkerProgress(string marker, long? total) : ICommandProgres
         if (best > 0 || _completed is not null)
         {
             _completed = best;
+        }
+
+        if (_total is { } stated && best > stated)
+        {
+            _total = null;
         }
     }
 }
