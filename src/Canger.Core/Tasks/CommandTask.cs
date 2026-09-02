@@ -21,7 +21,7 @@ namespace Canger.Core.Tasks;
 /// <c>stdout_buffer</c>.
 /// </para>
 /// </remarks>
-public sealed class CommandTask : ILoadable, IReportsBytes
+public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
 {
     /// <summary>
     /// How often the program is looked in on while it runs.
@@ -47,6 +47,9 @@ public sealed class CommandTask : ILoadable, IReportsBytes
     /// <see cref="Steps"/> directly, where no queue is there to dispose anything.
     /// </remarks>
     private int? _endedWith;
+
+    /// <summary>The measuring walk, created once.</summary>
+    private IEnumerator<Unit>? _sizing;
 
     /// <summary>Creates a queued command.</summary>
     /// <param name="runner">Starts the program.</param>
@@ -135,6 +138,39 @@ public sealed class CommandTask : ILoadable, IReportsBytes
 
     /// <summary>Its exit code, or <see langword="null"/> until it has finished.</summary>
     public int? ExitCode => _process?.ExitCode;
+
+    /// <summary>The measuring half, for a command whose total has to be worked out.</summary>
+    /// <remarks>
+    /// Only a <see cref="MeasuredProgress"/> has anything to measure. Everything else is already
+    /// sized — either it knows its total from the start or it never will — so it reports itself
+    /// finished at once and the queue moves on.
+    /// </remarks>
+    private MeasuredProgress? Measuring => _progress as MeasuredProgress;
+
+    /// <inheritdoc />
+    public bool IsSized => Measuring is not { IsMeasured: false };
+
+    /// <inheritdoc />
+    public IEnumerator<Unit> SizingSteps() =>
+        _sizing ??= Measuring?.Measure() ?? Enumerable.Empty<Unit>().GetEnumerator();
+
+    /// <inheritdoc />
+    public long? TotalBytes => _progress?.Total;
+
+    /// <inheritdoc />
+    public long? RemainingBytes =>
+        _progress is { Total: { } total, Completed: { } done } ? Math.Max(total - done, 0) : null;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Not reported. The queue uses a rate to predict an ending, and an archiver's is meaningless
+    /// for that: the bytes counted here are what has been read, while the time is spent
+    /// compressing them, so the two describe different work.
+    /// </remarks>
+    public double? BytesPerSecond => null;
+
+    /// <inheritdoc />
+    public string Subject => Description;
 
     /// <inheritdoc />
     public IEnumerator<Unit> Steps()

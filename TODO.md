@@ -5272,6 +5272,56 @@ the error filter removed fails two.
 Verified on real archives under a pty: marked files, whose total is known, go 68% → 94% → 100%
 [done]; a directory, whose total is not, climbs 16.4 M → 73.7 M.
 
+## The bar, and extracting — 2026-09-02
+
+Reported plainly: *"my expectation was that I will see a progress bar similar to the one I see when
+I copy files. I see the size like 109M, but no % or colour bar. I was expecting extracting to be
+also done."* Both fair. The first was a design decision that turned out to be the wrong one, and
+the second I had written down as the better half and then not built.
+
+### The folder now measures itself
+
+Compressing a folder showed bytes and no bar because the total was only ever taken from what was
+*already* known — a file's size from the listing, a directory's only if someone had pressed `dc`.
+The reasoning was that measuring a tree means walking it, and `DirectorySize` says nothing should
+pay for that unasked.
+
+That reasoning skipped what the queue already does. It measures a **copy** while the copy waits,
+in three-millisecond slices, precisely so that a percentage exists from the first byte without the
+walk holding anything up — the machinery built for the queue-wide ETA. An archive can be the same
+kind of job, and now is: `CommandTask` implements `ISizedWork`, and `MeasuredProgress` walks what
+the command was given.
+
+`CopyJob.Measure` became `FileSystem.TreeSize.Sizes`, shared rather than copied. Two walks that
+could disagree about what a tree holds would be worse than one.
+
+The total is withheld until the walk finishes. A total still growing makes the percentage fall as
+the measuring catches up, and a bar that goes backwards reads as a fault — which is what
+`OverallProgress` was reverted for once before.
+
+### Extracting was the better half all along
+
+Written in the evaluation — *"extraction deserves it more than compression, and the same mechanism
+serves it"* — and then not done. It is now, and it is the easier case: an archive's own size is in
+the listing, so unpacking gets a real percentage with nothing to measure, where compressing a
+folder has to walk it first. The checkpoint flags and the marker moved to `Decompression`, shared
+by both halves rather than duplicated.
+
+### Verified on real archives
+
+```
+compressing a folder    11% -> 58% ...            (measured while it ran)
+extracting              10% -> 97% -> 100% [done]
+```
+
+An intermediate run ended at **97% [done]**, which was correct and worth keeping: the archive had
+been copied while the compression that made it was still running, so it was truncated, tar failed,
+and the rule "a command that *failed* keeps its last honest figure" did exactly that. Rebuilt
+whole, it ends at 100%.
+
+Five tests on the measuring, one of them through the real queue. **Controls**: telling the queue
+the job needs no sizing fails one; publishing the total mid-walk fails one.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
