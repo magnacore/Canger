@@ -60,7 +60,7 @@
 
     <Authors>Canger contributors</Authors>
     <Product>Canger</Product>
-    <Version>0.7.1</Version>
+    <Version>0.7.2</Version>
   </PropertyGroup>
 
   <ItemGroup>

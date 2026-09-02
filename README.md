@@ -163,7 +163,7 @@ no .NET runtime at all, so a framework-dependent package would depend on somethi
 exist outside Microsoft's own apt repository.
 
 ```
-sudo apt install ./dist/canger_0.7.1_amd64.deb
+sudo apt install ./dist/canger_0.7.2_amd64.deb
 ```
 
 `release` is the one that publishes, and it is separate from `dist` on purpose: `dist` is a build
@@ -195,7 +195,7 @@ AppImages are famous for wanting; this runtime bundles libfuse statically. `fuse
 default nearly everywhere, and where it is not:
 
 ```
-./Canger-0.7.1-x86_64.AppImage --appimage-extract-and-run
+./Canger-0.7.2-x86_64.AppImage --appimage-extract-and-run
 ```
 
 Building one needs `appimagetool`, which Debian does not package — take the `x86_64` build from
