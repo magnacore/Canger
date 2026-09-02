@@ -1130,14 +1130,16 @@ public sealed class Browser : IFileManager, IDisposable
     /// <inheritdoc />
     public QueuedTask RunInBackground(string description, string command,
                                       string? workingDirectory = null,
-                                      Action<CommandTask>? finished = null)
+                                      Action<CommandTask>? finished = null,
+                                      ICommandProgress? progress = null)
     {
         CommandTask task = new(
             Runner,
             new ProcessRequest(command, default, workingDirectory ?? CurrentTab.Path),
             description,
             (message, isError) => Notify(message, isError),
-            finished);
+            finished,
+            progress);
 
         return Tasks.Add(task);
     }

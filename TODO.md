@@ -5219,6 +5219,59 @@ view v0.7.1` exits zero and an unreleased tag does not — because the obvious w
 was to check out the old tag, which supplies the old `build.sh` and tests nothing. That first
 attempt reported an MSBuild usage error rather than a refusal, which is what gave it away.
 
+## Byte-level progress for a queued command — 2026-09-02
+
+`efc` showed a spinner and nothing else. Asked whether a bar was possible, and it was — almost
+entirely because the display already existed. `TaskView` draws a percentage and tints the row when
+a task reports one, the status bar has a bar, and `TaskQueue.OverallProgress` falls back to
+averaging `Progress` when jobs have no byte sizes. `CommandTask.Progress => null` was the single
+line that opted out. The work was finding a number, not drawing one.
+
+**Two sources, and the difference between them is the design.** `MarkerProgress` reads a count the
+command prints for the purpose: `tar --checkpoint=200 --checkpoint-action=echo='canger-bytes:%{}T'`
+reports the bytes it has *read*, which paired with the size of the selection is a true percentage.
+`GrowingFileProgress` watches the archive growing, one `stat` a slice, and deliberately offers **no
+total** — how large an archive ends up depends on a compression ratio nobody knows in advance, so
+dividing by the size of the input would draw a bar that lies. Without a total the task view shows
+`73.7 M` instead of a percentage, which is the honest rendering.
+
+The total is only ever taken from what is already known: a file's size from the listing, a
+directory's only if someone has already asked for it with `dc`. `DirectorySize` exists to measure a
+tree and its own documentation says nothing should pay for that unasked, so compress does not call
+it.
+
+**Where the archiver knowledge lives.** Canger takes a source of numbers and knows nothing about
+tar; the `--checkpoint` flags are in `plugins/archives.cs`, which is where the command line is
+built. `ICommandProgress` is in the core, so any queued command can report.
+
+### Four faults, three found by controls and one by a real archive
+
+- **Nothing polled the source.** Removing `_progress?.Update(...)` from `CommandTask.Steps` broke
+  no test: the sources were tested in isolation and nothing connected them. The same seam as the
+  settings fix, the metadata refresh and the shared copy buffer — four times now.
+- **The task view rendering was untested** for the byte case, so removing it broke nothing either.
+- **A finished archive sat at 94% for ever.** tar reports at intervals and says nothing about the
+  tail after the last one. The rule "a command that exited 0 is complete" was written and *still*
+  did not work, because `TaskQueue.Stop` disposes the work the instant it finishes, which clears
+  the process handle the rule was reading. Every unit test passed, because they drive `Steps`
+  directly and no queue is there to dispose anything. The exit code is kept in a field now, and
+  the tests go through the real queue.
+- **Progress reported itself as a failure.** Asking tar to say how far it has got makes it write to
+  standard error, which is exactly where `CommandTask` reads failures from — so every archive would
+  have ended by showing its own checkpoints as an error. `ICommandProgress.Reports` lets a source
+  disown its own lines, and a genuine `tar: Permission denied` still gets through.
+
+Also measured: `--checkpoint=1000` is not "every 1000 records" but every 1000 *blocks*, which with
+tar's default blocking factor is ten megabytes. A twenty-four megabyte archive went 43%, 85%, done.
+200 blocks is about two megabytes.
+
+Fourteen tests. **Controls**: the poll removed fails three, the final reading removed fails one,
+the byte rendering removed fails one, the exit code read through the disposed handle fails one, and
+the error filter removed fails two.
+
+Verified on real archives under a pty: marked files, whose total is known, go 68% → 94% → 100%
+[done]; a directory, whose total is not, climbs 16.4 M → 73.7 M.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

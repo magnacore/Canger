@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.Tasks;
 // The ranger-archives plugin, ported.
 //
 // Four commands — compress, extract, extract_raw, extract_to_dirs — over a table of about twenty
@@ -309,14 +310,25 @@ public sealed class CompressCommand : CangerCommand
         // back. This way it turns in the task view with the spinner, can be cancelled from there,
         // and the browser stays usable. Ranger's archive plugin queues both halves for the same
         // reason (`ranger-archives/compress.py`, through `CommandLoader`).
+        string command = Build(name, flags, files);
+        long? total = TotalBytesOf(selection);
+
+        // Where the archiver can be made to count, it is; where it cannot, the archive is watched
+        // growing. Either way the task view shows a figure instead of only a spinner.
+        ICommandProgress progress = SupportsCheckpoints(name)
+            ? new MarkerProgress(CheckpointMarker, total)
+            : new GrowingFileProgress(FileManager.FileSystem, Path.Join(directory, name));
+
         FileManager.RunInBackground(
             $"Compressing: {name}",
-            Build(name, flags, files),
+            command,
             directory,
 
             // The archive appears out of nowhere when the archiver finishes; nothing else here
             // would notice, because writing a file does not change the directory's timestamp.
-            _ => FileManager.ReloadDirectory(directory));
+            _ => FileManager.ReloadDirectory(directory),
+
+            progress);
 
         FileManager.Notify($"Compressing {selection.Count} into {name}");
     }
@@ -334,6 +346,60 @@ public sealed class CompressCommand : CangerCommand
         ];
     }
 
+
+    /// <summary>The marker tar is asked to print, and that Canger reads back.</summary>
+    /// <remarks>
+    /// Chosen to be unmistakable in a stream that also carries the archiver's own complaints.
+    /// </remarks>
+    private const string CheckpointMarker = "canger-bytes:";
+
+    /// <summary>Whether the archiver for this name can be made to report as it goes.</summary>
+    /// <remarks>
+    /// Only the tar family. <c>7z</c>, <c>zip</c> and <c>rar</c> print percentages of their own in
+    /// formats that differ between versions, and scraping those would be a parser to maintain for
+    /// each; watching the file they write costs one <c>stat</c> and cannot go out of date.
+    /// </remarks>
+    private static bool SupportsCheckpoints(string name) =>
+        ArchiveFormats.Match(name) is var (rule, _) &&
+        rule.Kind is ArchiveKind.Tar or ArchiveKind.TarOnly;
+
+    /// <summary>What the selection amounts to, when that is already known.</summary>
+    /// <remarks>
+    /// <para>
+    /// A file's size comes free from the listing. A directory's does not: measuring one means
+    /// walking it, which <c>DirectorySize</c> exists to do and which its own documentation says
+    /// nothing should pay for unasked. So a directory counts only if someone has already asked —
+    /// <c>dc</c>, or <c>autoupdate_cumulative_size</c>.
+    /// </para>
+    /// <para>
+    /// Returning <see langword="null"/> is not a failure. Without a total the task shows the bytes
+    /// read so far rather than a percentage, which is the honest rendering; inventing one by
+    /// guessing at a directory's contents would produce a bar that lies.
+    /// </para>
+    /// </remarks>
+    private static long? TotalBytesOf(IReadOnlyList<FsNode> selection)
+    {
+        long total = 0;
+
+        foreach (FsNode entry in selection)
+        {
+            long? bytes = entry.IsDirectory ? entry.CumulativeSize : entry.Status?.Size;
+
+            if (bytes is not { } known)
+            {
+                return null;
+            }
+
+            total += known;
+        }
+
+        return total;
+    }
+
+    /// <summary>Asks tar to report its progress in a form Canger reads.</summary>
+    private const string Checkpoints =
+        "--checkpoint=200 --checkpoint-action=echo='" + CheckpointMarker + "%{}T'";
+
     /// <summary>The command line that builds an archive.</summary>
     private static string Build(string name, string flags, string files)
     {
@@ -349,10 +415,18 @@ public sealed class CompressCommand : CangerCommand
         {
             // tar drives the compressor rather than piping into it, which is what lets the
             // parallel compressors use every core.
+            // --checkpoint makes tar report the bytes it has read, to standard error. That is a
+            // live count of the *input*, which paired with the size of the selection is a true
+            // percentage rather than a guess from the compressed output.
+            //
+            // The unit is blocks, not records: with tar's default blocking factor of 20, every
+            // block is 10 240 bytes, so --checkpoint=200 reports about every two megabytes. 1000
+            // was tried first and reports every ten, which on a twenty-four megabyte archive
+            // meant two readings and a bar that went 43%, 85%, done.
             ArchiveKind.Tar =>
-                $"tar -cf {archive} --use-compress-program {program}{extra} {files}",
+                $"tar -cf {archive} --use-compress-program {program} {Checkpoints}{extra} {files}",
 
-            ArchiveKind.TarOnly => $"tar -cf{extra} {archive} {files}",
+            ArchiveKind.TarOnly => $"tar -cf {archive} {Checkpoints}{extra} {files}",
 
             // -k keeps the original: losing the source to a keystroke would be unforgivable.
             ArchiveKind.Stream => $"{program} -k{extra} {files}",

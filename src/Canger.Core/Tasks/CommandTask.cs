@@ -21,7 +21,7 @@ namespace Canger.Core.Tasks;
 /// <c>stdout_buffer</c>.
 /// </para>
 /// </remarks>
-public sealed class CommandTask : ILoadable
+public sealed class CommandTask : ILoadable, IReportsBytes
 {
     /// <summary>
     /// How often the program is looked in on while it runs.
@@ -36,7 +36,17 @@ public sealed class CommandTask : ILoadable
     private readonly ProcessRequest _request;
     private readonly Action<string, bool>? _notify;
     private readonly Action<CommandTask>? _finished;
+    private readonly ICommandProgress? _progress;
     private IBackgroundProcess? _process;
+
+    /// <summary>How it ended, kept because the handle does not outlive the job.</summary>
+    /// <remarks>
+    /// <see cref="TaskQueue.Stop"/> disposes the work the moment it finishes, which clears
+    /// <see cref="_process"/> — so reading the exit code through it afterwards always found
+    /// nothing, and a completed archive sat at 94% for ever. The unit tests missed it by driving
+    /// <see cref="Steps"/> directly, where no queue is there to dispose anything.
+    /// </remarks>
+    private int? _endedWith;
 
     /// <summary>Creates a queued command.</summary>
     /// <param name="runner">Starts the program.</param>
@@ -47,9 +57,14 @@ public sealed class CommandTask : ILoadable
     /// Run once the program has ended, whatever its outcome — ranger's <c>after</c> signal, which
     /// the archive plugin uses to reload the directory the files landed in.
     /// </param>
+    /// <param name="progress">
+    /// Where a byte count comes from, for a command that can be made to report one. Omitted, the
+    /// task shows a spinner as before.
+    /// </param>
     public CommandTask(IProcessRunner runner, ProcessRequest request, string description,
                        Action<string, bool>? notify = null,
-                       Action<CommandTask>? finished = null)
+                       Action<CommandTask>? finished = null,
+                       ICommandProgress? progress = null)
     {
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentException.ThrowIfNullOrWhiteSpace(description);
@@ -58,6 +73,7 @@ public sealed class CommandTask : ILoadable
         _request = request;
         _notify = notify;
         _finished = finished;
+        _progress = progress;
         Description = description;
     }
 
@@ -65,13 +81,34 @@ public sealed class CommandTask : ILoadable
     public string Description { get; }
 
     /// <summary>
-    /// Always <see langword="null"/>: an outside program does not say how far along it is.
+    /// How far along it is, when the command was set up to say.
     /// </summary>
     /// <remarks>
-    /// The task view shows a spinner rather than a bar for these, which is the honest rendering —
-    /// ranger does the same, its <c>CommandLoader</c> never setting a percentage.
+    /// <see langword="null"/> unless a progress source was given <em>and</em> it knows the total —
+    /// a spinner, which is what ranger's <c>CommandLoader</c> always shows. A source that reports
+    /// only a byte count leaves this null on purpose; see <see cref="Transferred"/>.
     /// </remarks>
-    public double? Progress => null;
+    public double? Progress =>
+        _progress is not { Total: { } total, Completed: { } done } || total <= 0
+            ? null
+
+            // A command that succeeded is finished, whatever its last reading said. tar reports at
+            // intervals and says nothing about the tail after the final one, so a twenty-four
+            // megabyte archive ended at 85% and stayed there — a bar that stops short reads as a
+            // job that stalled. A command that *failed* keeps its last honest figure.
+            : _endedWith == 0
+                ? 1
+                : Math.Clamp((double)done / total, 0, 1);
+
+    /// <summary>
+    /// The bytes written or read so far, when that is all the command will say.
+    /// </summary>
+    /// <remarks>
+    /// The honest half-answer for an archiver that reports nothing: the file can be watched
+    /// growing, but how large it will end up depends on a compression ratio nobody knows. The task
+    /// view shows this figure where it would otherwise have nothing but a spinner.
+    /// </remarks>
+    public long? Transferred => _progress?.Completed;
 
     /// <summary>
     /// The poll interval while the program runs, and nothing once it has ended.
@@ -117,8 +154,16 @@ public sealed class CommandTask : ILoadable
         // `Idle`, which watches for a keystroke at the same time.
         while (!_process.WaitForExit(TimeSpan.Zero))
         {
+            // Offered the whole of standard error each time. A source that parses it keeps no
+            // position of its own, and one that watches a file ignores it.
+            _progress?.Update(_process.StandardError);
             yield return Unit.Value;
         }
+
+        // Once more, so a command that finishes between two polls still ends at its final figure
+        // rather than at whatever the last slice happened to catch.
+        _progress?.Update(_process.StandardError);
+        _endedWith = _process.ExitCode;
 
         Report();
         _finished?.Invoke(this);
@@ -142,7 +187,14 @@ public sealed class CommandTask : ILoadable
             return;
         }
 
-        string error = _process.StandardError.Trim();
+        // The progress source's own reporting is not a complaint. Asking tar to say how far it has
+        // got makes it write to standard error, which is exactly where failures are read from.
+        string error = string.Join(
+            '\n',
+            _process.StandardError
+                    .Split('\n')
+                    .Where(line => _progress?.Reports(line) != true))
+            .Trim();
 
         if (error.Length > 0)
         {
