@@ -25,15 +25,15 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 
 | | |
 |---|---|
-| Settings | 83, with ranger's global / path-regex / tag scopes |
-| Commands | 114 built in, plus whatever `commands.cs` adds |
+| Settings | 85 — ranger's 83, plus `unlock_prompt` and `shared_copy_buffer` — with ranger's global / path-regex / tag scopes |
+| Commands | 115 built in, plus whatever `commands.cs` adds |
 | Key bindings | 295 in the browser, 36 console, 35 pager, 33 task view, 29 devices |
 | Colour contexts | 82, matching ranger's names exactly |
 | Colourschemes | `default`, `jungle`, `snow`, `solarized` |
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 1918 |
+| Tests | 1947 |
 
 Nine things go deliberately beyond ranger:
 
@@ -159,7 +159,7 @@ no .NET runtime at all, so a framework-dependent package would depend on somethi
 exist outside Microsoft's own apt repository.
 
 ```
-sudo apt install ./dist/canger_0.6.1_amd64.deb
+sudo apt install ./dist/canger_0.7.0_amd64.deb
 ```
 
 `appimage` writes `dist/Canger-VERSION-x86_64.AppImage` — one already-executable file that needs
@@ -172,7 +172,7 @@ AppImages are famous for wanting; this runtime bundles libfuse statically. `fuse
 default nearly everywhere, and where it is not:
 
 ```
-./Canger-0.6.1-x86_64.AppImage --appimage-extract-and-run
+./Canger-0.7.0-x86_64.AppImage --appimage-extract-and-run
 ```
 
 Building one needs `appimagetool`, which Debian does not package — take the `x86_64` build from
