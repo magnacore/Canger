@@ -399,7 +399,14 @@ public interface IFileManager
     /// (<c>plugins/ranger-archives/extract.py</c>).
     /// </para>
     /// </remarks>
+    /// <param name="progress">
+    /// Where a byte count comes from, for a command that can be made to report one — a
+    /// <see cref="Tasks.MarkerProgress"/> reading what the program prints, or a
+    /// <see cref="Tasks.GrowingFileProgress"/> watching the file it writes. Omitted, the task
+    /// shows a spinner.
+    /// </param>
     Tasks.QueuedTask RunInBackground(string description, string command,
                                      string? workingDirectory = null,
-                                     Action<Tasks.CommandTask>? finished = null);
+                                     Action<Tasks.CommandTask>? finished = null,
+                                     Tasks.ICommandProgress? progress = null);
 }

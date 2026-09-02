@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using System.Globalization;
+using Canger.Core.Model;
 using Canger.Core.Tasks;
 using Canger.Tui.Rendering;
 using Canger.Tui.Text;
@@ -132,12 +133,24 @@ public sealed class TaskView(IColorScheme colorScheme, TaskQueue queue) : Widget
             _ => string.Empty,
         };
 
-        string percent = task.Progress is { } fraction
-            ? (fraction * 100).ToString("F0", CultureInfo.InvariantCulture).PadLeft(3) + "%  "
-            : string.Empty;
+        // A percentage where the work knows its total; otherwise the bytes it has moved, which is
+        // all an archiver can honestly offer. Both are padded to the same width so the
+        // descriptions line up down the column whichever a row happens to have.
+        // A percentage where the work knows its total, otherwise the bytes it has moved — which is
+        // all an archiver can honestly offer. Both are right-aligned in the same field so the
+        // descriptions line up down the column whichever a row happens to have, and a queue
+        // holding one of each does not read as ragged.
+        const int FigureWidth = 6;
+
+        string figure = task.Progress is { } fraction
+            ? ((fraction * 100).ToString("F0", CultureInfo.InvariantCulture) + "%")
+                .PadLeft(FigureWidth) + "  "
+            : task.Transferred is { } moved
+                ? HumanReadable.Format(moved).PadLeft(FigureWidth) + "  "
+                : string.Empty;
 
         screen.Write(Bounds.X, row,
-                     new WideString(percent + state + task.Description).Truncate(Bounds.Width),
+                     new WideString(figure + state + task.Description).Truncate(Bounds.Width),
                      style);
 
         // The filled portion is tinted rather than drawn as a bar, so the description stays
