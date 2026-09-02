@@ -59,10 +59,15 @@ scratch more than once.
 
 ## Working agreements
 
-- Nothing is pushed. `main` and `develop` are local; the user will create the remote later.
+- The remote is <https://github.com/magnacore/Canger>, public, default branch `main`. Push when
+  asked to; do not push unasked, and never force-push a published branch or tag.
 - Only `Canger/` is a git repository.
 - `~/.config/canger` is the user's live configuration and may be edited directly.
 - Run `./build.sh publish` after merging, or `canger` keeps running the previous binary.
+- Release with `./build.sh release`, never by hand. It refuses on a dirty tree, an untagged `HEAD`,
+  a tag that disagrees with `<Version>`, a tag already released, a version mismatch between the
+  binary and its package, a packaged manual that is not what `--clean --man` produces, or an
+  AppImage that will not start. `--dry-run` does everything except publish.
 - Never risk data. No forced or lazy unmounts, no overwrite without a check, and read a file
   before deleting or replacing it.
 - If you come across an important piece of learning that will be beneficial in the future, turn it into a skill.

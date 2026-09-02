@@ -5181,6 +5181,44 @@ Recorded as the seventh trap in `pty-verify`. It is the second time in two days 
 has been wrong in a way that reported success — the first was escape sequences split across reads.
 Both were found by a result that looked too clean, which is worth more suspicion than a failure.
 
+## A release target that refuses before it publishes — 2026-09-02
+
+Releasing had become a ritual performed from memory: publish, dist, deb, appimage, then extract
+the manual and read it, run the AppImage, check the `.deb` metadata, and finally
+`gh release create`. Every step was a thing that had gone wrong at least once.
+
+**Deliberately not part of `dist`.** `dist` is a build step, run to inspect a package or try a
+change — it was run several times in one afternoon on code that was not going anywhere. Publishing
+from it would have shipped 0.7.0 on the day its cursor bug was found, because those artifacts were
+built before the defect was.
+
+The value is the refusals, not the upload. Each one is a mistake that actually happened:
+
+| refusal | the mistake it prevents |
+|---|---|
+| dirty working tree | publishing something nobody can check out |
+| `HEAD` not tagged | no |
+| tag ≠ `<Version>` | artifacts built at one version while the tag says another |
+| tag already released | quietly replacing a release people have downloaded |
+| binary or `.deb` reports the wrong version | a package disagreeing with what is inside it |
+| packaged manual ≠ `--clean --man` | the 0.6.0 `.deb`, whose manual documented the maintainer's own `efc` and `fzf_locate` |
+| AppImage does not start | the one artifact needing FUSE, which the other three do not exercise |
+
+The manual check is a comparison rather than a grep. Searching for whatever leaked last time only
+catches that; comparing the packaged page against what a configuration-free run produces catches
+anything local getting in.
+
+`--dry-run` runs every check and the whole build, then prints the `gh release create` line instead
+of running it.
+
+**Verified by watching each refusal fire**: a dirty tree, an untagged `HEAD`, and a tag reading
+`v9.9.9-probe` against `<Version> 0.7.1` were each refused with the right message; a throwaway
+`v0.7.2` tag matching a bumped version passed every check, built all four artifacts and printed the
+command without publishing. The already-released refusal was checked at the condition — `gh release
+view v0.7.1` exits zero and an unreleased tag does not — because the obvious way to test the branch
+was to check out the old tag, which supplies the old `build.sh` and tests nothing. That first
+attempt reported an MSBuild usage error rather than a refusal, which is what gave it away.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
