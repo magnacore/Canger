@@ -111,6 +111,22 @@ internal static class ArchiveFormats
 /// <summary>Builds the shell command that unpacks an archive.</summary>
 internal static class Decompression
 {
+    /// <summary>The marker tar is asked to print, and that Canger reads back.</summary>
+    internal const string CheckpointMarker = "canger-bytes:";
+
+    /// <summary>Asks tar to report its progress in a form Canger reads.</summary>
+    /// <remarks>
+    /// The unit is blocks: with tar's default blocking factor every block is 10 240 bytes, so 200
+    /// reports about every two megabytes.
+    /// </remarks>
+    internal const string Checkpoints =
+        "--checkpoint=200 --checkpoint-action=echo='" + CheckpointMarker + "%{}T'";
+
+    /// <summary>Whether this archive's extractor can be made to report as it goes.</summary>
+    internal static bool SupportsCheckpoints(string archive) =>
+        ArchiveFormats.Match(archive) is var (rule, _) &&
+        rule.Kind is ArchiveKind.Tar or ArchiveKind.TarOnly;
+
     /// <summary>The command line to extract an archive.</summary>
     /// <param name="archive">The archive's name, relative to where the command runs.</param>
     /// <param name="flags">Extra flags the user supplied.</param>
@@ -133,9 +149,12 @@ internal static class Decompression
 
         return rule.Kind switch
         {
+            // Checkpoints while unpacking too, and here the total is free: an archive's own size is
+            // in the listing already, so extraction gets a real percentage in every case where
+            // compressing a folder has to measure one first.
             ArchiveKind.Tar or ArchiveKind.TarOnly => destination.Length > 0
-                ? $"tar -xf {name}{extra} -C {destination}"
-                : $"tar -xf {name}{extra}",
+                ? $"tar -xf {name} {Checkpoints}{extra} -C {destination}"
+                : $"tar -xf {name} {Checkpoints}{extra}",
 
             // A single-file compressor writes beside the archive; -d decompresses, -k keeps the
             // original, which is what someone extracting in a file manager expects.
@@ -259,7 +278,14 @@ internal static class Extraction
 
                 // The plugin's own `refresh` callback, bound to CommandLoader's `after` signal:
                 // files that appeared out of nowhere are not otherwise noticed.
-                _ => fileManager.ReloadDirectory(workingDirectory));
+                _ => fileManager.ReloadDirectory(workingDirectory),
+
+                // Unpacking is the half where a percentage is free: the archive's own size is in
+                // the listing, so there is nothing to measure. What tar reports while extracting
+                // is the bytes it has read out of the archive, against exactly that.
+                Decompression.SupportsCheckpoints(archive.Basename)
+                    ? new MarkerProgress(Decompression.CheckpointMarker, archive.Status?.Size)
+                    : null);
 
             started++;
         }
@@ -316,7 +342,7 @@ public sealed class CompressCommand : CangerCommand
         // Where the archiver can be made to count, it is; where it cannot, the archive is watched
         // growing. Either way the task view shows a figure instead of only a spinner.
         ICommandProgress progress = SupportsCheckpoints(name)
-            ? new MarkerProgress(CheckpointMarker, total)
+            ? Measured(new MarkerProgress(Decompression.CheckpointMarker, total), total, selection)
             : new GrowingFileProgress(FileManager.FileSystem, Path.Join(directory, name));
 
         FileManager.RunInBackground(
@@ -347,12 +373,6 @@ public sealed class CompressCommand : CangerCommand
     }
 
 
-    /// <summary>The marker tar is asked to print, and that Canger reads back.</summary>
-    /// <remarks>
-    /// Chosen to be unmistakable in a stream that also carries the archiver's own complaints.
-    /// </remarks>
-    private const string CheckpointMarker = "canger-bytes:";
-
     /// <summary>Whether the archiver for this name can be made to report as it goes.</summary>
     /// <remarks>
     /// Only the tar family. <c>7z</c>, <c>zip</c> and <c>rar</c> print percentages of their own in
@@ -362,6 +382,20 @@ public sealed class CompressCommand : CangerCommand
     private static bool SupportsCheckpoints(string name) =>
         ArchiveFormats.Match(name) is var (rule, _) &&
         rule.Kind is ArchiveKind.Tar or ArchiveKind.TarOnly;
+
+    /// <summary>Wraps a source so the queue measures what it was given.</summary>
+    /// <remarks>
+    /// Only when the total is not already known. A folder's size means walking it, which nothing
+    /// should do on the spot — but the task queue measures a job while it waits, in
+    /// three-millisecond slices, exactly as it does for a copy. Without this a folder showed
+    /// <c>109 M</c> and no bar, because it knew how far it had got and not how far there was to go.
+    /// </remarks>
+    private ICommandProgress Measured(ICommandProgress inner, long? total,
+                                      IReadOnlyList<FsNode> selection) =>
+        total is null
+            ? new MeasuredProgress(inner, FileManager.FileSystem,
+                                   [.. selection.Select(entry => entry.Path)])
+            : inner;
 
     /// <summary>What the selection amounts to, when that is already known.</summary>
     /// <remarks>
@@ -396,10 +430,6 @@ public sealed class CompressCommand : CangerCommand
         return total;
     }
 
-    /// <summary>Asks tar to report its progress in a form Canger reads.</summary>
-    private const string Checkpoints =
-        "--checkpoint=200 --checkpoint-action=echo='" + CheckpointMarker + "%{}T'";
-
     /// <summary>The command line that builds an archive.</summary>
     private static string Build(string name, string flags, string files)
     {
@@ -424,9 +454,9 @@ public sealed class CompressCommand : CangerCommand
             // was tried first and reports every ten, which on a twenty-four megabyte archive
             // meant two readings and a bar that went 43%, 85%, done.
             ArchiveKind.Tar =>
-                $"tar -cf {archive} --use-compress-program {program} {Checkpoints}{extra} {files}",
+                $"tar -cf {archive} --use-compress-program {program} {Decompression.Checkpoints}{extra} {files}",
 
-            ArchiveKind.TarOnly => $"tar -cf {archive} {Checkpoints}{extra} {files}",
+            ArchiveKind.TarOnly => $"tar -cf {archive} {Decompression.Checkpoints}{extra} {files}",
 
             // -k keeps the original: losing the source to a keystroke would be unforgivable.
             ArchiveKind.Stream => $"{program} -k{extra} {files}",
