@@ -8,6 +8,7 @@
 #   ./build.sh Release         Release build
 #   ./build.sh publish         Release + ReadyToRun, which is what canger.sh prefers to run
 #   ./build.sh dist            Release tarballs to hand to somebody else
+#   ./build.sh release         Check, build all four artifacts, and publish them to GitHub
 #
 # `publish` is the one that matters for speed: ReadyToRun precompiles the IL ahead of time and
 # only applies at publish, so a plain build — in either configuration — still pays to JIT itself
@@ -378,6 +379,85 @@ DESKTOP
         echo
         echo "  One file, already executable. Needs fuse3 on the machine it runs on, or"
         echo "  ./Canger-$version-$arch.AppImage --appimage-extract-and-run"
+        ;;
+    release)
+        # Publishing, which is not a build step and is deliberately not part of `dist`. `dist` is
+        # run to inspect a package or to try a change; doing it here as a side effect would have
+        # shipped 0.7.0 on the day its cursor bug was found and fixed, because the artifacts were
+        # built before the defect was.
+        #
+        # The value of this target is the refusals, not the upload. Every one of them is a mistake
+        # that has actually happened: a manual that documented the maintainer's own key bindings
+        # rather than the defaults and shipped in the 0.6.0 .deb; a doc/canger.1 three releases
+        # stale; artifacts built at one version while the tag said another.
+        version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props | head -1)
+        [ -n "$version" ] || { echo "canger: no <Version> in Directory.Build.props" >&2; exit 1; }
+
+        dry_run=false
+        case "${1:-}" in --dry-run) dry_run=true; shift ;; esac
+
+        refuse() { echo "canger: $1" >&2; exit 1; }
+
+        # 1. Nothing uncommitted. What is published has to be a commit somebody can check out.
+        [ -z "$(git status --porcelain)" ] || refuse "the working tree is dirty; commit or stash first"
+
+        # 2. On a tag, and the tag is the version being built. These drifted apart once already.
+        tag=$(git describe --exact-match --tags HEAD 2>/dev/null) \
+            || refuse "HEAD is not tagged; tag the release commit first"
+        [ "$tag" = "v$version" ] \
+            || refuse "tag $tag does not match <Version> $version in Directory.Build.props"
+
+        command -v gh >/dev/null 2>&1 || refuse "gh is not installed; see https://cli.github.com"
+        gh auth status >/dev/null 2>&1 || refuse "gh is not logged in; run: gh auth login"
+
+        if gh release view "$tag" >/dev/null 2>&1; then
+            refuse "$tag is already released; delete it first if you mean to replace it"
+        fi
+
+        echo "  releasing $tag"
+        rm -rf dist
+        "$0" publish >/dev/null
+        for artifact in dist deb appimage; do
+            echo "  building $artifact"
+            "$0" "$artifact" >/dev/null
+        done
+
+        # 3. Everything that carries a version agrees with the tag. A packaged binary reporting a
+        # different number from its own package is the kind of thing nobody notices for a release.
+        published="src/Canger.App/bin/Release/net10.0/${CANGER_RID:-linux-x64}/publish/canger"
+        [ "$("$published" --version)" = "canger $version" ] \
+            || refuse "the built binary does not report $version"
+        [ "$(dpkg-deb -f "dist/canger_${version}_amd64.deb" Version)" = "$version" ] \
+            || refuse "the .deb metadata does not say $version"
+
+        # 4. The manual describes the program, not the machine it was built on. Compared against
+        # what a configuration-free run produces, rather than grepping for whatever leaked last
+        # time: the 0.6.0 .deb shipped a manual documenting `efc` and `fzf_locate`, because `--man`
+        # renders the bindings actually loaded and the binary had read ~/.config/canger.
+        expected_manual=$(mktemp); packaged_manual=$(mktemp)
+        trap 'rm -f "$expected_manual" "$packaged_manual"' EXIT
+        "$published" --clean --man > "$expected_manual"
+        tar --lzip -xOf "dist/canger-$version-linux-x64.tar.lz" --wildcards '*/doc/canger.1' \
+            > "$packaged_manual"
+        cmp -s "$expected_manual" "$packaged_manual" \
+            || refuse "the packaged manual is not what a configuration-free run produces"
+
+        # 5. The AppImage starts. `dist` and `deb` already run what they package; this one needs
+        # FUSE, so it can fail on a machine where the other three are fine.
+        [ "$(./dist/Canger-$version-x86_64.AppImage --version 2>/dev/null)" = "canger $version" ] \
+            || refuse "the AppImage does not start or reports the wrong version"
+
+        echo
+        ls -lh dist/ | awk 'NR > 1 { printf "  %-52s %s\n", $9, $5 }'
+        echo
+
+        if $dry_run; then
+            echo "  --dry-run: checks passed, nothing published. To publish:"
+            echo "    gh release create $tag dist/* --title \"Canger $version\" --notes-from-tag"
+            exit 0
+        fi
+
+        gh release create "$tag" dist/* --title "Canger $version" --notes-from-tag
         ;;
     Debug|Release)
         exec "$DOTNET_ROOT/dotnet" build Canger.slnx -c "$target" "$@"
