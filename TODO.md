@@ -5043,6 +5043,44 @@ Verified on rebuilt artifacts: no mention of `efc`, `fzf_locate` or `file_conver
 the `.deb` or the tarball manual, both headed `canger 0.6.0`, and all three of the newest sections
 present.
 
+## `rename_stem` — 2026-09-01
+
+`cw` clears the whole name, extension and all, so renaming
+`2024-01-07_15-06-24-part-005-019r-021p.mkv` means typing `.mkv` back for no reason. `a`
+(`rename_append`) is the other half of the problem: it keeps the name and puts the cursor before
+the extension, leaving the stem to be deleted by hand.
+
+**There was already a two-key answer, and measuring it is what showed why a command was needed.**
+`a` then `Ctrl-W` gives `:rename .txt` on `demo.txt` — but `delete_word` stops at the first
+separator, so on the file above it removes `021p` and leaves the rest, and on `backup.tar.gz` it
+takes `tar` out of the middle. `Ctrl-U` is worse: it deletes the command word too, giving `:.txt`.
+Ranger behaves the same on both.
+
+A config-only binding was tried and measured not to work:
+`map cw chain rename_append; eval fm.ui.console.delete_word()` runs the chain but the `eval` never
+reaches the console.
+
+So: a built-in command. `.tar.gz` and family count as one extension — taking the last dot would
+leave `archive.tar` behind, which is useless on exactly the files it is most wanted for. The test
+is whether the component before the last is `tar`, rather than a list of suffixes, so `.tar.zst`
+works without being enumerated. The extension keeps its case, where `FsNode.Extension` lowercases
+for matching.
+
+**Not bound in the shipped `cc.conf`.** The command is general and belongs to everyone; the choice
+to spend `cw` on it is personal, and the shipped bindings stay ranger's. It is bound in the user's
+own configuration, with ranger's original `cw` moved to `cW` so nothing is lost.
+
+Twelve tests. **Two controls, one per half**: dropping compound extensions fails four, putting the
+cursor at the end instead of before the dot fails nine.
+
+Verified on the real binary: `cw` gives `:rename .mkv`, `:rename .tar.lz` and `:rename .txt`.
+
+**A gotcha found while binding it**: a trailing comment on a `map` line is not stripped, so
+`map cW console rename%space  # ranger's cw` opened the console holding the comment. Ranger's
+parser does not strip one either, so this is parity rather than a defect — but the user's
+configuration has several such lines, and they work only by luck (a `shell` command hands the
+comment to a shell, which ignores it).
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

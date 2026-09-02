@@ -217,6 +217,84 @@ public sealed class RenameAppendCommand : CangerCommand
     }
 }
 
+/// <summary>
+/// Opens the rename prompt holding only the extension, with the cursor before it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <c>cw</c> clears the whole name, extension and all, so renaming
+/// <c>2024-01-07_15-06-24-part-005-019r-021p.mkv</c> means typing <c>.mkv</c> back afterwards for
+/// no reason. <c>a</c> is the other half of the problem: it keeps the name and puts the cursor
+/// before the extension, so the stem still has to be deleted by hand. This is the missing third —
+/// the stem gone, the extension kept, the cursor where the new name starts.
+/// </para>
+/// <para>
+/// Ranger has no equivalent, so this is a deliberate addition rather than a parity fix. It is not
+/// bound by default: the shipped bindings stay ranger's.
+/// </para>
+/// </remarks>
+[Command("rename_stem",
+         Summary = "Open the rename prompt with the extension kept and the name cleared.")]
+public sealed class RenameStemCommand : CangerCommand
+{
+    private const string Prefix = "rename ";
+
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        if (FileManager.CurrentFile is not { } file)
+        {
+            return;
+        }
+
+        // Doubled for the same reason `rename_append` doubles it: the line is expanded again on
+        // its way to running, and a per cent would otherwise start a macro.
+        string extension = ExtensionOf(file.RelativePath)
+            .Replace("%", "%%", StringComparison.Ordinal);
+
+        // The cursor goes where the name begins, which is immediately before the dot.
+        FileManager.OpenConsole(Prefix + extension, Prefix.Length);
+    }
+
+    /// <summary>The extension to keep, leading dot included.</summary>
+    /// <param name="name">The entry's name.</param>
+    /// <returns>Something like <c>.mkv</c> or <c>.tar.lz</c>, or empty when there is none.</returns>
+    /// <remarks>
+    /// <para>
+    /// A leading dot does not start an extension — <c>.bashrc</c> is a name, not a type — and a
+    /// trailing dot ends nothing, which is the rule <see cref="FsNode.Extension"/> already
+    /// follows from ranger.
+    /// </para>
+    /// <para>
+    /// <c>.tar.gz</c> and its family count as one extension. Taking the last dot alone would
+    /// leave <c>archive.tar</c> behind and make the command useless for exactly the files it is
+    /// most wanted on. The test is whether the component before the final one is <c>tar</c>,
+    /// rather than a list of suffixes, so <c>.tar.zst</c> works without being enumerated.
+    /// </para>
+    /// </remarks>
+    internal static string ExtensionOf(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        int dot = name.LastIndexOf('.');
+
+        if (dot <= 0 || dot == name.Length - 1)
+        {
+            return string.Empty;
+        }
+
+        int inner = name.LastIndexOf('.', dot - 1);
+
+        if (inner > 0 &&
+            name.AsSpan((inner + 1)..dot).Equals("tar", StringComparison.OrdinalIgnoreCase))
+        {
+            dot = inner;
+        }
+
+        return name[dot..];
+    }
+}
+
 /// <summary>Opens the file under the cursor in an editor.</summary>
 [Command("edit", Summary = "Open the selection in an editor.")]
 public sealed class EditCommand : CangerCommand
