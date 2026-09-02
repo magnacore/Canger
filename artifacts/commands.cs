@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// The GPG key identifiers below are placeholders. This file is a fixture: it exists so the tests
+// compile a real ported configuration and prove the plugin API still carries it. Whose keys they
+// are is beside that point, and the originals belonged to a person rather than to the project.
+// Substitute your own before using these commands.
 // Manuj's ranger commands, ported to C#.
 //
 // 48 commands: 29 generated from ranger-settings/commands.py by
@@ -65,7 +69,7 @@ public sealed class GpgDetachedSignCommand : CangerCommand
     {
         foreach (FsNode entry in FileManager.Selection)
         {
-            FileManager.Execute($"shell -f gpg --detach-sign -u 80513A7E8F48186D {ShellWord.Quote(entry.Basename)} ");
+            FileManager.Execute($"shell -f gpg --detach-sign -u DEADBEEFDEADBEEF {ShellWord.Quote(entry.Basename)} ");
         }
 
         FileManager.ChangeMode("normal");
@@ -81,7 +85,7 @@ public sealed class GpgEncryptFileCommand : CangerCommand
     {
         foreach (FsNode entry in FileManager.Selection)
         {
-            FileManager.Execute($"shell -f gpg -e -u F19C46E0E40C9568 -r F19C46E0E40C9568 {ShellWord.Quote(entry.Basename)} ");
+            FileManager.Execute($"shell -f gpg -e -u CAFEBABECAFEBABE -r CAFEBABECAFEBABE {ShellWord.Quote(entry.Basename)} ");
         }
 
         FileManager.ChangeMode("normal");
