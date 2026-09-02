@@ -66,7 +66,14 @@ row comes out as `27;1H| file-l0024.2xttxt`, which reads as a rendering bug in t
 test. `Screen.feed` now hands back any sequence cut in half and `Session` prepends it to the next
 chunk. The same is done for a UTF-8 character split across reads.
 
-A seventh, when running ranger for comparison: unset `RANGER_LEVEL` or ranger starts with a
+A seventh, and the most expensive so far because it hid a live defect: **the alternate screen
+keeps its cursor.** `CSI ?1049h` saves the cursor and `?1049l` restores it, so a program leaving
+the alternate screen finds the primary buffer exactly as it left it and carries on from there.
+Modelling that as "home the cursor" made the harness report a clean screen while Canger's
+press-any-key prompt was leaving the cursor mid-line and the next external program was drawing its
+first line onto the end of it. `Screen` saves and restores it now.
+
+An eighth, when running ranger for comparison: unset `RANGER_LEVEL` or ranger starts with a
 "nested instance" warning over the screen. `Session` clears it.
 
 ## Two things that are not traps but cost time anyway
