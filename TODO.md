@@ -5081,6 +5081,60 @@ parser does not strip one either, so this is parity rather than a defect — but
 configuration has several such lines, and they work only by luck (a `shell` command hands the
 comment to a shell, which ignores it).
 
+## A copy buffer shared between running Cangers — 2026-09-01
+
+Copy in one window, paste in another. Ranger cannot: `fm.copy_buffer` is an in-memory set on the
+file manager, and Canger's was the same. A ninth deliberate addition, behind
+`shared_copy_buffer`, off by default — two Cangers open on unrelated work should not have `dd` in
+one arm `pp` in the other.
+
+`~/.local/share/canger/copybuffer`, beside the bookmarks and tags: first line `copy` or `cut`, then
+one path per line. `State/Tags.cs` had already learned the rules — replace through a temporary and
+rename, follow a symlink rather than break it, `Persistent` off under `--clean`, and never let a
+failed read write emptiness over real data — so `RealPath` and the atomic replace moved into
+`State/StateFile.cs` and both classes use them. Unlike tags there is no read-before-write merge: a
+copy buffer is replaced whole, so two windows copying at once should end with whichever went last,
+which is what a clipboard does.
+
+### The buffer became paths
+
+`IFileManager.CopyBuffer` was `IReadOnlyList<FsNode>` and is now `IReadOnlyList<string>`. A buffer
+written by another instance has no nodes to offer, only names read from a file, and every consumer
+already reduced to the path — the paste, `%c`, the symlink paste, the add/remove merge.
+`SetCopyBuffer(IEnumerable<FsNode>, bool)` keeps its signature, because the user's `commands.cs`
+calls it and breaking a configuration to save a conversion is a poor trade.
+
+### Modification time was the wrong signal, and the test found it
+
+The first design asked "has the file changed?" with one `stat`, comparing modification times. It
+was wrong, and not subtly: **five rewrites in quick succession left `mtime_ns` identical every
+time** on this filesystem, because the clock behind it is coarse. The check would have failed in
+precisely the case it existed for — two windows acting within the same instant — and the failure
+would have looked like a missed update rather than a bug.
+
+`ReadIfChanged` compares the file's *contents* instead. It cannot be fooled, the file is a few
+hundred bytes, and it is cheaper than the per-row `stat` that `RefreshMetadata` already does beside
+it on every draw. The two questions collapsed into one honest method: `null` means "nothing new, or
+nothing readable", and both mean the same thing to the caller — keep what you have.
+
+### Verification
+
+Nine tests on the file itself and eight across two file managers sharing one. **Two controls**:
+writing disabled fails eleven, the change check disabled fails seven.
+
+Then the part the unit tests cannot reach, since the browser's wiring is a seam — **two real Canger
+processes** under `tools/screen.py`, sharing a state directory through `XDG_DATA_HOME`:
+
+```
+A: yy on one.txt
+B: :paste dest=dst        -> one.txt in dst
+A: dd on two.txt
+B: two.txt style before='' after='0;1;90'   changed=True     (B was never touched)
+```
+
+and the same again with the setting off: nothing pasted, nothing dimmed, and no buffer file
+created at all.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:

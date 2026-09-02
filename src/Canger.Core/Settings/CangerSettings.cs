@@ -194,6 +194,13 @@ public sealed class CangerSettings(ISettings settings)
     /// <summary>The <c>freeze_files</c> setting.</summary>
     public bool FreezeFiles => settings.Get<bool>("freeze_files", CurrentPath?.Invoke());
 
+    /// <summary>The <c>shared_copy_buffer</c> setting.</summary>
+    /// <remarks>
+    /// Off by default: two Cangers open on unrelated work should not have <c>dd</c> in one arm
+    /// <c>pp</c> in the other. Ranger has no equivalent at all.
+    /// </remarks>
+    public bool SharedCopyBuffer => settings.Get<bool>("shared_copy_buffer", CurrentPath?.Invoke());
+
 
     // ---- Previews ------------
 

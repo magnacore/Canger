@@ -106,6 +106,8 @@ public static class SettingsCatalog
             "Drop the active filter when entering another directory."),
         Bool("show_hidden_bookmarks", true,
             "Include bookmarks pointing inside hidden directories."),
+        Bool("shared_copy_buffer", false,
+             "Share the copy buffer with every other running Canger."),
         Bool("freeze_files", false,
             "Stop re-reading file metadata, for use on very slow filesystems."),
 

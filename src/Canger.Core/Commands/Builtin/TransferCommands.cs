@@ -48,7 +48,7 @@ public sealed class PasteCommand : CangerCommand
 
         CopyJob job = new(
             fileManager.FileSystem,
-            [.. fileManager.CopyBuffer.Select(f => f.Path)],
+            [.. fileManager.CopyBuffer],
             destination,
             fileManager.IsCutPending ? TransferKind.Move : TransferKind.Copy,
             policy);

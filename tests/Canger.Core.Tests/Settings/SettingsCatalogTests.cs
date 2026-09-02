@@ -138,11 +138,14 @@ public partial class SettingsCatalogTests
     /// </summary>
     /// <remarks>
     /// <c>unlock_prompt</c> governs a feature ranger has no counterpart for at all — removable
-    /// drives — so there is nothing for it to match. Everything else in the catalogue is
-    /// ranger's, and this list existing is what keeps that true: a setting cannot be added
-    /// without either matching ranger or being written down here.
+    /// drives — and <c>shared_copy_buffer</c> another: ranger's copy buffer is an in-memory set
+    /// on the file manager and cannot be shared between windows. So there is nothing for either
+    /// to match. Everything else in the catalogue is ranger's, and this list existing is what
+    /// keeps that true: a setting cannot be added without either matching ranger or being written
+    /// down here.
     /// </remarks>
-    private static readonly string[] CangerOnlySettings = ["unlock_prompt"];
+    private static readonly string[] CangerOnlySettings =
+        ["unlock_prompt", "shared_copy_buffer"];
 
     [GeneratedRegex("""["']([a-z_0-9]+)["']\s*:""")]
     private static partial Regex SettingNameInDict();
