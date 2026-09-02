@@ -77,6 +77,22 @@ public class TaskViewProgressTests
     }
 
     [Fact]
+    public void KeepsTheDescriptionOffTheEdgeWhenThereIsNoFigure()
+    {
+        // Reported: the description sat flush against the left edge. The field was left out
+        // entirely when there was nothing to put in it, so a row stepped in and out as its first
+        // checkpoint arrived and rows with and without a figure did not line up.
+        string withFigure = Render(new Reported(total: 1000, completed: 250));
+        string without = Render(null);
+
+        int indented = withFigure.IndexOf("Compressing:", StringComparison.Ordinal);
+        int plain = without.IndexOf("Compressing:", StringComparison.Ordinal);
+
+        Assert.True(plain > 0, "the description is flush against the edge");
+        Assert.Equal(indented % 60, plain % 60);
+    }
+
+    [Fact]
     public void ShowsNeitherBeforeTheCommandHasSaidAnything()
     {
         string rendered = Render(new Reported(total: 1000, completed: null));
@@ -93,5 +109,87 @@ public class TaskViewProgressTests
 
         Assert.Contains("Compressing: out.tar.lz", rendered, StringComparison.Ordinal);
         Assert.DoesNotContain("%", rendered, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// How much longer a job has, shown beside it.
+/// </summary>
+/// <remarks>
+/// Driven through a job with a fixed rate rather than a real command, because a rate measured from
+/// the clock cannot be made to say the same thing twice.
+/// </remarks>
+public class TaskViewEstimateTests
+{
+    /// <summary>A job that reports a size and a rate and does nothing else.</summary>
+    private sealed class SteadyWork(long total, long remaining, double rate) : ILoadable, ISizedWork
+    {
+        public string Description => "Compressing: out.tar.lz";
+
+        public double? Progress => 1 - ((double)remaining / total);
+
+        public TimeSpan Idle => TimeSpan.Zero;
+
+        public bool IsSized => true;
+
+        public long? TotalBytes => total;
+
+        public long? RemainingBytes => remaining;
+
+        public double? BytesPerSecond => rate;
+
+        public string Subject => Description;
+
+        public IEnumerator<Unit> SizingSteps() => Enumerable.Empty<Unit>().GetEnumerator();
+
+        public IEnumerator<Unit> Steps()
+        {
+            yield return Unit.Value;
+        }
+
+        public void Dispose()
+        {
+            // Nothing held.
+        }
+    }
+
+    private static string Render(ILoadable work)
+    {
+        TaskQueue queue = new();
+        queue.Add(work);
+
+        ScreenBuffer screen = new(70, 4);
+        TaskView view = new(new DefaultColorScheme(), queue) { IsVisible = true };
+        view.Layout(new Rect(0, 0, 70, 4));
+        view.Render(screen);
+
+        return string.Join("\n", Enumerable.Range(0, 4).Select(screen.TextAt));
+    }
+
+    [Fact]
+    public void ShowsHowMuchLongerItHas()
+    {
+        // 60 MB left at 1 MB/s is a minute.
+        Assert.Contains("left",
+                        Render(new SteadyWork(120_000_000, 60_000_000, 1_000_000)),
+                        StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PutsItAfterTheNameRatherThanBeforeIt()
+    {
+        // So a description is not pushed about by a figure that comes and goes.
+        string rendered = Render(new SteadyWork(120_000_000, 60_000_000, 1_000_000));
+
+        Assert.True(rendered.IndexOf("left", StringComparison.Ordinal) >
+                    rendered.IndexOf("out.tar.lz", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SaysNothingWhenThereIsNoRateYet()
+    {
+        Assert.DoesNotContain("left",
+                              Render(new SteadyWork(120_000_000, 60_000_000, 0)),
+                              StringComparison.Ordinal);
     }
 }

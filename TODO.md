@@ -5322,6 +5322,46 @@ whole, it ends at 100%.
 Five tests on the measuring, one of them through the real queue. **Controls**: telling the queue
 the job needs no sizing fails one; publishing the total mid-walk fails one.
 
+## A margin, and how much longer — 2026-09-02
+
+Two things from looking at the real thing: the description sat flush against the left edge, and
+there was no time remaining.
+
+**The margin.** The figure field was left out entirely when there was nothing to put in it, so a
+row with no reading yet started at column zero while its neighbours were indented — and a single
+row stepped left to right the moment its first checkpoint arrived. The field is always drawn now,
+empty or not.
+
+**The estimate.** `CommandTask.BytesPerSecond` returned null, with the reasoning that "the bytes
+counted are what has been read, while the time is spent compressing them, so the two describe
+different work". That was too cautious. tar reads at whatever pace the compressor allows, so the
+rate at which the input is consumed is exactly what predicts when the input will run out — which
+is when the job ends. It feeds the same smoothed `TransferRate` a copy uses.
+
+Timed from the first reading rather than from when the job was queued. An archiver says nothing
+until its first checkpoint, and counting that silence as working time would halve the rate and
+double the estimate for as long as it took to arrive — the same mistake `CopyProgress` documents
+about timing from construction while a job waits in the queue.
+
+The time goes *after* the description rather than before it, so a name is not pushed about by a
+figure that comes and goes.
+
+```
+   11%  Compressing: demo5.tar.lz
+   17%  Compressing: demo5.tar.lz  00:29 left
+   23%  Compressing: demo5.tar.lz  00:29 left
+   28%  Compressing: demo5.tar.lz  00:28 left
+```
+
+Four tests. **Controls**: leaving the field out when empty fails one; removing the estimate fails
+two.
+
+**The first attempt at that second control reported zero failures, and was wrong.** The mutation
+string was written from memory and did not match the file, so it replaced nothing and measured the
+unmutated code — a green result that meant nothing. Written down because it is the third time this
+file records the same thing: a mutation that does not take is not a control, and the only defence
+is to make the edit assert that it found its target.
+
 ## What is left
 
 Nothing from ranger. Possible directions from here:
