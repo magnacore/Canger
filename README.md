@@ -35,7 +35,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
 | Tests | 1918 |
 
-Seven things go deliberately beyond ranger:
+Eight things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -72,6 +72,12 @@ Seven things go deliberately beyond ranger:
   modified. `:stage` and `:unstage` are bound to the add and reset that ranger implements in every
   backend and never reaches from a key. All four backends were checked by running ranger's own
   Python and Canger's C# over the same repositories and diffing the results.
+- **`rename_stem`.** `cw` clears the whole name, extension and all, so renaming
+  `2024-01-07_15-06-24-part-005-019r-021p.mkv` means typing `.mkv` back for no reason; `a` keeps
+  the name and leaves the stem to be deleted by hand. `:rename_stem` is the missing third — the
+  stem gone, the extension kept, the cursor where the new name starts — and it treats `.tar.gz`
+  and its family as one extension. Not bound by default, so the shipped bindings stay ranger's:
+  `map cw rename_stem` in your `cc.conf` puts it where it is wanted.
 - **Shell commands that behave.** `-q` puts a long command on the task queue instead of freezing
   the interface behind it; `Tab` completes a path and not merely a name in the current directory;
   and a line is run directly when it safely can be, rather than always through `sh -c`, so passing
