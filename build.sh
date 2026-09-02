@@ -93,8 +93,16 @@ case "$target" in
             # port of ranger, so a binary handed to anyone has to say so and the corresponding
             # source has to be available to them. README.md names where.
             cp LICENSE README.md "$staging/"
+            # Generated from the binary being packaged, not copied from doc/. The committed
+            # copy is generated too, and went three releases without being regenerated -- the
+            # tarballs shipped a manual headed "canger 0.3.0" describing neither removable drives
+            # nor version control, while the .deb, which already generated its own, was correct.
+            # A test keeps the committed copy honest; this makes the tarball independent of it.
             mkdir -p "$staging/doc"
-            cp doc/canger.1 "$staging/doc/"
+            if ! ( cd "$staging" && ./canger --clean --man ) > "$staging/doc/canger.1"; then
+                echo "canger: could not generate the manual page from the packaged binary" >&2
+                exit 1
+            fi
 
             # Run what is about to be shipped. A publish that emits a broken assembly still
             # reports success, so the only way to know the tarball is worth handing to anyone is
@@ -180,7 +188,11 @@ case "$target" in
 
         # Generated from the binary being packaged rather than copied from `doc/`, so the manual
         # in the package describes the version in the package.
-        "$lib/canger" --man | gzip -9n > "$staging/usr/share/man/man1/canger.1.gz"
+        # --clean, or the manual documents whoever built the package. `--man` renders the key
+        # bindings and commands that are actually loaded, and without this the binary reads
+        # ~/.config/canger on the way past: the 0.6.0 .deb shipped a manual describing the
+        # maintainer's own `efc`, `fzf_locate` and `file_convert_text`, and not the defaults.
+        "$lib/canger" --clean --man | gzip -9n > "$staging/usr/share/man/man1/canger.1.gz"
 
         # Read off the binaries rather than guessed at, and rather than computed: dpkg-shlibdeps
         # wants the whole debhelper build tree around it and produces nothing useful without it.
