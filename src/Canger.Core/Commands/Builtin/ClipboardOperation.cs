@@ -47,9 +47,10 @@ internal static class ClipboardOperation
 
         ClipboardMode mode = ParseMode(arguments);
         IReadOnlyList<FsNode> chosen = Choose(fileManager, arguments, quantifier);
-        IReadOnlyList<FsNode> updated = Combine(fileManager.CopyBuffer, chosen, mode);
+        IReadOnlyList<string> updated =
+            Combine(fileManager.CopyBuffer, [.. chosen.Select(f => f.Path)], mode);
 
-        fileManager.SetCopyBuffer(updated, cut);
+        fileManager.SetCopyBufferPaths(updated, cut);
         fileManager.Notify($"{updated.Count} marked for {(cut ? "moving" : "copying")}");
     }
 
@@ -92,8 +93,8 @@ internal static class ClipboardOperation
     }
 
     /// <summary>Applies a mode to what is already on the clipboard.</summary>
-    private static IReadOnlyList<FsNode> Combine(IReadOnlyList<FsNode> existing,
-                                                 IReadOnlyList<FsNode> chosen,
+    private static IReadOnlyList<string> Combine(IReadOnlyList<string> existing,
+                                                 IReadOnlyList<string> chosen,
                                                  ClipboardMode mode)
     {
         if (mode == ClipboardMode.Set)
@@ -103,9 +104,9 @@ internal static class ClipboardOperation
 
         // Order is preserved rather than using a set, so a paste happens in the order the files
         // were gathered, which is what the user watched happen.
-        List<FsNode> combined = [.. existing];
+        List<string> combined = [.. existing];
 
-        foreach (FsNode entry in chosen)
+        foreach (string entry in chosen)
         {
             bool present = combined.Contains(entry);
 

@@ -35,7 +35,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
 | Tests | 1918 |
 
-Eight things go deliberately beyond ranger:
+Nine things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -72,6 +72,13 @@ Eight things go deliberately beyond ranger:
   modified. `:stage` and `:unstage` are bound to the add and reset that ranger implements in every
   backend and never reaches from a key. All four backends were checked by running ranger's own
   Python and Canger's C# over the same repositories and diffing the results.
+- **A copy buffer shared between windows** (`shared_copy_buffer`, off by default). Copy in one
+  Canger and paste in another; cut in one and the rows go dim in the other within a redraw.
+  Ranger cannot do this at all — its copy buffer is an in-memory set on the file manager. The
+  buffer lives beside the bookmarks and tags in `~/.local/share/canger`, outlives the windows the
+  way a clipboard does, and is written whole so two windows copying at once end with whichever
+  copied last. Off unless asked for, because two Cangers open on unrelated work should not have
+  `dd` in one arm `pp` in the other.
 - **`rename_stem`.** `cw` clears the whole name, extension and all, so renaming
   `2024-01-07_15-06-24-part-005-019r-021p.mkv` means typing `.mkv` back for no reason; `a` keeps
   the name and leaves the stem to be deleted by hand. `:rename_stem` is the missing third — the

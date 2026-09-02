@@ -50,6 +50,27 @@ public sealed class FakeFileManager : IFileManager
     /// <summary>The settings store behind <see cref="Settings"/>.</summary>
     public SettingsStore SettingsStore { get; }
 
+    /// <summary>
+    /// The buffer shared with other running Cangers, when a test wants two managers over one file.
+    /// </summary>
+    public SharedCopyBuffer? SharedCopyBuffer { get; set; }
+
+    /// <summary>Picks up a buffer another manager wrote, as the browser does on every draw.</summary>
+    /// <returns>Whether anything was taken.</returns>
+    public bool RefreshSharedCopyBuffer()
+    {
+        if (SharedCopyBuffer is not { } shared ||
+            !Settings.SharedCopyBuffer ||
+            shared.ReadIfChanged() is not { } taken)
+        {
+            return false;
+        }
+
+        CopyBuffer = taken.Paths;
+        IsCutPending = taken.Cut;
+        return true;
+    }
+
     /// <summary>The tabs, mutable so tests can add more.</summary>
     public Dictionary<int, Tab> MutableTabs { get; }
 
@@ -175,7 +196,7 @@ public sealed class FakeFileManager : IFileManager
     public RecordingFileOpener RecordedOpens => (RecordingFileOpener)Opener;
 
     /// <inheritdoc />
-    public IReadOnlyList<FsNode> CopyBuffer { get; private set; } = [];
+    public IReadOnlyList<string> CopyBuffer { get; private set; } = [];
 
     /// <inheritdoc />
     public bool IsCutPending { get; private set; }
@@ -245,10 +266,20 @@ public sealed class FakeFileManager : IFileManager
     public IReadOnlyList<string> CommandHistory => PastCommands;
 
     /// <inheritdoc />
-    public void SetCopyBuffer(IEnumerable<FsNode> files, bool cut)
+    public void SetCopyBuffer(IEnumerable<FsNode> files, bool cut) =>
+        SetCopyBufferPaths(files.Select(f => f.Path), cut);
+
+    /// <inheritdoc />
+    public void SetCopyBufferPaths(IEnumerable<string> paths, bool cut)
     {
-        CopyBuffer = [.. files];
+        CopyBuffer = [.. paths];
         IsCutPending = cut;
+
+        // The same writing the browser does, so a test can watch two managers share one file.
+        if (SharedCopyBuffer is { } shared && Settings.SharedCopyBuffer)
+        {
+            shared.Write(CopyBuffer, cut);
+        }
     }
 
     /// <inheritdoc />

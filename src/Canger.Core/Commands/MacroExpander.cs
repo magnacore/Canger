@@ -146,7 +146,7 @@ public sealed class MacroExpander(IFileManager fileManager)
         'p' => Many(_fileManager.Selection.Select(f => f.Path)),
 
         // The copy buffer, as absolute paths.
-        'c' => Many(_fileManager.CopyBuffer.Select(f => f.Path)),
+        'c' => Many(_fileManager.CopyBuffer),
 
         // The current directory.
         'd' => Single(_fileManager.CurrentDirectory.Path),

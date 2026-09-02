@@ -848,7 +848,7 @@ internal static class LinkPaster
     internal static void Paste(IFileManager fileManager, Action<string, string> link, string what,
                                bool makeUnique = true)
     {
-        IReadOnlyList<FsNode> buffer = fileManager.CopyBuffer;
+        IReadOnlyList<string> buffer = fileManager.CopyBuffer;
 
         if (buffer.Count == 0)
         {
@@ -859,20 +859,22 @@ internal static class LinkPaster
         string destination = fileManager.CurrentDirectory.Path;
         int done = 0;
 
-        foreach (FsNode node in buffer)
+        foreach (string source in buffer)
         {
+            string basename = Path.GetFileName(source);
+
             // The same refusal `CopyJob` makes, which these had none of. Linking a directory
             // into itself walks the tree it is creating: `Recurse` lists the source while adding
             // directories underneath it, and descends until the path length or the disk runs
             // out. Nothing existing is destroyed, but a filled disk is its own kind of loss.
-            if (PathRelation.IsSameOrInside(fileManager.FileSystem, destination, node.Path))
+            if (PathRelation.IsSameOrInside(fileManager.FileSystem, destination, source))
             {
-                fileManager.Notify($"paste {what} {node.Basename}: cannot be pasted into itself",
+                fileManager.Notify($"paste {what} {basename}: cannot be pasted into itself",
                                    isError: true);
                 continue;
             }
 
-            string target = Path.Join(destination, node.Basename);
+            string target = Path.Join(destination, basename);
 
             if (makeUnique)
             {
@@ -881,12 +883,12 @@ internal static class LinkPaster
 
             try
             {
-                link(node.Path, target);
+                link(source, target);
                 done++;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                fileManager.Notify($"paste {what} {node.Basename}: {e.Message}", isError: true);
+                fileManager.Notify($"paste {what} {basename}: {e.Message}", isError: true);
             }
         }
 
