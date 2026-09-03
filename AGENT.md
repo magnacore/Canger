@@ -1,30 +1,53 @@
-Ranger is a python based TUI file manager. Source code is given in ranger-master.
+# Canger
 
-Port Ranger from python to modern .Net 10 C# in Canger folder.
+Ranger is a python based TUI file manager. Source code is given in `ranger-master`.
 
-## While porting, pay attention to:
-- The port should be a 1-1 feature match
-- Even though the features should match, this does not mean python idioms need to be imitated. Use modern C# features and best practices.
+Port Ranger from python to modern .Net 10 C# in `Canger` folder.
+
+## While porting, pay attention to
+
+- The port should be a 1-1 feature match.
+- Even though the features should match, this does not mean python idioms need to be imitated.
+  Use modern C# features and best practices.
 - No need to copy python file structure. Use modern C# and OOP practices.
-- Canger should be extendable via plugins written in C#
-- Just like there is commands.py, rc.conf, rifle.conf, scope.sh, there should be commands.cs, cc.conf, scope.sh and rifle.conf to set the configurations. Sample configurations are provided in ranger_settings
-- Use exact same shortcuts as Ranger
-- Use parallel processing wherever it makes sense
-- Write unit tests so Canger can be tested using Test Driven Development
-- Develop Canger one system at a time
-- Setting will be saved in ~/.config/canger
+- Canger should be extendable via plugins written in C#.
+- Just like there is `commands.py`, `rc.conf`, `rifle.conf`, `scope.sh`, there should be
+  `commands.cs`, `cc.conf`, `scope.sh` and `rifle.conf` to set the configurations. Sample
+  configurations are provided in `ranger_settings`.
+- Use exact same shortcuts as Ranger.
+- Use parallel processing wherever it makes sense.
+- Write unit tests so Canger can be tested using Test Driven Development.
+- Develop Canger one system at a time.
+- Setting will be saved in `~/.config/canger`.
 
-Note:
-- .NET is available in /opt/anaconda3/envs/dotnet/lib/dotnet/dotnet
-- Write well documented code
-- Write secure code
-- Write maintainable code
-- Write extendable code
-- Write modular code
-- Do not use var - use explicit types
-- Development may be done in multiple sessions so maintain a TODO list so work can be resumed
-- Do not modify anything outside the repo directory without permission
-- Use gitflow methodology for branches
+## Working agreements
+
+- .NET is available in `/opt/anaconda3/envs/dotnet/lib/dotnet/dotnet`.
+- Write well documented code.
+- Write secure code.
+- Write maintainable code.
+- Write extendable code.
+- Write modular code.
+- Do not use `var` - use explicit types.
+- Development may be done in multiple sessions so maintain a TODO list so work can be resumed.
+- Do not modify anything outside the repo directory without permission.
+- Use GitFlow methodology for branches.
+- Use correct software design patterns wherever applicable.
+- Do not install anything on the computer. If you need any software, let the user know and she
+  will install it and let you know.
+- The remote is <https://github.com/magnacore/Canger>, public, default branch `main`. Push when
+  asked to; do not push unasked, and never force-push a published branch or tag.
+- Only `Canger/` is a git repository.
+- `~/.config/canger` is the user's live configuration and may be edited directly.
+- Run `./build.sh publish` after merging, or `canger` keeps running the previous binary.
+- Release with `./build.sh release`, never by hand. It refuses on a dirty tree, an untagged `HEAD`,
+  a tag that disagrees with `<Version>`, a tag already released, a version mismatch between the
+  binary and its package, a packaged manual that is not what `--clean --man` produces, or an
+  AppImage that will not start. `--dry-run` does everything except publish.
+- Never risk data. No forced or lazy unmounts, no overwrite without a check, and read a file
+  before deleting or replacing it.
+- If you come across an important piece of learning that will be beneficial in the future, turn it
+  into a skill.
 
 ## Verifying a change
 
@@ -56,18 +79,3 @@ scratch more than once.
 - **`ranger-parity-check`** — settling "does Canger match ranger here?" by running ranger's own
   Python and Canger's C# over the same input and diffing, rather than reading the source (which
   misleads) or driving ranger's UI (which fails).
-
-## Working agreements
-
-- The remote is <https://github.com/magnacore/Canger>, public, default branch `main`. Push when
-  asked to; do not push unasked, and never force-push a published branch or tag.
-- Only `Canger/` is a git repository.
-- `~/.config/canger` is the user's live configuration and may be edited directly.
-- Run `./build.sh publish` after merging, or `canger` keeps running the previous binary.
-- Release with `./build.sh release`, never by hand. It refuses on a dirty tree, an untagged `HEAD`,
-  a tag that disagrees with `<Version>`, a tag already released, a version mismatch between the
-  binary and its package, a packaged manual that is not what `--clean --man` produces, or an
-  AppImage that will not start. `--dry-run` does everything except publish.
-- Never risk data. No forced or lazy unmounts, no overwrite without a check, and read a file
-  before deleting or replacing it.
-- If you come across an important piece of learning that will be beneficial in the future, turn it into a skill.
