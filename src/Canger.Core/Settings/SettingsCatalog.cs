@@ -33,6 +33,12 @@ public static class SettingsCatalog
             + "screen, builtin asks inside Canger and can remember it in the desktop keyring."),
         Str("colorscheme", "default", null,
             "Name of the colorscheme to use."),
+        Str("progress_bar_color", "", null,
+            "Colour a progress bar fills with: a colour name, bright_ and a name, or a palette "
+            + "index from 0 to 255. Empty leaves the colourscheme's own choice."),
+        Str("progress_bar_text_color", "", null,
+            "Colour of the text drawn over a filled progress bar. Empty leaves the "
+            + "colourscheme's own choice, which is picked to contrast with its fill."),
         Str("draw_borders", "none", ["none", "both", "outline", "separators"],
             "Which borders to draw around and between columns."),
         Str("draw_borders_multipane", null, ["none", "both", "outline", "separators", "active-pane"],

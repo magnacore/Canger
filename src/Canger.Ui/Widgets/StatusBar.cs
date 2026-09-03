@@ -91,7 +91,18 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
                             .With(MessageIsError, ContextKey.Bad)
                             .With(!MessageIsError, ContextKey.Good));
 
-            screen.Write(Bounds.X, Bounds.Y, new WideString(message).Truncate(Bounds.Width), style);
+            // Every headline gets the same left margin, message or running task. The margin is
+            // there because the progress tint is drawn the full width of the bar and a
+            // description starting in the very first cell sits against its edge; but giving it
+            // only to the task meant the plugin's "Compressing 1 into demo1.tar.lz" sat flush
+            // while the task line that replaced it a moment later did not, and the text jumped a
+            // column sideways as the bar appeared. Ranger draws messages flush left
+            // (`gui/widgets/statusbar.py:_draw_message`); a column of white space is a small
+            // price for text that does not move.
+            string headlineText = " " + message;
+
+            screen.Write(Bounds.X, Bounds.Y,
+                         new WideString(headlineText).Truncate(Bounds.Width), style);
 
             // Underneath the line, not instead of it. This returned here, so the one moment the
             // bar had something to say — a copy running, its description filling the bar — was

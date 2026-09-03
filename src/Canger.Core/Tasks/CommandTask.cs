@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.FileOperations;
 using Canger.Core.Processes;
 
 namespace Canger.Core.Tasks;
@@ -21,7 +22,7 @@ namespace Canger.Core.Tasks;
 /// <c>stdout_buffer</c>.
 /// </para>
 /// </remarks>
-public sealed class CommandTask : ILoadable
+public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
 {
     /// <summary>
     /// How often the program is looked in on while it runs.
@@ -36,7 +37,43 @@ public sealed class CommandTask : ILoadable
     private readonly ProcessRequest _request;
     private readonly Action<string, bool>? _notify;
     private readonly Action<CommandTask>? _finished;
+    private readonly ICommandProgress? _progress;
     private IBackgroundProcess? _process;
+
+    /// <summary>How it ended, kept because the handle does not outlive the job.</summary>
+    /// <remarks>
+    /// <see cref="TaskQueue.Stop"/> disposes the work the moment it finishes, which clears
+    /// <see cref="_process"/> — so reading the exit code through it afterwards always found
+    /// nothing, and a completed archive sat at 94% for ever. The unit tests missed it by driving
+    /// <see cref="Steps"/> directly, where no queue is there to dispose anything.
+    /// </remarks>
+    private int? _endedWith;
+
+    /// <summary>The measuring walk, created once.</summary>
+    private IEnumerator<Unit>? _sizing;
+
+    /// <summary>How fast the command is getting through its work.</summary>
+    /// <remarks>
+    /// The same smoothed rate a copy uses, fed from the readings the progress source collects.
+    /// Timed from the first reading rather than from when the job was queued, so waiting behind
+    /// another task does not count as time spent working.
+    /// </remarks>
+    private readonly TransferRate _rate = new();
+
+    /// <summary>Where the clock comes from, so an estimate can be tested without waiting.</summary>
+    private readonly TimeProvider _time;
+
+    private DateTimeOffset? _startedReporting;
+    private long _lastReading;
+
+    /// <summary>What had already been counted when the first reading arrived.</summary>
+    /// <remarks>
+    /// Subtracted from every later reading, because the clock starts at that first reading too.
+    /// Without it the bytes counted before the timing began were divided by a stretch of time that
+    /// excluded them, and the rate came out several times too high — badly enough that an
+    /// extraction with half a minute left showed <c>00:00</c> throughout.
+    /// </remarks>
+    private long _baseline;
 
     /// <summary>Creates a queued command.</summary>
     /// <param name="runner">Starts the program.</param>
@@ -47,9 +84,20 @@ public sealed class CommandTask : ILoadable
     /// Run once the program has ended, whatever its outcome — ranger's <c>after</c> signal, which
     /// the archive plugin uses to reload the directory the files landed in.
     /// </param>
+    /// <param name="progress">
+    /// Where a byte count comes from, for a command that can be made to report one. Omitted, the
+    /// task shows a spinner as before.
+    /// </param>
+    /// <param name="time">
+    /// Where the clock comes from. Defaults to the system clock; a test passes its own so that a
+    /// rate and an estimate can be checked against known intervals rather than against however
+    /// long the test happened to take.
+    /// </param>
     public CommandTask(IProcessRunner runner, ProcessRequest request, string description,
                        Action<string, bool>? notify = null,
-                       Action<CommandTask>? finished = null)
+                       Action<CommandTask>? finished = null,
+                       ICommandProgress? progress = null,
+                       TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentException.ThrowIfNullOrWhiteSpace(description);
@@ -58,20 +106,62 @@ public sealed class CommandTask : ILoadable
         _request = request;
         _notify = notify;
         _finished = finished;
-        Description = description;
+        _progress = progress;
+        _time = time ?? TimeProvider.System;
+        Subject = description;
     }
 
     /// <inheritdoc />
-    public string Description { get; }
+    public string Subject { get; }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The subject, then whatever figures the command can offer, in the columns a copy uses. Laid
+    /// out by <see cref="Model.TransferFigures"/> rather than here so that a line about an archive
+    /// and a line about a copy are the same shape — which is the whole reason the task view and
+    /// the status bar can show either without a format of their own.
+    /// </remarks>
+    public string Description
+    {
+        get
+        {
+            string figures = Model.TransferFigures.Describe(
+                Progress, _progress?.Completed ?? 0, _progress?.Total ?? 0, BytesPerSecond,
+                Estimate);
+
+            return figures.Length > 0 ? $"{Subject}: {figures}" : Subject;
+        }
+    }
 
     /// <summary>
-    /// Always <see langword="null"/>: an outside program does not say how far along it is.
+    /// How far along it is, when the command was set up to say.
     /// </summary>
     /// <remarks>
-    /// The task view shows a spinner rather than a bar for these, which is the honest rendering —
-    /// ranger does the same, its <c>CommandLoader</c> never setting a percentage.
+    /// <see langword="null"/> unless a progress source was given <em>and</em> it knows the total —
+    /// a spinner, which is what ranger's <c>CommandLoader</c> always shows. A source that reports
+    /// only a byte count leaves this null on purpose; see <see cref="Transferred"/>.
     /// </remarks>
-    public double? Progress => null;
+    public double? Progress =>
+        _progress is not { Total: { } total, Completed: { } done } || total <= 0
+            ? null
+
+            // A command that succeeded is finished, whatever its last reading said. tar reports at
+            // intervals and says nothing about the tail after the final one, so a twenty-four
+            // megabyte archive ended at 85% and stayed there — a bar that stops short reads as a
+            // job that stalled. A command that *failed* keeps its last honest figure.
+            : _endedWith == 0
+                ? 1
+                : Math.Clamp((double)done / total, 0, 1);
+
+    /// <summary>
+    /// The bytes written or read so far, when that is all the command will say.
+    /// </summary>
+    /// <remarks>
+    /// The honest half-answer for an archiver that reports nothing: the file can be watched
+    /// growing, but how large it will end up depends on a compression ratio nobody knows. The task
+    /// view shows this figure where it would otherwise have nothing but a spinner.
+    /// </remarks>
+    public long? Transferred => _progress?.Completed;
 
     /// <summary>
     /// The poll interval while the program runs, and nothing once it has ended.
@@ -99,6 +189,45 @@ public sealed class CommandTask : ILoadable
     /// <summary>Its exit code, or <see langword="null"/> until it has finished.</summary>
     public int? ExitCode => _process?.ExitCode;
 
+    /// <summary>The measuring half, for a command whose total has to be worked out.</summary>
+    /// <remarks>
+    /// Only a <see cref="MeasuredProgress"/> has anything to measure. Everything else is already
+    /// sized — either it knows its total from the start or it never will — so it reports itself
+    /// finished at once and the queue moves on.
+    /// </remarks>
+    private IMeasurableProgress? Measuring => _progress as IMeasurableProgress;
+
+    /// <inheritdoc />
+    public bool IsSized => Measuring is not { IsMeasured: false };
+
+    /// <inheritdoc />
+    public IEnumerator<Unit> SizingSteps() =>
+        _sizing ??= Measuring?.Measure() ?? Enumerable.Empty<Unit>().GetEnumerator();
+
+    /// <inheritdoc />
+    public long? TotalBytes => _progress?.Total;
+
+    /// <inheritdoc />
+    public long? RemainingBytes =>
+        _progress is { Total: { } total, Completed: { } done } ? Math.Max(total - done, 0) : null;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// This was left unreported at first, on the grounds that the bytes counted are what has been
+    /// read while the time goes on compressing them. That was too cautious: tar reads at whatever
+    /// pace the compressor allows, so the rate at which the input is consumed is exactly what
+    /// predicts when the input will run out — which is when the job ends.
+    /// </remarks>
+    public double? BytesPerSecond => _rate.BytesPerSecond;
+
+    /// <summary>How much longer it should take, once there is enough to say.</summary>
+    /// <remarks>
+    /// Needs a total, so it appears for an archive being measured or unpacked and not for one
+    /// merely watched growing — the same line the percentage draws.
+    /// </remarks>
+    public TimeSpan? Estimate =>
+        RemainingBytes is { } remaining ? _rate.Estimate(remaining) : null;
+
     /// <inheritdoc />
     public IEnumerator<Unit> Steps()
     {
@@ -117,8 +246,17 @@ public sealed class CommandTask : ILoadable
         // `Idle`, which watches for a keystroke at the same time.
         while (!_process.WaitForExit(TimeSpan.Zero))
         {
+            // Offered the whole of its stream each time. A source that parses it keeps no
+            // position of its own, and one that watches a file ignores it.
+            _progress?.Update(Reported());
+            RecordRate();
             yield return Unit.Value;
         }
+
+        // Once more, so a command that finishes between two polls still ends at its final figure
+        // rather than at whatever the last slice happened to catch.
+        _progress?.Update(Reported());
+        _endedWith = _process.ExitCode;
 
         Report();
         _finished?.Invoke(this);
@@ -134,6 +272,47 @@ public sealed class CommandTask : ILoadable
         _process = null;
     }
 
+    /// <summary>Whichever of the command's streams the progress source asked for.</summary>
+    /// <returns>Everything written to it so far, or nothing when there is no source or process.</returns>
+    private string Reported() =>
+        _process is null ? string.Empty
+                         : _progress?.ReadsStandardOutput == true ? _process.StandardOutput
+                                                                  : _process.StandardError;
+
+    /// <summary>Feeds the rate from whatever the source has counted so far.</summary>
+    /// <remarks>
+    /// Timed from the first reading, not from the start of the job: an archiver says nothing until
+    /// its first checkpoint, and counting that silence as working time would halve the rate and
+    /// double the estimate for as long as it took to arrive.
+    /// </remarks>
+    private void RecordRate()
+    {
+        if (_progress?.Completed is not { } completed || completed <= 0)
+        {
+            return;
+        }
+
+        DateTimeOffset now = _time.GetUtcNow();
+
+        if (_startedReporting is not { } since)
+        {
+            _startedReporting = now;
+            _lastReading = completed;
+            _baseline = completed;
+            return;
+        }
+
+        if (completed != _lastReading)
+        {
+            _lastReading = completed;
+
+            // Both halves measured from the same instant. Feeding the cumulative count against
+            // time started at the first reading credited the command with bytes it had moved
+            // before the stopwatch began.
+            _rate.Record(completed - _baseline, now - since);
+        }
+    }
+
     /// <summary>Passes on whatever the program complained about.</summary>
     private void Report()
     {
@@ -142,7 +321,14 @@ public sealed class CommandTask : ILoadable
             return;
         }
 
-        string error = _process.StandardError.Trim();
+        // The progress source's own reporting is not a complaint. Asking tar to say how far it has
+        // got makes it write to standard error, which is exactly where failures are read from.
+        string error = string.Join(
+            '\n',
+            _process.StandardError
+                    .Split('\n')
+                    .Where(line => _progress?.Reports(line) != true))
+            .Trim();
 
         if (error.Length > 0)
         {

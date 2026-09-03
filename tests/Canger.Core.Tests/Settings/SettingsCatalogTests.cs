@@ -145,7 +145,17 @@ public partial class SettingsCatalogTests
     /// down here.
     /// </remarks>
     private static readonly string[] CangerOnlySettings =
-        ["unlock_prompt", "shared_copy_buffer"];
+    [
+        "unlock_prompt",
+        "shared_copy_buffer",
+
+        // Ranger keeps its progress bar's colour in the colourscheme, where changing it means
+        // writing a colourscheme. Canger keeps the scheme's choice as the default and lets these
+        // two override it, because a bar whose text cannot be read against its own fill is a
+        // thing a user should be able to fix from cc.conf.
+        "progress_bar_color",
+        "progress_bar_text_color",
+    ];
 
     [GeneratedRegex("""["']([a-z_0-9]+)["']\s*:""")]
     private static partial Regex SettingNameInDict();

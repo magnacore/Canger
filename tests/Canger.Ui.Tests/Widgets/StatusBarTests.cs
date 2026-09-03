@@ -336,7 +336,9 @@ public class StatusBarTests
 
         bar.Render(screen);
 
-        Assert.StartsWith("something happened", Line(screen), StringComparison.Ordinal);
+        // Placement is pinned by AMessageTakesTheSameMarginAsARunningTask; this is about the
+        // message displacing the usual contents.
+        Assert.StartsWith("something happened", Line(screen).TrimStart(), StringComparison.Ordinal);
         Assert.DoesNotContain("free", Line(screen), StringComparison.Ordinal);
     }
 
@@ -349,9 +351,13 @@ public class StatusBarTests
 
         bar.Render(screen);
 
-        // Half the width recoloured, as ranger tints it (statusbar.py:330-336).
-        Assert.Equal(Color.Blue, screen[0, 0].Style.Background);
-        Assert.NotEqual(Color.Blue, screen[Width - 1, 0].Style.Background);
+        // Half the width recoloured, as ranger tints it (statusbar.py:330-336). Compared against
+        // the scheme's own colour rather than a literal, so the test says "the bar is the bar
+        // colour" and does not have to be edited whenever that colour is chosen differently.
+        DefaultColorScheme scheme = new();
+
+        Assert.Equal(scheme.ProgressBarColor, screen[0, 0].Style.Background);
+        Assert.NotEqual(scheme.ProgressBarColor, screen[Width - 1, 0].Style.Background);
     }
 
     [Fact]
@@ -367,10 +373,101 @@ public class StatusBarTests
 
         bar.Render(screen);
 
-        Assert.StartsWith("copying", screen.TextAt(0), StringComparison.Ordinal);
-        Assert.Equal(Color.Blue, screen[0, 0].Style.Background);
-        Assert.NotEqual(Color.Blue, screen[Width - 1, 0].Style.Background);
+        // The margin below is why this is not `StartsWith`; what this test is for is that the words
+        // and the tint are both there.
+        DefaultColorScheme scheme = new();
+
+        Assert.Contains("copying", screen.TextAt(0), StringComparison.Ordinal);
+        Assert.Equal(scheme.ProgressBarColor, screen[0, 0].Style.Background);
+        Assert.NotEqual(scheme.ProgressBarColor, screen[Width - 1, 0].Style.Background);
     }
+
+    [Fact]
+    public void Progress_NamesTheTextColourOverTheFillAsWellAsTheFill()
+    {
+        // Reported: "the white text on cyan is hard to read". Ranger sets only the background and
+        // leaves the text at whatever it was — measured, the bar emits ESC[0;44m, a reset then
+        // background blue, so the words keep the terminal's default foreground. Whether that reads
+        // depends entirely on how the terminal renders the fill. Naming both halves is what makes
+        // the pairing hold in any palette.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ShowProgressBar = true;
+        bar.Progress = 0.5;
+        bar.TaskDescription = "copying src: 50%";
+
+        bar.Render(screen);
+
+        DefaultColorScheme scheme = new();
+
+        Assert.Equal(scheme.ProgressBarTextColor, screen[0, 0].Style.Foreground);
+        Assert.NotEqual(scheme.ProgressBarTextColor, screen[Width - 1, 0].Style.Foreground);
+    }
+
+    [Fact]
+    public void Progress_ContrastsTheTextWithTheFill()
+    {
+        // The point of naming both: a scheme that paired a colour with itself, or left the text at
+        // the terminal default over a fill that might be any shade, would be back where it started.
+        DefaultColorScheme scheme = new();
+
+        Assert.NotEqual(scheme.ProgressBarColor, scheme.ProgressBarTextColor);
+        Assert.False(scheme.ProgressBarTextColor.IsDefault,
+                     "the text over the fill must be stated, not inherited");
+    }
+
+    [Fact]
+    public void Progress_LeavesAMarginBeforeTheTaskDescription()
+    {
+        // Reported: the description sat against the very edge of the tinted bar with nothing to
+        // separate the two.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ShowProgressBar = true;
+        bar.Progress = 0.5;
+        bar.TaskDescription = "Compressing: demo.tar.lz";
+
+        bar.Render(screen);
+
+        Assert.StartsWith(" Compressing", screen.TextAt(0), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMessageTakesTheSameMarginAsARunningTask()
+    {
+        // Reported: "the Compressing text starts flush to the left, but as soon as the progress
+        // bar appears it gets indented by 1 space, so there is a slight jump". The two are the
+        // same headline a moment apart — the plugin's notice, then the task's own line — and
+        // giving the margin to only one of them moved the text sideways as the bar arrived.
+        //
+        // A deliberate divergence: ranger draws messages flush left, through `_draw_message`,
+        // which does no tinting. Canger tints beneath the running task, so the margin has to be
+        // there; making it unconditional is what keeps the text still.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.Message = "rename: already exists";
+
+        bar.Render(screen);
+
+        Assert.StartsWith(" rename:", screen.TextAt(0), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DoesNotMoveTheHeadlineWhenAMessageGivesWayToATask()
+    {
+        // The jump itself, pinned: both phases must start in the same column.
+        (StatusBar first, ScreenBuffer messageScreen) = Build();
+        first.Message = "Compressing 1 into demo.tar.lz";
+        first.Render(messageScreen);
+
+        (StatusBar second, ScreenBuffer taskScreen) = Build();
+        second.ShowProgressBar = true;
+        second.Progress = 0.5;
+        second.TaskDescription = "Compressing: demo.tar.lz:  50%";
+        second.Render(taskScreen);
+
+        Assert.Equal(Indent(messageScreen.TextAt(0)), Indent(taskScreen.TextAt(0)));
+    }
+
+    /// <summary>How far in the text starts.</summary>
+    private static int Indent(string line) => line.Length - line.TrimStart().Length;
 
     [Fact]
     public void Progress_DoesNotTintUnderAMessageTheUserAskedFor()

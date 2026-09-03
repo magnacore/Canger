@@ -293,41 +293,14 @@ public sealed class CopyJob : ILoadable, ISizedWork
 
 
     /// <summary>Adds up how much there is to transfer.</summary>
-    private IEnumerable<long> Measure(string path)
-    {
-        _cancellationToken.ThrowIfCancellationRequested();
-
-        FileStatus? status = _fileSystem.GetStatus(path, followSymbolicLinks: false);
-
-        if (status is null)
-        {
-            yield break;
-        }
-
-        if (!status.Value.IsDirectory || status.Value.IsSymbolicLink)
-        {
-            yield return status.Value.Size;
-            yield break;
-        }
-
-        IReadOnlyList<DirectoryEntry> entries;
-        try
-        {
-            entries = _fileSystem.ListDirectory(path, _cancellationToken);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            yield break;
-        }
-
-        foreach (DirectoryEntry entry in entries)
-        {
-            foreach (long measured in Measure(Join(path, entry.Name)))
-            {
-                yield return measured;
-            }
-        }
-    }
+    /// <summary>Adds up what a source holds, handing control back between files.</summary>
+    /// <remarks>
+    /// The walk itself is <see cref="TreeSize"/>, shared with compressing, which needs the same
+    /// answer for the same reason. Two walks that could disagree about what a tree holds would be
+    /// worse than one.
+    /// </remarks>
+    private IEnumerable<long> Measure(string path) =>
+        TreeSize.Sizes(_fileSystem, path, _cancellationToken);
 
     /// <summary>Transfers one thing, whatever it is.</summary>
     private IEnumerable<Unit> TransferAny(string source, string target)

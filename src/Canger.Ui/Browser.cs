@@ -1130,14 +1130,16 @@ public sealed class Browser : IFileManager, IDisposable
     /// <inheritdoc />
     public QueuedTask RunInBackground(string description, string command,
                                       string? workingDirectory = null,
-                                      Action<CommandTask>? finished = null)
+                                      Action<CommandTask>? finished = null,
+                                      ICommandProgress? progress = null)
     {
         CommandTask task = new(
             Runner,
             new ProcessRequest(command, default, workingDirectory ?? CurrentTab.Path),
             description,
             (message, isError) => Notify(message, isError),
-            finished);
+            finished,
+            progress);
 
         return Tasks.Add(task);
     }
@@ -2293,6 +2295,43 @@ public sealed class Browser : IFileManager, IDisposable
     }
 
     /// <summary>Pushes the current settings onto the directories being shown.</summary>
+    /// <summary>Gives the colourscheme whatever progress bar colours the configuration names.</summary>
+    /// <param name="scheme">The scheme in use.</param>
+    /// <param name="settings">The configuration to read them from.</param>
+    /// <returns><see langword="true"/> when this changed anything, so the caller can repaint.</returns>
+    /// <remarks>
+    /// <para>
+    /// Which settings are read is decided <em>here</em>, not passed in, for the reason
+    /// <see cref="ApplySettings"/> gives at length: the defect this shape guards against is
+    /// reading the wrong ones, and a test handed the right colours could never catch it. Reverting
+    /// the whole of this step broke none of 2 045 tests when it was written the other way round.
+    /// </para>
+    /// <para>
+    /// An empty setting means "the colourscheme's own choice", which is a different thing from
+    /// <c>default</c>, the terminal's own colour — so the two are told apart by the parser
+    /// refusing a blank rather than by it inventing an answer for one.
+    /// </para>
+    /// </remarks>
+    internal static bool ApplyProgressBarColors(SwitchableColorScheme scheme,
+                                                CangerSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(scheme);
+        ArgumentNullException.ThrowIfNull(settings);
+
+        return scheme.SetProgressBarColors(ConfiguredColor(settings.ProgressBarColor),
+                                           ConfiguredColor(settings.ProgressBarTextColor));
+    }
+
+    /// <summary>Reads a colour from the configuration, if one was given.</summary>
+    /// <param name="setting">What the setting holds.</param>
+    /// <returns>
+    /// The colour, or <see langword="null"/> when the setting is empty or names nothing — in
+    /// which case the colourscheme's own choice stands, which is the useful answer for a typo as
+    /// well as for a blank.
+    /// </returns>
+    private static Color? ConfiguredColor(string setting) =>
+        ColorNames.TryParse(setting, out Color color) ? color : null;
+
     private void ApplySettingsToDirectory() =>
         ApplySettings(
             CurrentTab,
@@ -2590,6 +2629,12 @@ public sealed class Browser : IFileManager, IDisposable
         // only to throw both away.
         if (!string.Equals(_colorScheme.Name, Settings.Colorscheme, StringComparison.Ordinal)
             && _colorScheme.SwitchTo(_colorSchemes.CreateOrDefault(Settings.Colorscheme)))
+        {
+            _screen.Clear();
+        }
+
+        // A repaint for the same reason: every style resolved under the old colours is now wrong.
+        if (ApplyProgressBarColors(_colorScheme, Settings))
         {
             _screen.Clear();
         }

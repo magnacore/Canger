@@ -46,6 +46,21 @@ public sealed class QueuedTask(ILoadable work)
     /// <summary>How far along it is, from 0 to 1, or <see langword="null"/> when unknown.</summary>
     public double? Progress => Work.Progress;
 
+    /// <summary>How much longer this job should take, when it can say.</summary>
+    public TimeSpan? Estimate => (Work as CommandTask)?.Estimate ?? Sized?.RemainingBytes switch
+    {
+        { } remaining when Sized?.BytesPerSecond is { } rate and > 0 =>
+            TimeSpan.FromSeconds(remaining / rate),
+        _ => null,
+    };
+
+    /// <summary>Bytes moved so far, for work that reports them without a total.</summary>
+    /// <remarks>
+    /// What the task view shows where there is no percentage to justify a bar — an archiver that
+    /// can be watched writing but cannot say how much is left.
+    /// </remarks>
+    public long? Transferred => (Work as IReportsBytes)?.Transferred;
+
     /// <summary>Whether it will not be advanced again.</summary>
     public bool IsComplete =>
         State is TaskState.Finished or TaskState.Cancelled or TaskState.Failed;

@@ -1,10 +1,251 @@
 # Canger — port status
 
-Canger is a 1-1 C# / .NET 10 port of [ranger](https://ranger.fm), the Python TUI file manager.
-The Python source under `../ranger-master/` is the reference implementation and the authority on
-behaviour; `../ranger_settings/` is a real user configuration that must parse unchanged.
+## Progress bar colours
 
-This file is the resume point between sessions. Update it at the end of every phase.
+Reported: "the white text on cyan is hard to read". Built on a branch as an experiment, tested by
+the user, and accepted into 0.8.0.
+
+**Diagnosis, measured.** The tinted span emitted `ESC[0;44m` — a reset, then background blue.
+Canger never chose a foreground for the bar at all: ranger's rule is `bg = progress_bar_color` with
+the text left at whatever it was, so legibility depends entirely on how the terminal renders that
+background. A palette that maps blue to something light leaves pale text on a pale bar.
+
+**1 — every scheme names a pair.** `ColorScheme` gained `ProgressBarColor` and
+`ProgressBarTextColor`. The shipped schemes pick a *bright* fill with dark text, because bright
+colours are light by convention and the direction of contrast therefore holds in any palette;
+solarized runs the other way, its blue being a mid-tone. Snow is untouched — it inverts rather than
+colours. Now `ESC[0;30;104m`, black on bright blue.
+
+**3 — two settings.** `progress_bar_color` and `progress_bar_text_color` take a colour name, a
+`bright_` name, or a palette index; empty keeps the scheme's own choice, which is a different thing
+from `default`, the terminal's own colour. A typo leaves the scheme's choice standing rather than
+drawing a colour nobody asked for. Documented in `config/cc.conf`, and added to the user's own
+`cc.conf` once the branch was accepted — while it was still an experiment those lines were kept out
+of it, since they would have been errors on any build without the branch.
+
+**Jungle needed separating first.** It painted directories, line numbers *and* the bar from one
+property, so configuring the bar would have repainted every directory name in the browser. Its
+accent is now its own.
+
+### Verification
+
+| mutation | fails |
+| --- | --- |
+| status bar stops naming a text colour | 3 |
+| overrides forgotten across a scheme switch | 1 |
+| styles not discarded when the colours change | 1 |
+| browser stops feeding the settings to the scheme | **0, then 3** |
+| the two settings read the wrong way round | 3 |
+
+The fourth is the seam again — **twelfth instance**. With the whole step disconnected, none of
+2 045 tests failed: both settings would have been inert with everything looking well. Closed by
+moving the choice of *which settings to read* inside `Browser.ApplyProgressBarColors`, the shape
+`ApplySettings` already documents, and the swap control shows it now catches the subtle version too.
+
+pty, on the real binary: scheme's own `0;30;104`; after `:set progress_bar_color magenta` and
+`:set progress_bar_text_color bright_white`, `0;97;45`; after clearing the fill alone, `0;97;104`.
+
+## The task view's text sat against the tint
+
+Reported: "the copy or compressing text should have a 1 space so it is not flush with the progress
+bar". Removing the reserved figure column had left every row starting in the very first cell, with
+the progress tint drawn straight up to it.
+
+One constant column of margin, the same the status bar gives its own headline and for the same
+reason. Constant, so nothing moves as the figures arrive — which was the fault the reserved field
+had. The title and the empty-state line stay flush: nothing is drawn behind those.
+
+**Control.** Margin removed → 3 fail (`KeepsTheTextOffTheEdgeOfTheProgressTint`,
+`StartsEveryRowInTheSamePlaceWhateverItHasToReport`,
+`DoesNotPrintAPercentageTheTaskHasAlreadyGiven`). Mutation compiled: 2 022 tests ran. pty: every
+row starts at column 1.
+
+## Progress for zip, in both directions
+
+Asked: "when I use the .zip format, I don't see any progress. Is this intentional?" Half of it was;
+half was a defect and a gap.
+
+**Intentional and unchanged:** no percentage scraped from a tool's own display. Those differ
+between versions and would be a parser to maintain per tool.
+
+**The defect.** Compressing to `.zip` showed *nothing* during the run — not even the byte count it
+was meant to fall back to. `GrowingFileProgress` watches the named archive, but `zip` writes a
+temporary and renames it at the very end. Measured: the temporary reached 74 MB while `out.zip`
+did not yet exist, so the figure only ever appeared on the line saying the job had finished.
+**Eleventh instance** of "the mechanism exists and nothing feeds it".
+
+**The gap.** Extracting a `.zip` had no progress source at all.
+
+**Both fixed by counting entries rather than bytes.** Neither Info-ZIP program reports bytes, but
+both name every entry as they handle it — `  adding: data/f3.bin (deflated 24%)` and
+`  inflating: dest/data/f3.bin` — and a path is the one thing an archiver cannot rephrase.
+
+- `src/Canger.Core/FileSystem/ZipDirectory.cs` reads the central directory at the end of a zip, so
+  every entry's uncompressed size is known before a byte is written. `CompressedStreamSize` hands a
+  zip to it, so a caller need not know which shape a file is.
+- `src/Canger.Core/Tasks/ManifestProgress.cs` counts the entries a command names against what each
+  weighs. Matching is on trailing path segments because the two ends disagree in opposite
+  directions: storing, the manifest holds absolute paths and `zip` prints relative ones; extracting,
+  the manifest holds names inside the archive and `unzip` prints where it put them. Longest
+  agreement wins, so two files sharing a name are told apart.
+- Both Info-ZIP programs talk on **standard output**, so `ICommandProgress` gained
+  `ReadsStandardOutput` and `CommandTask` offers whichever stream the source asked for. Without it
+  the manifest would have been handed an empty string for every slice of every run.
+- The measuring seam became `IMeasurableProgress`, so more than one kind of source can be walked by
+  the queue in slices. `TreeSize` gained `Entries`, which is the same walk keeping the paths it
+  used to discard.
+
+Granularity is one entry: five large files move in five steps, many small files smoothly. Coarse,
+but true — which is the difference between coarse and wrong.
+
+### Verification
+
+Controls, each checked for having compiled:
+
+| mutation | fails |
+| --- | --- |
+| task ignores the source's stream choice | 1 |
+| entries matched by name alone, ignoring their path | 1 |
+| index sought at a fixed position, not past a comment | 1 |
+| plugin stops offering a manifest when unpacking | 1 |
+| plugin stops offering a manifest when storing | 1 |
+
+The last two are the seam that came back empty twice before. `ShippedArchivesTests` now compiles
+the shipped plugin *and drives its compress command against a `FakeFileManager`*, which records
+what progress source each queued job was given — so the choice is pinned where it is made rather
+than where it is used.
+
+A test skipped rather than failed again, for the third time: `zip` was handed a relative path while
+`Run` sets no working directory, so the tool failed and `Assert.SkipUnless` read it as "zip is not
+installed". Check *which* tests skip, never just how many.
+
+pty, on the real binary:
+
+```
+Compressing: out.zip:  17%  37.3 M/224 M
+[done] Compressing: out.zip: 100%   224 M/224 M   26.6 M/s
+Extracting: out.zip:  50%   112 M/224 M   172 M/s   ETA 00:00
+[done] Extracting: out.zip: 100%   224 M/224 M   176 M/s
+```
+
+## One shape for every progress line
+
+Reported: archiving showed no figures in the status bar; the task view indented every row; and the
+status bar text jumped a column sideways as the bar appeared. Copy's line was named as the one to
+match.
+
+**The figures now live in the task's own line**, laid out by `TransferFigures` — which a copy has
+always done and a command task did not. `CommandTask` gained a `Subject` (the plain label) and a
+`Description` that appends the figures, mirroring `CopyJob`. Both views draw whatever the line
+says, so the status bar gets the percentage and the estimate for nothing: it renders
+`QueueSummary.Describe()`, which for a single job *is* that line.
+
+`TransferFigures.Describe` takes a nullable fraction and grew a byte-count branch, so unsized work
+— an archive with no total — is laid out by the same code in the same columns instead of by a
+format of the view's own.
+
+**The task view draws no figures of its own.** It reserved a right-aligned column at the head of
+every row, which is what indented them; and for a copy, whose line already carried a percentage, it
+printed the number twice. Now it draws `state + Description` from column zero.
+
+**Every status bar headline takes the same one-column margin.** The margin exists because the
+progress tint runs the full width and text in the first cell sits on its edge. It had been given to
+the running task but not to a message — and the two are the same headline a moment apart, the
+plugin's `Compressing 1 into demo3.tar.lz` then the task's own line, so the text stepped sideways
+as the bar arrived. **Divergence from ranger**, which draws messages flush left through
+`_draw_message`: ranger tints nothing beneath them, and Canger does.
+
+### Verification
+
+Controls, each checked for having compiled:
+
+| mutation | fails |
+| --- | --- |
+| task view draws its own figure column again | 6 |
+| status bar margin for the task only | 2 |
+| command task stops carrying its figures | 3 |
+| unsized byte branch removed from the formatter | 1 |
+
+The third started at **2 failures, both in the task view** — nothing pinned the user's actual ask,
+that the *status bar* carry the figures. `PutsThePercentageAndTheEstimateOnTheStatusLine` drives a
+real `TaskQueue` and asserts on `Summary().Describe()`, and takes it to 3.
+
+pty, on the real binary. Task view rows start at column 0, status bar at column 1, both the same
+shape for either kind of work:
+
+```
+|Compressing: demo2.tar.lz:  51%  24.6 M/48 M    1.1 M/s   ETA 00:21
+|copying big.bin:  50%   746 M/1.5 G   2.22 G/s  ETA 00:00
+```
+
+and the message-to-task transition no longer moves: `Compressing 1 into demo3.tar.lz` and
+`Compressing: demo3.tar.lz:  34%  16.4 M/48 M` both start at column 1.
+
+## Unpacking now measures against what comes out, and the countdown is honest
+
+Two defects, found one after the other from "the extraction goes on for a few more seconds after
+the progress bar shows 100%" and then "it has reverted to old behaviour — no progress bar and no
+time remaining".
+
+### The total was the wrong quantity
+
+Extraction handed `MarkerProgress` the archive's size *on disk*, but tar counts the **uncompressed**
+stream. Measured: a 4 456-byte `.tar.lz` had tar reporting 26 603 520 bytes read, so `Math.Clamp`
+pinned the bar at 100% while the work ran on.
+
+The first fix withheld the total for compressed archives, which was honest but cost the bar — a
+regression from the user's point of view, and rightly rejected. The real answer is that the figure
+is *knowable exactly*: gzip, lzip and xz each record the uncompressed size in the file.
+`src/Canger.Core/FileSystem/CompressedStreamSize.cs` reads it from a few bytes at the end — no
+decompression and, importantly, no helper process, which would have meant suspending the interface.
+
+- **lzip**: walks the member chain backwards by each member's recorded length and sums their sizes,
+  so a concatenated archive is exact (measured: two members reported 34 897 920, matching `lzip -l`).
+- **xz**: sums the stream index's per-block records, so a `-T0` file with many blocks adds up.
+- **gzip**: the trailing size field — short for >4 GiB or a concatenated file, and deliberately so.
+- **bzip2** records no size at all: nothing is claimed, and unpacking shows bytes.
+
+`MarkerProgress` also now **discards a total the command's own output overshoots** rather than
+clamping it. That is what makes a best-effort reader safe: a wrong or short total degrades to a
+byte count instead of to a bar that lies. Verified by deliberately restoring the plugin defect and
+watching the guard catch it end to end.
+
+### The estimate was computed from mismatched halves
+
+`CommandTask.RecordRate` fed the rate the *cumulative* byte count against time measured only since
+the *first reading*, crediting the command with everything it had moved before the stopwatch
+started. The rate came out several times too high and the countdown read `00:00` for whole
+extractions. Both halves are now measured from the same instant. `CommandTask` takes a
+`TimeProvider` so an estimate can be tested against known intervals instead of against however long
+the test took.
+
+### Verification
+
+Controls, each checked for having compiled:
+
+| mutation | fails |
+| --- | --- |
+| lzip: stop at the last member | 1 |
+| xz: read only the first index record | 1 |
+| gzip: report the file size instead of the recorded one | 1 |
+| plugin: pass the archive's size again | 2 |
+| rate: cumulative bytes over time-since-first-reading | 2 |
+
+The plugin control is the one that matters. **The same mutation broke nothing across 1 982 tests
+last time** — tenth instance of "the mechanism exists and nothing feeds it". Closed by
+`tests/Canger.Plugins.Tests/ShippedArchivesTests.cs`, which compiles the shipped `archives.cs`
+through `ScriptCompiler` and asks `Decompression.UncompressedSize` directly, against a real archive
+whose two candidate totals differ by three orders of magnitude.
+
+Two of the new tests initially **skipped rather than failed** because they never created their
+input, so the compressor failed and `Assert.SkipUnless` swallowed it. A skip that looks like a
+missing tool can be a broken test; check which tests skip, not just how many.
+
+pty, on the real binary: extracting 1.2 GB from a 974 MB `.tar.xz` (measured 3.2 s) showed
+`8% … 00:03 left` → `15% … 00:02 left` → `100% [done]`; compressing 306 MB to `.tar.lz` showed
+`5%` → `86% … 00:20 left` with the countdown falling steadily. An earlier `00:00 left` reading was
+checked against a timed run and was *correct* — the fixture finished in 1.19 s. Fixture speed can
+look exactly like a broken estimate.
 
 ## Build and test
 
@@ -5218,6 +5459,167 @@ command without publishing. The already-released refusal was checked at the cond
 view v0.7.1` exits zero and an unreleased tag does not — because the obvious way to test the branch
 was to check out the old tag, which supplies the old `build.sh` and tests nothing. That first
 attempt reported an MSBuild usage error rather than a refusal, which is what gave it away.
+
+## Byte-level progress for a queued command — 2026-09-02
+
+`efc` showed a spinner and nothing else. Asked whether a bar was possible, and it was — almost
+entirely because the display already existed. `TaskView` draws a percentage and tints the row when
+a task reports one, the status bar has a bar, and `TaskQueue.OverallProgress` falls back to
+averaging `Progress` when jobs have no byte sizes. `CommandTask.Progress => null` was the single
+line that opted out. The work was finding a number, not drawing one.
+
+**Two sources, and the difference between them is the design.** `MarkerProgress` reads a count the
+command prints for the purpose: `tar --checkpoint=200 --checkpoint-action=echo='canger-bytes:%{}T'`
+reports the bytes it has *read*, which paired with the size of the selection is a true percentage.
+`GrowingFileProgress` watches the archive growing, one `stat` a slice, and deliberately offers **no
+total** — how large an archive ends up depends on a compression ratio nobody knows in advance, so
+dividing by the size of the input would draw a bar that lies. Without a total the task view shows
+`73.7 M` instead of a percentage, which is the honest rendering.
+
+The total is only ever taken from what is already known: a file's size from the listing, a
+directory's only if someone has already asked for it with `dc`. `DirectorySize` exists to measure a
+tree and its own documentation says nothing should pay for that unasked, so compress does not call
+it.
+
+**Where the archiver knowledge lives.** Canger takes a source of numbers and knows nothing about
+tar; the `--checkpoint` flags are in `plugins/archives.cs`, which is where the command line is
+built. `ICommandProgress` is in the core, so any queued command can report.
+
+### Four faults, three found by controls and one by a real archive
+
+- **Nothing polled the source.** Removing `_progress?.Update(...)` from `CommandTask.Steps` broke
+  no test: the sources were tested in isolation and nothing connected them. The same seam as the
+  settings fix, the metadata refresh and the shared copy buffer — four times now.
+- **The task view rendering was untested** for the byte case, so removing it broke nothing either.
+- **A finished archive sat at 94% for ever.** tar reports at intervals and says nothing about the
+  tail after the last one. The rule "a command that exited 0 is complete" was written and *still*
+  did not work, because `TaskQueue.Stop` disposes the work the instant it finishes, which clears
+  the process handle the rule was reading. Every unit test passed, because they drive `Steps`
+  directly and no queue is there to dispose anything. The exit code is kept in a field now, and
+  the tests go through the real queue.
+- **Progress reported itself as a failure.** Asking tar to say how far it has got makes it write to
+  standard error, which is exactly where `CommandTask` reads failures from — so every archive would
+  have ended by showing its own checkpoints as an error. `ICommandProgress.Reports` lets a source
+  disown its own lines, and a genuine `tar: Permission denied` still gets through.
+
+Also measured: `--checkpoint=1000` is not "every 1000 records" but every 1000 *blocks*, which with
+tar's default blocking factor is ten megabytes. A twenty-four megabyte archive went 43%, 85%, done.
+200 blocks is about two megabytes.
+
+Fourteen tests. **Controls**: the poll removed fails three, the final reading removed fails one,
+the byte rendering removed fails one, the exit code read through the disposed handle fails one, and
+the error filter removed fails two.
+
+Verified on real archives under a pty: marked files, whose total is known, go 68% → 94% → 100%
+[done]; a directory, whose total is not, climbs 16.4 M → 73.7 M.
+
+## The bar, and extracting — 2026-09-02
+
+Reported plainly: *"my expectation was that I will see a progress bar similar to the one I see when
+I copy files. I see the size like 109M, but no % or colour bar. I was expecting extracting to be
+also done."* Both fair. The first was a design decision that turned out to be the wrong one, and
+the second I had written down as the better half and then not built.
+
+### The folder now measures itself
+
+Compressing a folder showed bytes and no bar because the total was only ever taken from what was
+*already* known — a file's size from the listing, a directory's only if someone had pressed `dc`.
+The reasoning was that measuring a tree means walking it, and `DirectorySize` says nothing should
+pay for that unasked.
+
+That reasoning skipped what the queue already does. It measures a **copy** while the copy waits,
+in three-millisecond slices, precisely so that a percentage exists from the first byte without the
+walk holding anything up — the machinery built for the queue-wide ETA. An archive can be the same
+kind of job, and now is: `CommandTask` implements `ISizedWork`, and `MeasuredProgress` walks what
+the command was given.
+
+`CopyJob.Measure` became `FileSystem.TreeSize.Sizes`, shared rather than copied. Two walks that
+could disagree about what a tree holds would be worse than one.
+
+The total is withheld until the walk finishes. A total still growing makes the percentage fall as
+the measuring catches up, and a bar that goes backwards reads as a fault — which is what
+`OverallProgress` was reverted for once before.
+
+### Extracting was the better half all along
+
+Written in the evaluation — *"extraction deserves it more than compression, and the same mechanism
+serves it"* — and then not done. It is now, and it is the easier case: an archive's own size is in
+the listing, so unpacking gets a real percentage with nothing to measure, where compressing a
+folder has to walk it first. The checkpoint flags and the marker moved to `Decompression`, shared
+by both halves rather than duplicated.
+
+### Verified on real archives
+
+```
+compressing a folder    11% -> 58% ...            (measured while it ran)
+extracting              10% -> 97% -> 100% [done]
+```
+
+An intermediate run ended at **97% [done]**, which was correct and worth keeping: the archive had
+been copied while the compression that made it was still running, so it was truncated, tar failed,
+and the rule "a command that *failed* keeps its last honest figure" did exactly that. Rebuilt
+whole, it ends at 100%.
+
+Five tests on the measuring, one of them through the real queue. **Controls**: telling the queue
+the job needs no sizing fails one; publishing the total mid-walk fails one.
+
+## A margin, and how much longer — 2026-09-02
+
+Two things from looking at the real thing: the description sat flush against the left edge, and
+there was no time remaining.
+
+**The margin.** The figure field was left out entirely when there was nothing to put in it, so a
+row with no reading yet started at column zero while its neighbours were indented — and a single
+row stepped left to right the moment its first checkpoint arrived. The field is always drawn now,
+empty or not.
+
+**The estimate.** `CommandTask.BytesPerSecond` returned null, with the reasoning that "the bytes
+counted are what has been read, while the time is spent compressing them, so the two describe
+different work". That was too cautious. tar reads at whatever pace the compressor allows, so the
+rate at which the input is consumed is exactly what predicts when the input will run out — which
+is when the job ends. It feeds the same smoothed `TransferRate` a copy uses.
+
+Timed from the first reading rather than from when the job was queued. An archiver says nothing
+until its first checkpoint, and counting that silence as working time would halve the rate and
+double the estimate for as long as it took to arrive — the same mistake `CopyProgress` documents
+about timing from construction while a job waits in the queue.
+
+The time goes *after* the description rather than before it, so a name is not pushed about by a
+figure that comes and goes.
+
+```
+   11%  Compressing: demo5.tar.lz
+   17%  Compressing: demo5.tar.lz  00:29 left
+   23%  Compressing: demo5.tar.lz  00:29 left
+   28%  Compressing: demo5.tar.lz  00:28 left
+```
+
+Four tests. **Controls**: leaving the field out when empty fails one; removing the estimate fails
+two.
+
+**The first attempt at that second control reported zero failures, and was wrong.** The mutation
+string was written from memory and did not match the file, so it replaced nothing and measured the
+unmutated code — a green result that meant nothing. Written down because it is the third time this
+file records the same thing: a mutation that does not take is not a control, and the only defence
+is to make the edit assert that it found its target.
+
+## The status bar's task line sat against the edge — 2026-09-02
+
+The task view's margin was fixed and the status bar's was not — they are separate widgets, and the
+report was about the second. The progress tint is drawn the full width of the bar, so a description
+starting in the very first cell sits against the edge of it with nothing between the two.
+
+A running task gets a leading space now. **A message does not**, and that is deliberate: nothing is
+drawn behind a message, and ranger puts one at the very edge. Both placements are pinned, because
+the existing tint test asserted `StartsWith("copying")` and caught the change — correctly, but for
+a reason incidental to what that test is for. It asserts the words and the tint are both present
+now, and the placement has tests of its own.
+
+**What the status bar still does not show for an archive**: figures. `QueueSummary.Describe`
+returns the running job's name alone when only one thing is queued, and a copy shows a percentage
+there only because `CopyJob` builds it into its own description. So an archive gets the moving tint
+and the name, and the percentage, bytes and remaining time are in the task view. Left as it is
+rather than changed unasked, since altering `Describe` would change what a copy shows too.
 
 ## What is left
 
