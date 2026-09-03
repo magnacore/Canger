@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.FileSystem;
 using Canger.Core.Tasks;
 // The ranger-archives plugin, ported.
 //
@@ -127,29 +128,27 @@ internal static class Decompression
         ArchiveFormats.Match(archive) is var (rule, _) &&
         rule.Kind is ArchiveKind.Tar or ArchiveKind.TarOnly;
 
-    /// <summary>How much will come out, when that is knowable without reading the archive.</summary>
+    /// <summary>How much will come out, so unpacking can show a true percentage.</summary>
     /// <param name="archive">The archive being unpacked.</param>
     /// <returns>The uncompressed size, or <see langword="null"/> when it cannot be had cheaply.</returns>
     /// <remarks>
     /// <para>
-    /// Only for a plain <c>.tar</c>, where the file on disk *is* the stream tar reads and the two
-    /// numbers are the same. For a compressed one they are not: measured on a text tree, a
-    /// 4 456-byte <c>.tar.lz</c> had tar reporting 26 603 520 bytes read. Using the file size there
-    /// sent the bar to 100% almost immediately and left it there while the extraction ran on for
-    /// seconds — which is how this was reported.
+    /// What tar counts while extracting is the <em>uncompressed</em> stream, not the file it reads.
+    /// So the size on disk is the right total only for a plain <c>.tar</c>, where the two are the
+    /// same thing. Using it for a compressed one was wrong by the whole compression ratio —
+    /// measured, a 4 456-byte <c>.tar.lz</c> had tar reporting 26 603 520 bytes — which sent the bar
+    /// to 100% at once and left it there while the extraction ran on.
     /// </para>
     /// <para>
-    /// The compressors can each say: <c>lzip -l</c>, <c>gzip -l</c>, <c>xz --robot --list</c>. Each
-    /// prints a different shape, which is three parsers to keep working, and asking would mean
-    /// starting a program while the interface is up. Returning nothing costs a percentage and
-    /// keeps the byte count, which is always true — and a bar that lies is worse than a figure that
-    /// admits what it does not know.
+    /// gzip, lzip and xz each record the real figure in the file, so
+    /// <see cref="CompressedStreamSize"/> reads it from a few bytes at the end. Anything else —
+    /// bzip2 stores no size at all — returns nothing and unpacks showing bytes.
     /// </para>
     /// </remarks>
     internal static long? UncompressedSize(FsNode archive) =>
         ArchiveFormats.Match(archive.Basename) is var (rule, _) && rule.Kind is ArchiveKind.TarOnly
             ? archive.Status?.Size
-            : null;
+            : CompressedStreamSize.Of(archive.Path);
 
     /// <summary>The command line to extract an archive.</summary>
     /// <param name="archive">The archive's name, relative to where the command runs.</param>

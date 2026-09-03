@@ -411,3 +411,98 @@ public class QueuedCommandProgressTests
         Assert.DoesNotContain(messages, m => m.Contains("canger-bytes", StringComparison.Ordinal));
     }
 }
+
+/// <summary>
+/// The remaining time a running command reports.
+/// </summary>
+/// <remarks>
+/// Driven by a clock the test moves itself, because an estimate checked against however long the
+/// test happened to take can only ever assert that a number came out.
+/// </remarks>
+public class CommandEstimateTests
+{
+    /// <summary>A clock that only moves when told.</summary>
+    private sealed class DrivenClock : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(double seconds) => _now = _now.AddSeconds(seconds);
+    }
+
+    /// <summary>Runs a command that reports checkpoints at times the test chooses.</summary>
+    /// <param name="clock">The clock to advance.</param>
+    /// <param name="total">What the work amounts to.</param>
+    /// <param name="readings">Each checkpoint: how long after the previous one, and the count.</param>
+    /// <returns>The task, stopped at the last reading.</returns>
+    private static CommandTask Run(DrivenClock clock, long total,
+                                   params (double After, long Completed)[] readings)
+    {
+        FakeFileManager.RecordingProcessRunner runner = new();
+        FakeFileManager.FakeBackgroundProcess process = new() { StepsBeforeExit = 10_000 };
+        runner.BackgroundResults["tar"] = process;
+
+        MarkerProgress source = new("canger-bytes:", total);
+        CommandTask task = new(runner,
+                               new ProcessRequest("tar -xf big.tar.lz", default, "/w"),
+                               "Extracting: big.tar.lz",
+                               notify: null,
+                               finished: null,
+                               progress: source,
+                               time: clock);
+
+        IEnumerator<Unit> steps = task.Steps();
+        steps.MoveNext();
+
+        foreach ((double after, long completed) in readings)
+        {
+            clock.Advance(after);
+            process.StandardError = $"canger-bytes:{completed}\n";
+            steps.MoveNext();
+        }
+
+        return task;
+    }
+
+    [Fact]
+    public void EstimatesFromTheBytesItActuallyWatchedMove()
+    {
+        // 100 MB in the first checkpoint, then 100 MB per second. 800 MB of 1 000 MB remain when
+        // the second reading lands, so at the observed 100 MB/s that is eight seconds.
+        DrivenClock clock = new();
+
+        CommandTask task = Run(clock, 1_000_000_000,
+                               (2.0, 100_000_000),
+                               (1.0, 200_000_000));
+
+        Assert.Equal(8, task.Estimate!.Value.TotalSeconds, 1);
+    }
+
+    [Fact]
+    public void DoesNotCreditTheCommandWithBytesMovedBeforeTimingBegan()
+    {
+        // The defect: an extraction whose first checkpoint arrived late showed "00:00 left" for
+        // its whole run. The first reading covers a slow two seconds of start-up; timing begins
+        // there, so those 100 MB must not then be divided by the 0.1 s that followed — that reads
+        // as 1 GB/s and puts a 900 MB job a fraction of a second from finishing.
+        DrivenClock clock = new();
+
+        CommandTask task = Run(clock, 1_000_000_000,
+                               (2.0, 100_000_000),
+                               (0.1, 110_000_000));
+
+        // 890 MB left at the 100 MB/s actually observed: near nine seconds, not nearly none.
+        Assert.True(task.Estimate!.Value.TotalSeconds > 5,
+                    $"estimated {task.Estimate.Value.TotalSeconds:F2}s, which is the inflated rate");
+    }
+
+    [Fact]
+    public void SaysNothingUntilTwoReadingsHaveBeenSeen()
+    {
+        // One checkpoint gives a count but no interval, and a guess from it would be arbitrary.
+        DrivenClock clock = new();
+
+        Assert.Null(Run(clock, 1_000_000_000, (2.0, 100_000_000)).Estimate);
+    }
+}

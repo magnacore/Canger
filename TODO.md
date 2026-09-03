@@ -1,46 +1,70 @@
 # Canger — port status
 
-## Extraction sat at 100% while it carried on running
+## Unpacking now measures against what comes out, and the countdown is honest
 
-Reported: "the extraction goes on for a few more seconds after the progress bar shows 100%".
+Two defects, found one after the other from "the extraction goes on for a few more seconds after
+the progress bar shows 100%" and then "it has reverted to old behaviour — no progress bar and no
+time remaining".
 
-**Cause.** Extraction handed `MarkerProgress` the archive's size *on disk*, but
-`tar --checkpoint-action=echo='canger-bytes:%{}T'` counts the **uncompressed** stream. Measured on
-a text tree: a 4 456-byte `.tar.lz` had tar reporting 26 603 520 bytes read. `Math.Clamp` turned
-that contradiction into a bar pinned at the top while the work ran on.
+### The total was the wrong quantity
 
-**Why the end-to-end test passed when it shipped.** The fixture was `/dev/urandom` — incompressible,
-so archive size ≈ uncompressed size and the ratio happened to be 1. The fixture masked the bug.
-Compressible data is now the fixture; 66 KB on disk holding 443 MB makes the ratio impossible to
-miss.
+Extraction handed `MarkerProgress` the archive's size *on disk*, but tar counts the **uncompressed**
+stream. Measured: a 4 456-byte `.tar.lz` had tar reporting 26 603 520 bytes read, so `Math.Clamp`
+pinned the bar at 100% while the work ran on.
 
-**Fixed in both halves.**
+The first fix withheld the total for compressed archives, which was honest but cost the bar — a
+regression from the user's point of view, and rightly rejected. The real answer is that the figure
+is *knowable exactly*: gzip, lzip and xz each record the uncompressed size in the file.
+`src/Canger.Core/FileSystem/CompressedStreamSize.cs` reads it from a few bytes at the end — no
+decompression and, importantly, no helper process, which would have meant suspending the interface.
 
-1. `artifacts/plugins/archives.cs` — `Decompression.UncompressedSize` states a total only for a
-   plain `.tar`, where the file *is* the stream. Compressed archives get no total, so the task view
-   shows bytes, which is always true. `lzip -l`, `gzip -l` and `xz --robot --list` can each name the
-   uncompressed size cheaply (measured), but that is three output formats to keep parsing and would
-   mean starting a program while the interface is up; a bar that lies is worse than a figure that
-   admits what it does not know.
-2. `src/Canger.Core/Tasks/MarkerProgress.cs` — a total the command's own output overshoots is
-   **discarded, not clamped**. A count past its total proves the total was the wrong quantity.
+- **lzip**: walks the member chain backwards by each member's recorded length and sums their sizes,
+  so a concatenated archive is exact (measured: two members reported 34 897 920, matching `lzip -l`).
+- **xz**: sums the stream index's per-block records, so a `-T0` file with many blocks adds up.
+- **gzip**: the trailing size field — short for >4 GiB or a concatenated file, and deliberately so.
+- **bzip2** records no size at all: nothing is claimed, and unpacking shows bytes.
 
-**Controls.** Two, because the fix has two halves.
-- Core guard removed → 2 fail (`DropsATotalTheCommandsOwnOutputOvershoots`,
-  `StopsReportingAPercentageOnceTheTotalIsDisproved`). Mutation compiled: 1982 tests ran.
-- Plugin choice reverted → **0 of 1982 fail.** Nothing pins which value a plugin passes, and the
-  format knowledge belongs in the plugin, so there is no seam to close there. **Tenth instance** of
-  "the mechanism exists and nothing feeds it" / a test that pins what a thing *is* saying nothing
-  about *where* it is. That is exactly why the guard went in core: with the plugin defect
-  deliberately left in place, a pty run over the 443 MB fixture showed the wrong total discarded on
-  the first checkpoint and the display falling back to bytes — 92.1 M → 463 M → `[done]`. The
-  symptom is gone even when the caller is wrong.
+`MarkerProgress` also now **discards a total the command's own output overshoots** rather than
+clamping it. That is what makes a best-effort reader safe: a wrong or short total degrades to a
+byte count instead of to a bar that lies. Verified by deliberately restoring the plugin defect and
+watching the guard catch it end to end.
 
-Canger is a 1-1 C# / .NET 10 port of [ranger](https://ranger.fm), the Python TUI file manager.
-The Python source under `../ranger-master/` is the reference implementation and the authority on
-behaviour; `../ranger_settings/` is a real user configuration that must parse unchanged.
+### The estimate was computed from mismatched halves
 
-This file is the resume point between sessions. Update it at the end of every phase.
+`CommandTask.RecordRate` fed the rate the *cumulative* byte count against time measured only since
+the *first reading*, crediting the command with everything it had moved before the stopwatch
+started. The rate came out several times too high and the countdown read `00:00` for whole
+extractions. Both halves are now measured from the same instant. `CommandTask` takes a
+`TimeProvider` so an estimate can be tested against known intervals instead of against however long
+the test took.
+
+### Verification
+
+Controls, each checked for having compiled:
+
+| mutation | fails |
+| --- | --- |
+| lzip: stop at the last member | 1 |
+| xz: read only the first index record | 1 |
+| gzip: report the file size instead of the recorded one | 1 |
+| plugin: pass the archive's size again | 2 |
+| rate: cumulative bytes over time-since-first-reading | 2 |
+
+The plugin control is the one that matters. **The same mutation broke nothing across 1 982 tests
+last time** — tenth instance of "the mechanism exists and nothing feeds it". Closed by
+`tests/Canger.Plugins.Tests/ShippedArchivesTests.cs`, which compiles the shipped `archives.cs`
+through `ScriptCompiler` and asks `Decompression.UncompressedSize` directly, against a real archive
+whose two candidate totals differ by three orders of magnitude.
+
+Two of the new tests initially **skipped rather than failed** because they never created their
+input, so the compressor failed and `Assert.SkipUnless` swallowed it. A skip that looks like a
+missing tool can be a broken test; check which tests skip, not just how many.
+
+pty, on the real binary: extracting 1.2 GB from a 974 MB `.tar.xz` (measured 3.2 s) showed
+`8% … 00:03 left` → `15% … 00:02 left` → `100% [done]`; compressing 306 MB to `.tar.lz` showed
+`5%` → `86% … 00:20 left` with the countdown falling steadily. An earlier `00:00 left` reading was
+checked against a timed run and was *correct* — the fixture finished in 1.19 s. Fixture speed can
+look exactly like a broken estimate.
 
 ## Build and test
 

@@ -60,8 +60,20 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
     /// </remarks>
     private readonly TransferRate _rate = new();
 
+    /// <summary>Where the clock comes from, so an estimate can be tested without waiting.</summary>
+    private readonly TimeProvider _time;
+
     private DateTimeOffset? _startedReporting;
     private long _lastReading;
+
+    /// <summary>What had already been counted when the first reading arrived.</summary>
+    /// <remarks>
+    /// Subtracted from every later reading, because the clock starts at that first reading too.
+    /// Without it the bytes counted before the timing began were divided by a stretch of time that
+    /// excluded them, and the rate came out several times too high — badly enough that an
+    /// extraction with half a minute left showed <c>00:00</c> throughout.
+    /// </remarks>
+    private long _baseline;
 
     /// <summary>Creates a queued command.</summary>
     /// <param name="runner">Starts the program.</param>
@@ -76,10 +88,16 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
     /// Where a byte count comes from, for a command that can be made to report one. Omitted, the
     /// task shows a spinner as before.
     /// </param>
+    /// <param name="time">
+    /// Where the clock comes from. Defaults to the system clock; a test passes its own so that a
+    /// rate and an estimate can be checked against known intervals rather than against however
+    /// long the test happened to take.
+    /// </param>
     public CommandTask(IProcessRunner runner, ProcessRequest request, string description,
                        Action<string, bool>? notify = null,
                        Action<CommandTask>? finished = null,
-                       ICommandProgress? progress = null)
+                       ICommandProgress? progress = null,
+                       TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentException.ThrowIfNullOrWhiteSpace(description);
@@ -89,6 +107,7 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         _notify = notify;
         _finished = finished;
         _progress = progress;
+        _time = time ?? TimeProvider.System;
         Description = description;
     }
 
@@ -250,19 +269,24 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
             return;
         }
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _time.GetUtcNow();
 
         if (_startedReporting is not { } since)
         {
             _startedReporting = now;
             _lastReading = completed;
+            _baseline = completed;
             return;
         }
 
         if (completed != _lastReading)
         {
             _lastReading = completed;
-            _rate.Record(completed, now - since);
+
+            // Both halves measured from the same instant. Feeding the cumulative count against
+            // time started at the first reading credited the command with bytes it had moved
+            // before the stopwatch began.
+            _rate.Record(completed - _baseline, now - since);
         }
     }
 
