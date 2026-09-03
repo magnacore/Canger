@@ -412,6 +412,14 @@ public sealed class FakeFileManager : IFileManager
     public List<(string Description, string Command, string? WorkingDirectory)> BackgroundWork
     { get; } = [];
 
+    /// <summary>What each queued job was given to watch its progress with, oldest first.</summary>
+    /// <remarks>
+    /// Recorded because the choice of source is exactly the kind of decision a caller gets wrong
+    /// invisibly: an archive that reports nothing looks the same as one whose reporting was never
+    /// wired up.
+    /// </remarks>
+    public List<ICommandProgress?> BackgroundProgress { get; } = [];
+
     /// <inheritdoc />
     /// <remarks>
     /// Really queued, on the real <see cref="Tasks"/>, so a test can drive it with
@@ -425,6 +433,7 @@ public sealed class FakeFileManager : IFileManager
                                       ICommandProgress? progress = null)
     {
         BackgroundWork.Add((description, command, workingDirectory));
+        BackgroundProgress.Add(progress);
 
         CommandTask task = new(
             Runner,

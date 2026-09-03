@@ -40,7 +40,7 @@ public sealed class GrowingFileProgress(IFileSystem fileSystem, string path) : I
     public long? Completed => _completed;
 
     /// <inheritdoc />
-    public void Update(string standardError)
+    public void Update(string reported)
     {
         // The file is the source; what the program says is not read.
         long? size = _fileSystem.GetStatus(_path, followSymbolicLinks: true)?.Size;

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.FileSystem;
 using Canger.Core.Tasks;
 // The ranger-archives plugin, ported.
 //
@@ -126,6 +127,54 @@ internal static class Decompression
     internal static bool SupportsCheckpoints(string archive) =>
         ArchiveFormats.Match(archive) is var (rule, _) &&
         rule.Kind is ArchiveKind.Tar or ArchiveKind.TarOnly;
+
+    /// <summary>What to measure an unpacking against, for the archives that can say.</summary>
+    /// <param name="archive">The archive being unpacked.</param>
+    /// <returns>A progress source, or <see langword="null"/> when the tool reports nothing.</returns>
+    /// <remarks>
+    /// Two shapes, because the two families report differently. tar can be asked to echo a byte
+    /// count as it reads; Info-ZIP cannot, but names each entry as it writes it, and a zip's own
+    /// index says what those names weigh. Everything else keeps the spinner it always had.
+    /// </remarks>
+    internal static ICommandProgress? ProgressFor(FsNode archive)
+    {
+        if (SupportsCheckpoints(archive.Basename))
+        {
+            return new MarkerProgress(CheckpointMarker, UncompressedSize(archive));
+        }
+
+        if (ArchiveFormats.Match(archive.Basename) is var (rule, program) &&
+            rule.Kind is ArchiveKind.Zip && program == "zip")
+        {
+            IReadOnlyList<(string Name, long Size)> entries = ZipDirectory.Entries(archive.Path);
+
+            return entries.Count > 0 ? new ManifestProgress(entries) : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>How much will come out, so unpacking can show a true percentage.</summary>
+    /// <param name="archive">The archive being unpacked.</param>
+    /// <returns>The uncompressed size, or <see langword="null"/> when it cannot be had cheaply.</returns>
+    /// <remarks>
+    /// <para>
+    /// What tar counts while extracting is the <em>uncompressed</em> stream, not the file it reads.
+    /// So the size on disk is the right total only for a plain <c>.tar</c>, where the two are the
+    /// same thing. Using it for a compressed one was wrong by the whole compression ratio —
+    /// measured, a 4 456-byte <c>.tar.lz</c> had tar reporting 26 603 520 bytes — which sent the bar
+    /// to 100% at once and left it there while the extraction ran on.
+    /// </para>
+    /// <para>
+    /// gzip, lzip and xz each record the real figure in the file, so
+    /// <see cref="CompressedStreamSize"/> reads it from a few bytes at the end. Anything else —
+    /// bzip2 stores no size at all — returns nothing and unpacks showing bytes.
+    /// </para>
+    /// </remarks>
+    internal static long? UncompressedSize(FsNode archive) =>
+        ArchiveFormats.Match(archive.Basename) is var (rule, _) && rule.Kind is ArchiveKind.TarOnly
+            ? archive.Status?.Size
+            : CompressedStreamSize.Of(archive.Path);
 
     /// <summary>The command line to extract an archive.</summary>
     /// <param name="archive">The archive's name, relative to where the command runs.</param>
@@ -280,12 +329,17 @@ internal static class Extraction
                 // files that appeared out of nowhere are not otherwise noticed.
                 _ => fileManager.ReloadDirectory(workingDirectory),
 
-                // Unpacking is the half where a percentage is free: the archive's own size is in
-                // the listing, so there is nothing to measure. What tar reports while extracting
-                // is the bytes it has read out of the archive, against exactly that.
-                Decompression.SupportsCheckpoints(archive.Basename)
-                    ? new MarkerProgress(Decompression.CheckpointMarker, archive.Status?.Size)
-                    : null);
+                // What tar counts while extracting is the *uncompressed* stream, not the file it
+                // is reading. Measured: a 4 456-byte archive reported 26 603 520 bytes read. So
+                // the archive's own size is a total only for a plain `.tar`, where the two are the
+                // same thing; for a compressed one it is wrong by the compression ratio, and using
+                // it made the bar reach 100% almost at once and sit there while the extraction ran
+                // on. Without a total the task view shows the bytes, which is always true.
+                //
+                // A zip says nothing about bytes, but `unzip` names each entry as it writes it
+                // and the archive's own index says what every entry weighs — so the names become
+                // a true count. Anything else keeps the spinner.
+                Decompression.ProgressFor(archive));
 
             started++;
         }
@@ -339,11 +393,15 @@ public sealed class CompressCommand : CangerCommand
         string command = Build(name, flags, files);
         long? total = TotalBytesOf(selection);
 
-        // Where the archiver can be made to count, it is; where it cannot, the archive is watched
-        // growing. Either way the task view shows a figure instead of only a spinner.
+        // Where the archiver can be made to count, it is; where it names what it stores, the
+        // names are counted; where it does neither, the archive is watched growing. Either way
+        // the task view shows a figure instead of only a spinner.
         ICommandProgress progress = SupportsCheckpoints(name)
             ? Measured(new MarkerProgress(Decompression.CheckpointMarker, total), total, selection)
-            : new GrowingFileProgress(FileManager.FileSystem, Path.Join(directory, name));
+            : NamesWhatItStores(name)
+                ? new ManifestProgress(FileManager.FileSystem,
+                                       [.. selection.Select(entry => entry.Path)])
+                : new GrowingFileProgress(FileManager.FileSystem, Path.Join(directory, name));
 
         FileManager.RunInBackground(
             $"Compressing: {name}",
@@ -382,6 +440,18 @@ public sealed class CompressCommand : CangerCommand
     private static bool SupportsCheckpoints(string name) =>
         ArchiveFormats.Match(name) is var (rule, _) &&
         rule.Kind is ArchiveKind.Tar or ArchiveKind.TarOnly;
+
+    /// <summary>Whether the archiver for this name announces each entry as it stores it.</summary>
+    /// <remarks>
+    /// <c>zip</c> does — `  adding: data/f3.bin (deflated 24%)` — which is worth more here than
+    /// watching the file it writes, because it does not write the named file at all until it has
+    /// finished: it builds a temporary and renames it. Measured, the temporary reached 74 MB while
+    /// the archive itself did not yet exist, so the byte count only ever appeared on the line that
+    /// said the job was over.
+    /// </remarks>
+    private static bool NamesWhatItStores(string name) =>
+        ArchiveFormats.Match(name) is var (rule, program) &&
+        rule.Kind is ArchiveKind.Zip && program == "zip";
 
     /// <summary>Wraps a source so the queue measures what it was given.</summary>
     /// <remarks>

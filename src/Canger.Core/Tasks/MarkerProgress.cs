@@ -29,9 +29,20 @@ public sealed class MarkerProgress(string marker, long? total) : ICommandProgres
                                      : marker;
 
     private long? _completed;
+    private long? _total = total;
 
     /// <inheritdoc />
-    public long? Total { get; } = total;
+    /// <remarks>
+    /// Dropped the moment the command's own output exceeds it, because a count that runs past its
+    /// total proves the total was the wrong quantity — and once that is known, showing bytes is
+    /// honest where showing a percentage is not. It was reported as "the extraction goes on for a
+    /// few more seconds after the progress bar shows 100%": extraction had been given the archive's
+    /// size on disk while tar counts the uncompressed stream, so a 4 456-byte archive reported
+    /// 26 603 520 bytes and the bar sat pinned at the top. The caller was fixed too, but clamping
+    /// is what let a wrong total look like a finished one, and any future caller can get it wrong
+    /// the same way.
+    /// </remarks>
+    public long? Total => _total;
 
     /// <inheritdoc />
     public long? Completed => _completed;
@@ -48,37 +59,42 @@ public sealed class MarkerProgress(string marker, long? total) : ICommandProgres
     /// makes the figure monotonic for free, which matters because a count that retreats reads as
     /// a fault rather than as a redraw.
     /// </remarks>
-    public void Update(string standardError)
+    public void Update(string reported)
     {
-        ArgumentNullException.ThrowIfNull(standardError);
+        ArgumentNullException.ThrowIfNull(reported);
 
         long best = _completed ?? 0;
-        int at = standardError.IndexOf(_marker, StringComparison.Ordinal);
+        int at = reported.IndexOf(_marker, StringComparison.Ordinal);
 
         while (at >= 0)
         {
             int start = at + _marker.Length;
             int end = start;
 
-            while (end < standardError.Length && char.IsAsciiDigit(standardError[end]))
+            while (end < reported.Length && char.IsAsciiDigit(reported[end]))
             {
                 end++;
             }
 
             if (end > start &&
-                long.TryParse(standardError.AsSpan(start, end - start), CultureInfo.InvariantCulture,
+                long.TryParse(reported.AsSpan(start, end - start), CultureInfo.InvariantCulture,
                               out long bytes) &&
                 bytes > best)
             {
                 best = bytes;
             }
 
-            at = standardError.IndexOf(_marker, start, StringComparison.Ordinal);
+            at = reported.IndexOf(_marker, start, StringComparison.Ordinal);
         }
 
         if (best > 0 || _completed is not null)
         {
             _completed = best;
+        }
+
+        if (_total is { } stated && best > stated)
+        {
+            _total = null;
         }
     }
 }

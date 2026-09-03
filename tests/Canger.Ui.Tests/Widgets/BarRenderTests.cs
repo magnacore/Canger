@@ -206,7 +206,10 @@ public class BarRenderTests
         bar.Render(screen);
 
         string text = screen.TextAt(0);
-        Assert.StartsWith("no such setting: banana", text, StringComparison.Ordinal);
+
+        // Every headline takes a one-column margin so that a message and the task line that
+        // follows it start in the same place; placement itself is pinned in StatusBarTests.
+        Assert.StartsWith("no such setting: banana", text.TrimStart(), StringComparison.Ordinal);
         Assert.DoesNotContain("Top", text, StringComparison.Ordinal);
         Assert.Equal(Color.Red.Bright(), screen[0, 0].Style.Foreground);
     }

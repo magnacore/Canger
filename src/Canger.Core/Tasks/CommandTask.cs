@@ -60,8 +60,20 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
     /// </remarks>
     private readonly TransferRate _rate = new();
 
+    /// <summary>Where the clock comes from, so an estimate can be tested without waiting.</summary>
+    private readonly TimeProvider _time;
+
     private DateTimeOffset? _startedReporting;
     private long _lastReading;
+
+    /// <summary>What had already been counted when the first reading arrived.</summary>
+    /// <remarks>
+    /// Subtracted from every later reading, because the clock starts at that first reading too.
+    /// Without it the bytes counted before the timing began were divided by a stretch of time that
+    /// excluded them, and the rate came out several times too high — badly enough that an
+    /// extraction with half a minute left showed <c>00:00</c> throughout.
+    /// </remarks>
+    private long _baseline;
 
     /// <summary>Creates a queued command.</summary>
     /// <param name="runner">Starts the program.</param>
@@ -76,10 +88,16 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
     /// Where a byte count comes from, for a command that can be made to report one. Omitted, the
     /// task shows a spinner as before.
     /// </param>
+    /// <param name="time">
+    /// Where the clock comes from. Defaults to the system clock; a test passes its own so that a
+    /// rate and an estimate can be checked against known intervals rather than against however
+    /// long the test happened to take.
+    /// </param>
     public CommandTask(IProcessRunner runner, ProcessRequest request, string description,
                        Action<string, bool>? notify = null,
                        Action<CommandTask>? finished = null,
-                       ICommandProgress? progress = null)
+                       ICommandProgress? progress = null,
+                       TimeProvider? time = null)
     {
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentException.ThrowIfNullOrWhiteSpace(description);
@@ -89,11 +107,31 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         _notify = notify;
         _finished = finished;
         _progress = progress;
-        Description = description;
+        _time = time ?? TimeProvider.System;
+        Subject = description;
     }
 
     /// <inheritdoc />
-    public string Description { get; }
+    public string Subject { get; }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The subject, then whatever figures the command can offer, in the columns a copy uses. Laid
+    /// out by <see cref="Model.TransferFigures"/> rather than here so that a line about an archive
+    /// and a line about a copy are the same shape — which is the whole reason the task view and
+    /// the status bar can show either without a format of their own.
+    /// </remarks>
+    public string Description
+    {
+        get
+        {
+            string figures = Model.TransferFigures.Describe(
+                Progress, _progress?.Completed ?? 0, _progress?.Total ?? 0, BytesPerSecond,
+                Estimate);
+
+            return figures.Length > 0 ? $"{Subject}: {figures}" : Subject;
+        }
+    }
 
     /// <summary>
     /// How far along it is, when the command was set up to say.
@@ -157,7 +195,7 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
     /// sized — either it knows its total from the start or it never will — so it reports itself
     /// finished at once and the queue moves on.
     /// </remarks>
-    private MeasuredProgress? Measuring => _progress as MeasuredProgress;
+    private IMeasurableProgress? Measuring => _progress as IMeasurableProgress;
 
     /// <inheritdoc />
     public bool IsSized => Measuring is not { IsMeasured: false };
@@ -191,9 +229,6 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         RemainingBytes is { } remaining ? _rate.Estimate(remaining) : null;
 
     /// <inheritdoc />
-    public string Subject => Description;
-
-    /// <inheritdoc />
     public IEnumerator<Unit> Steps()
     {
         _process = _runner.StartInBackground(_request);
@@ -211,16 +246,16 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         // `Idle`, which watches for a keystroke at the same time.
         while (!_process.WaitForExit(TimeSpan.Zero))
         {
-            // Offered the whole of standard error each time. A source that parses it keeps no
+            // Offered the whole of its stream each time. A source that parses it keeps no
             // position of its own, and one that watches a file ignores it.
-            _progress?.Update(_process.StandardError);
+            _progress?.Update(Reported());
             RecordRate();
             yield return Unit.Value;
         }
 
         // Once more, so a command that finishes between two polls still ends at its final figure
         // rather than at whatever the last slice happened to catch.
-        _progress?.Update(_process.StandardError);
+        _progress?.Update(Reported());
         _endedWith = _process.ExitCode;
 
         Report();
@@ -237,6 +272,13 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         _process = null;
     }
 
+    /// <summary>Whichever of the command's streams the progress source asked for.</summary>
+    /// <returns>Everything written to it so far, or nothing when there is no source or process.</returns>
+    private string Reported() =>
+        _process is null ? string.Empty
+                         : _progress?.ReadsStandardOutput == true ? _process.StandardOutput
+                                                                  : _process.StandardError;
+
     /// <summary>Feeds the rate from whatever the source has counted so far.</summary>
     /// <remarks>
     /// Timed from the first reading, not from the start of the job: an archiver says nothing until
@@ -250,19 +292,24 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
             return;
         }
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset now = _time.GetUtcNow();
 
         if (_startedReporting is not { } since)
         {
             _startedReporting = now;
             _lastReading = completed;
+            _baseline = completed;
             return;
         }
 
         if (completed != _lastReading)
         {
             _lastReading = completed;
-            _rate.Record(completed, now - since);
+
+            // Both halves measured from the same instant. Feeding the cumulative count against
+            // time started at the first reading credited the command with bytes it had moved
+            // before the stopwatch began.
+            _rate.Record(completed - _baseline, now - since);
         }
     }
 

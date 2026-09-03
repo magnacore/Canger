@@ -133,35 +133,15 @@ public sealed class TaskView(IColorScheme colorScheme, TaskQueue queue) : Widget
             _ => string.Empty,
         };
 
-        // A percentage where the work knows its total; otherwise the bytes it has moved, which is
-        // all an archiver can honestly offer. Both are padded to the same width so the
-        // descriptions line up down the column whichever a row happens to have.
-        // A percentage where the work knows its total, otherwise the bytes it has moved — which is
-        // all an archiver can honestly offer. Both are right-aligned in the same field so the
-        // descriptions line up down the column whichever a row happens to have, and a queue
-        // holding one of each does not read as ragged.
-        const int FigureWidth = 6;
-
-        // The field is always drawn, even when there is no figure for it. Left out, a row with
-        // nothing to report sat flush against the edge while its neighbours were indented, and
-        // the descriptions stepped in and out as the first checkpoint arrived.
-        string figure =
-            (task.Progress is { } fraction
-                ? (fraction * 100).ToString("F0", CultureInfo.InvariantCulture) + "%"
-                : task.Transferred is { } moved
-                    ? HumanReadable.Format(moved)
-                    : string.Empty)
-            .PadLeft(FigureWidth) + "  ";
-
-        // How much longer, where the work can say. After the description rather than before it, so
-        // a name is not pushed about by a figure that comes and goes.
-        string estimate = task.Estimate is { } remaining
-            ? "  " + HumanReadable.Duration(remaining) + " left"
-            : string.Empty;
-
+        // No figures of its own: the task's own line already carries them, laid out in the
+        // columns every transfer uses. Drawing a percentage here as well put it on the row twice
+        // for a copy, and indented every row by the width of a column that only some rows filled.
+        //
+        // One column of margin, as the status bar gives its own headline and for the same reason:
+        // the progress tint is drawn across the row, and text starting in the very first cell sits
+        // against its edge. Constant, so nothing moves as the figures arrive.
         screen.Write(Bounds.X, row,
-                     new WideString(figure + state + task.Description + estimate).Truncate(Bounds.Width),
-                     style);
+                     new WideString(" " + state + task.Description).Truncate(Bounds.Width), style);
 
         // The filled portion is tinted rather than drawn as a bar, so the description stays
         // readable underneath it.

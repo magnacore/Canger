@@ -336,7 +336,9 @@ public class StatusBarTests
 
         bar.Render(screen);
 
-        Assert.StartsWith("something happened", Line(screen), StringComparison.Ordinal);
+        // Placement is pinned by AMessageTakesTheSameMarginAsARunningTask; this is about the
+        // message displacing the usual contents.
+        Assert.StartsWith("something happened", Line(screen).TrimStart(), StringComparison.Ordinal);
         Assert.DoesNotContain("free", Line(screen), StringComparison.Ordinal);
     }
 
@@ -390,17 +392,43 @@ public class StatusBarTests
     }
 
     [Fact]
-    public void AMessageKeepsRangersFlushLeftPlacement()
+    public void AMessageTakesTheSameMarginAsARunningTask()
     {
-        // Nothing is drawn behind a message, so it needs no margin — and ranger puts one at the
-        // very edge.
+        // Reported: "the Compressing text starts flush to the left, but as soon as the progress
+        // bar appears it gets indented by 1 space, so there is a slight jump". The two are the
+        // same headline a moment apart — the plugin's notice, then the task's own line — and
+        // giving the margin to only one of them moved the text sideways as the bar arrived.
+        //
+        // A deliberate divergence: ranger draws messages flush left, through `_draw_message`,
+        // which does no tinting. Canger tints beneath the running task, so the margin has to be
+        // there; making it unconditional is what keeps the text still.
         (StatusBar bar, ScreenBuffer screen) = Build();
         bar.Message = "rename: already exists";
 
         bar.Render(screen);
 
-        Assert.StartsWith("rename:", screen.TextAt(0), StringComparison.Ordinal);
+        Assert.StartsWith(" rename:", screen.TextAt(0), StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void DoesNotMoveTheHeadlineWhenAMessageGivesWayToATask()
+    {
+        // The jump itself, pinned: both phases must start in the same column.
+        (StatusBar first, ScreenBuffer messageScreen) = Build();
+        first.Message = "Compressing 1 into demo.tar.lz";
+        first.Render(messageScreen);
+
+        (StatusBar second, ScreenBuffer taskScreen) = Build();
+        second.ShowProgressBar = true;
+        second.Progress = 0.5;
+        second.TaskDescription = "Compressing: demo.tar.lz:  50%";
+        second.Render(taskScreen);
+
+        Assert.Equal(Indent(messageScreen.TextAt(0)), Indent(taskScreen.TextAt(0)));
+    }
+
+    /// <summary>How far in the text starts.</summary>
+    private static int Indent(string line) => line.Length - line.TrimStart().Length;
 
     [Fact]
     public void Progress_DoesNotTintUnderAMessageTheUserAskedFor()
