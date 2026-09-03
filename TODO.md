@@ -1,5 +1,20 @@
 # Canger — port status
 
+## The task view's text sat against the tint
+
+Reported: "the copy or compressing text should have a 1 space so it is not flush with the progress
+bar". Removing the reserved figure column had left every row starting in the very first cell, with
+the progress tint drawn straight up to it.
+
+One constant column of margin, the same the status bar gives its own headline and for the same
+reason. Constant, so nothing moves as the figures arrive — which was the fault the reserved field
+had. The title and the empty-state line stay flush: nothing is drawn behind those.
+
+**Control.** Margin removed → 3 fail (`KeepsTheTextOffTheEdgeOfTheProgressTint`,
+`StartsEveryRowInTheSamePlaceWhateverItHasToReport`,
+`DoesNotPrintAPercentageTheTaskHasAlreadyGiven`). Mutation compiled: 2 022 tests ran. pty: every
+row starts at column 1.
+
 ## Progress for zip, in both directions
 
 Asked: "when I use the .zip format, I don't see any progress. Is this intentional?" Half of it was;

@@ -87,20 +87,32 @@ public class TaskViewProgressTests
     }
 
     [Fact]
-    public void StartsEveryRowAtTheEdgeWhateverItHasToReport()
+    public void StartsEveryRowInTheSamePlaceWhateverItHasToReport()
     {
         // Reported: "in the task view the task item is indented to the right". A field was
         // reserved at the head of every row for a figure, so a row began with the white space
         // where its percentage would go — and rows that never got one were indented for nothing.
         // The figures now sit in the task's own line, after the name, where a copy has always put
-        // them.
+        // them. What is left is one constant column of margin, the same one the status bar gives
+        // its headline, so nothing moves as the figures arrive.
         foreach (ICommandProgress? source in
                  new ICommandProgress?[] { new Reported(1000, 250), new Reported(null, 4096), null })
         {
             string row = TaskRow(source);
 
-            Assert.StartsWith("Compressing:", row, StringComparison.Ordinal);
+            Assert.StartsWith(" Compressing:", row, StringComparison.Ordinal);
+            Assert.False(row.StartsWith("  ", StringComparison.Ordinal),
+                         "one column of margin, not a reserved field");
         }
+    }
+
+    [Fact]
+    public void KeepsTheTextOffTheEdgeOfTheProgressTint()
+    {
+        // Reported: "the copy or compressing text should have a 1 space so it is not flush with
+        // the progress bar". The tint is drawn across the row beneath the text, so a description
+        // in the very first cell sits against its edge with nothing between them.
+        Assert.Equal(' ', TaskRow(new Reported(total: 1000, completed: 250))[0]);
     }
 
     [Fact]
@@ -165,7 +177,7 @@ public class TaskViewDuplicationTests
                                .Single(r => r.Contains("copying", StringComparison.Ordinal));
 
         Assert.Equal(1, row.Count(c => c == '%'));
-        Assert.StartsWith("copying big.mkv:", row, StringComparison.Ordinal);
+        Assert.StartsWith(" copying big.mkv:", row, StringComparison.Ordinal);
     }
 }
 

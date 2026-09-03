@@ -136,8 +136,12 @@ public sealed class TaskView(IColorScheme colorScheme, TaskQueue queue) : Widget
         // No figures of its own: the task's own line already carries them, laid out in the
         // columns every transfer uses. Drawing a percentage here as well put it on the row twice
         // for a copy, and indented every row by the width of a column that only some rows filled.
+        //
+        // One column of margin, as the status bar gives its own headline and for the same reason:
+        // the progress tint is drawn across the row, and text starting in the very first cell sits
+        // against its edge. Constant, so nothing moves as the figures arrive.
         screen.Write(Bounds.X, row,
-                     new WideString(state + task.Description).Truncate(Bounds.Width), style);
+                     new WideString(" " + state + task.Description).Truncate(Bounds.Width), style);
 
         // The filled portion is tinted rather than drawn as a bar, so the description stays
         // readable underneath it.
