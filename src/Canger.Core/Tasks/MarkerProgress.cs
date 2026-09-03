@@ -59,32 +59,32 @@ public sealed class MarkerProgress(string marker, long? total) : ICommandProgres
     /// makes the figure monotonic for free, which matters because a count that retreats reads as
     /// a fault rather than as a redraw.
     /// </remarks>
-    public void Update(string standardError)
+    public void Update(string reported)
     {
-        ArgumentNullException.ThrowIfNull(standardError);
+        ArgumentNullException.ThrowIfNull(reported);
 
         long best = _completed ?? 0;
-        int at = standardError.IndexOf(_marker, StringComparison.Ordinal);
+        int at = reported.IndexOf(_marker, StringComparison.Ordinal);
 
         while (at >= 0)
         {
             int start = at + _marker.Length;
             int end = start;
 
-            while (end < standardError.Length && char.IsAsciiDigit(standardError[end]))
+            while (end < reported.Length && char.IsAsciiDigit(reported[end]))
             {
                 end++;
             }
 
             if (end > start &&
-                long.TryParse(standardError.AsSpan(start, end - start), CultureInfo.InvariantCulture,
+                long.TryParse(reported.AsSpan(start, end - start), CultureInfo.InvariantCulture,
                               out long bytes) &&
                 bytes > best)
             {
                 best = bytes;
             }
 
-            at = standardError.IndexOf(_marker, start, StringComparison.Ordinal);
+            at = reported.IndexOf(_marker, start, StringComparison.Ordinal);
         }
 
         if (best > 0 || _completed is not null)

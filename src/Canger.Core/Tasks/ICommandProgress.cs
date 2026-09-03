@@ -37,12 +37,24 @@ public interface ICommandProgress
     /// </remarks>
     bool Reports(string line) => false;
 
-    /// <summary>Offers what the command has written to standard error so far.</summary>
-    /// <param name="standardError">Everything it has written, from the beginning.</param>
+    /// <summary>Which of the command's streams this source reads.</summary>
+    /// <remarks>
+    /// Standard error by default, because that is where a program asked to report progress
+    /// usually talks — tar's checkpoints do. Info-ZIP does not: both <c>zip</c> and <c>unzip</c>
+    /// name each entry on standard output as they go, so a source reading only the error stream
+    /// would watch a program that never stops talking and never hear a word of it.
+    /// </remarks>
+    bool ReadsStandardOutput => false;
+
+    /// <summary>Offers what the command has written to its chosen stream so far.</summary>
+    /// <param name="reported">
+    /// Everything it has written to that stream, from the beginning — standard error unless
+    /// <see cref="ReadsStandardOutput"/> says otherwise.
+    /// </param>
     /// <remarks>
     /// The whole text each time rather than the new part, so a source parses the last thing it
     /// recognises and holds no position of its own. A source that watches a file ignores it.
     /// Called once per queue slice, which is every 30 ms at most.
     /// </remarks>
-    void Update(string standardError);
+    void Update(string reported);
 }

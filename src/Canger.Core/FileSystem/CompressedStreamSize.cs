@@ -70,7 +70,17 @@ public static class CompressedStreamSize
                 return Gzip(file);
             }
 
-            return magic is [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00] ? Xz(file) : null;
+            if (magic is [0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00])
+            {
+                return Xz(file);
+            }
+
+            // A zip keeps its sizes in an index at the end rather than in a stream header, so it
+            // is read by the class that understands that index. Answered here so that a caller
+            // asking "how much comes out of this file" need not know which shape it is.
+            return magic is [0x50, 0x4B, 0x03, 0x04, ..] or [0x50, 0x4B, 0x05, 0x06, ..]
+                ? ZipDirectory.UncompressedSize(path)
+                : null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException
                                        or NotSupportedException)

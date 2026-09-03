@@ -23,7 +23,8 @@ namespace Canger.Core.Tasks;
 /// <param name="fileSystem">Used to walk the tree.</param>
 /// <param name="paths">What the command was given.</param>
 public sealed class MeasuredProgress(
-    ICommandProgress inner, IFileSystem fileSystem, IReadOnlyList<string> paths) : ICommandProgress
+    ICommandProgress inner, IFileSystem fileSystem, IReadOnlyList<string> paths)
+    : IMeasurableProgress
 {
     private readonly ICommandProgress _inner =
         inner ?? throw new ArgumentNullException(nameof(inner));
@@ -54,7 +55,14 @@ public sealed class MeasuredProgress(
     public bool Reports(string line) => _inner.Reports(line);
 
     /// <inheritdoc />
-    public void Update(string standardError) => _inner.Update(standardError);
+    /// <remarks>
+    /// The wrapped source's choice, not one of its own. Deciding for it would have silently
+    /// switched a zip's manifest back to the stream Info-ZIP never writes to.
+    /// </remarks>
+    public bool ReadsStandardOutput => _inner.ReadsStandardOutput;
+
+    /// <inheritdoc />
+    public void Update(string reported) => _inner.Update(reported);
 
     /// <summary>Walks what the command was given, a file at a time.</summary>
     /// <returns>A step per file, for the queue to spend a slice on.</returns>

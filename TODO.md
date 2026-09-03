@@ -1,5 +1,73 @@
 # Canger — port status
 
+## Progress for zip, in both directions
+
+Asked: "when I use the .zip format, I don't see any progress. Is this intentional?" Half of it was;
+half was a defect and a gap.
+
+**Intentional and unchanged:** no percentage scraped from a tool's own display. Those differ
+between versions and would be a parser to maintain per tool.
+
+**The defect.** Compressing to `.zip` showed *nothing* during the run — not even the byte count it
+was meant to fall back to. `GrowingFileProgress` watches the named archive, but `zip` writes a
+temporary and renames it at the very end. Measured: the temporary reached 74 MB while `out.zip`
+did not yet exist, so the figure only ever appeared on the line saying the job had finished.
+**Eleventh instance** of "the mechanism exists and nothing feeds it".
+
+**The gap.** Extracting a `.zip` had no progress source at all.
+
+**Both fixed by counting entries rather than bytes.** Neither Info-ZIP program reports bytes, but
+both name every entry as they handle it — `  adding: data/f3.bin (deflated 24%)` and
+`  inflating: dest/data/f3.bin` — and a path is the one thing an archiver cannot rephrase.
+
+- `src/Canger.Core/FileSystem/ZipDirectory.cs` reads the central directory at the end of a zip, so
+  every entry's uncompressed size is known before a byte is written. `CompressedStreamSize` hands a
+  zip to it, so a caller need not know which shape a file is.
+- `src/Canger.Core/Tasks/ManifestProgress.cs` counts the entries a command names against what each
+  weighs. Matching is on trailing path segments because the two ends disagree in opposite
+  directions: storing, the manifest holds absolute paths and `zip` prints relative ones; extracting,
+  the manifest holds names inside the archive and `unzip` prints where it put them. Longest
+  agreement wins, so two files sharing a name are told apart.
+- Both Info-ZIP programs talk on **standard output**, so `ICommandProgress` gained
+  `ReadsStandardOutput` and `CommandTask` offers whichever stream the source asked for. Without it
+  the manifest would have been handed an empty string for every slice of every run.
+- The measuring seam became `IMeasurableProgress`, so more than one kind of source can be walked by
+  the queue in slices. `TreeSize` gained `Entries`, which is the same walk keeping the paths it
+  used to discard.
+
+Granularity is one entry: five large files move in five steps, many small files smoothly. Coarse,
+but true — which is the difference between coarse and wrong.
+
+### Verification
+
+Controls, each checked for having compiled:
+
+| mutation | fails |
+| --- | --- |
+| task ignores the source's stream choice | 1 |
+| entries matched by name alone, ignoring their path | 1 |
+| index sought at a fixed position, not past a comment | 1 |
+| plugin stops offering a manifest when unpacking | 1 |
+| plugin stops offering a manifest when storing | 1 |
+
+The last two are the seam that came back empty twice before. `ShippedArchivesTests` now compiles
+the shipped plugin *and drives its compress command against a `FakeFileManager`*, which records
+what progress source each queued job was given — so the choice is pinned where it is made rather
+than where it is used.
+
+A test skipped rather than failed again, for the third time: `zip` was handed a relative path while
+`Run` sets no working directory, so the tool failed and `Assert.SkipUnless` read it as "zip is not
+installed". Check *which* tests skip, never just how many.
+
+pty, on the real binary:
+
+```
+Compressing: out.zip:  17%  37.3 M/224 M
+[done] Compressing: out.zip: 100%   224 M/224 M   26.6 M/s
+Extracting: out.zip:  50%   112 M/224 M   172 M/s   ETA 00:00
+[done] Extracting: out.zip: 100%   224 M/224 M   176 M/s
+```
+
 ## One shape for every progress line
 
 Reported: archiving showed no figures in the status bar; the task view indented every row; and the

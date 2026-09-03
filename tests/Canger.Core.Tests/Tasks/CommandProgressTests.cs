@@ -498,6 +498,37 @@ public class CommandEstimateTests
     }
 
     [Fact]
+    public void OffersASourceWhicheverStreamItAsksFor()
+    {
+        // Info-ZIP announces its entries on standard output. A task that only ever offered
+        // standard error would have handed the manifest an empty string for the whole run — the
+        // mechanism present, compiled, and fed nothing.
+        FakeFileManager.RecordingProcessRunner runner = new();
+        FakeFileManager.FakeBackgroundProcess process = new()
+        {
+            StepsBeforeExit = 10_000,
+            StandardOutput = "  inflating: /out/data/f1.bin\n",
+            StandardError = "  inflating: /out/data/f0.bin\n",
+        };
+        runner.BackgroundResults["tar"] = process;
+
+        ManifestProgress source = new([("data/f0.bin", 100), ("data/f1.bin", 200)]);
+        CommandTask task = new(runner,
+                               new ProcessRequest("tar -xf out.zip", default, "/w"),
+                               "Extracting: out.zip",
+                               notify: null,
+                               finished: null,
+                               progress: source);
+
+        IEnumerator<Unit> steps = task.Steps();
+        steps.MoveNext();
+        steps.MoveNext();
+
+        // The entry named on standard output, not the one on standard error.
+        Assert.Equal(200, source.Completed);
+    }
+
+    [Fact]
     public void PutsThePercentageAndTheEstimateOnTheStatusLine()
     {
         // Asked for: "when archiving, the % and time remaining should be shown in status bar

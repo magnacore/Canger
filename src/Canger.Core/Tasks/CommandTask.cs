@@ -195,7 +195,7 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
     /// sized — either it knows its total from the start or it never will — so it reports itself
     /// finished at once and the queue moves on.
     /// </remarks>
-    private MeasuredProgress? Measuring => _progress as MeasuredProgress;
+    private IMeasurableProgress? Measuring => _progress as IMeasurableProgress;
 
     /// <inheritdoc />
     public bool IsSized => Measuring is not { IsMeasured: false };
@@ -246,16 +246,16 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         // `Idle`, which watches for a keystroke at the same time.
         while (!_process.WaitForExit(TimeSpan.Zero))
         {
-            // Offered the whole of standard error each time. A source that parses it keeps no
+            // Offered the whole of its stream each time. A source that parses it keeps no
             // position of its own, and one that watches a file ignores it.
-            _progress?.Update(_process.StandardError);
+            _progress?.Update(Reported());
             RecordRate();
             yield return Unit.Value;
         }
 
         // Once more, so a command that finishes between two polls still ends at its final figure
         // rather than at whatever the last slice happened to catch.
-        _progress?.Update(_process.StandardError);
+        _progress?.Update(Reported());
         _endedWith = _process.ExitCode;
 
         Report();
@@ -271,6 +271,13 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         _process?.Dispose();
         _process = null;
     }
+
+    /// <summary>Whichever of the command's streams the progress source asked for.</summary>
+    /// <returns>Everything written to it so far, or nothing when there is no source or process.</returns>
+    private string Reported() =>
+        _process is null ? string.Empty
+                         : _progress?.ReadsStandardOutput == true ? _process.StandardOutput
+                                                                  : _process.StandardError;
 
     /// <summary>Feeds the rate from whatever the source has counted so far.</summary>
     /// <remarks>

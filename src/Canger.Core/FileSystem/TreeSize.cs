@@ -37,6 +37,25 @@ public static class TreeSize
     public static IEnumerable<long> Sizes(IFileSystem fileSystem, string path,
                                           CancellationToken cancellationToken = default)
     {
+        foreach ((string _, long size) in Entries(fileSystem, path, cancellationToken))
+        {
+            yield return size;
+        }
+    }
+
+    /// <summary>Every file beneath a path, with its size, including the path itself when a file.</summary>
+    /// <param name="fileSystem">Where to look.</param>
+    /// <param name="path">The file or directory to measure.</param>
+    /// <param name="cancellationToken">Stops a walk that is no longer wanted.</param>
+    /// <returns>The paths and their sizes, one at a time.</returns>
+    /// <remarks>
+    /// The same walk as <see cref="Sizes"/>, which is built on this, keeping the paths it throws
+    /// away. An archiver names each file as it stores it, so knowing what every name is worth is
+    /// what turns those announcements into a percentage.
+    /// </remarks>
+    public static IEnumerable<(string Path, long Size)> Entries(
+        IFileSystem fileSystem, string path, CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(fileSystem);
         ArgumentException.ThrowIfNullOrEmpty(path);
 
@@ -51,7 +70,7 @@ public static class TreeSize
 
         if (!status.Value.IsDirectory || status.Value.IsSymbolicLink)
         {
-            yield return status.Value.Size;
+            yield return (path, status.Value.Size);
             yield break;
         }
 
@@ -68,9 +87,10 @@ public static class TreeSize
 
         foreach (DirectoryEntry entry in entries)
         {
-            foreach (long measured in Sizes(fileSystem, Join(path, entry.Name), cancellationToken))
+            foreach ((string found, long measured) in
+                     Entries(fileSystem, Join(path, entry.Name), cancellationToken))
             {
-                yield return measured;
+                yield return (found, measured);
             }
         }
     }

@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Reflection;
 using Canger.Core.FileSystem;
 using Canger.Core.Model;
+using Canger.Core.Tasks;
+using Canger.TestSupport;
 
 namespace Canger.Plugins.Tests;
 
@@ -160,6 +162,128 @@ public sealed class ShippedArchivesTests : IDisposable
 
         Assert.True(compiled.Succeeded, string.Join("; ", compiled.Diagnostics));
         Assert.Null(UncompressedSize(compiled.Assembly!, archive));
+    }
+
+    [Fact]
+    public void WatchesAZipBeingBuiltByTheEntriesZipNames()
+    {
+        // The storing half of the same report. `zip` writes to a temporary file and renames it at
+        // the end, so watching the archive grow saw nothing at all until the job was over — the
+        // count appeared only on the line that said it had finished. What zip does say, all the
+        // way through, is which file it is adding.
+        string plugins = PluginDirectory();
+        Assert.SkipWhen(plugins.Length == 0, "the repository layout was not found");
+
+        InMemoryFileSystem files = new();
+        files.AddFileOfSize("/w/data/f0.bin", 1000);
+        files.AddFileOfSize("/w/data/f1.bin", 2000);
+
+        FakeFileManager manager = new(files, "/w");
+        PluginHost host = new(manager.Commands, null, new ScriptCompiler());
+
+        // Loaded the way Canger loads it: `plugins/` beneath the configuration directory, which
+        // is where LoadFrom looks for anything that is not commands.cs.
+        string configured = Path.Join(_root, "config");
+        Directory.CreateDirectory(Path.Join(configured, "plugins"));
+        File.Copy(Path.Join(plugins, "archives.cs"),
+                  Path.Join(configured, "plugins", "archives.cs"));
+        host.LoadFrom(configured);
+
+        Assert.True(Assert.Single(host.Loads).Succeeded,
+                    string.Join("; ", Assert.Single(host.Loads).Diagnostics ?? []));
+
+        bool ran = manager.Execute("compress out.zip");
+
+        Assert.True(ran && manager.BackgroundProgress.Count == 1,
+                    $"ran={ran}; queued={manager.BackgroundProgress.Count}; " +
+                    $"selection={((Canger.Core.Commands.IFileManager)manager).Selection.Count}; " +
+                    $"said={string.Join(" | ", manager.Messages.Select(m => m.Message))}");
+
+        ICommandProgress? progress = Assert.Single(manager.BackgroundProgress);
+        ManifestProgress manifest = Assert.IsType<ManifestProgress>(progress);
+
+        // The manifest is walked by the queue in slices, as a copy's measuring is.
+        IEnumerator<Unit> walk = manifest.Measure();
+        while (walk.MoveNext())
+        {
+        }
+
+        Assert.Equal(3000, manifest.Total);
+    }
+
+    /// <summary>Asks the compiled plugin what it would watch an unpacking with.</summary>
+    private static object? ProgressFor(Assembly plugin, string archive)
+    {
+        Type decompression = plugin.GetType("Decompression") ??
+                             throw new InvalidOperationException("the plugin defines no Decompression");
+
+        MethodInfo method =
+            decompression.GetMethod("ProgressFor",
+                                    BindingFlags.Static | BindingFlags.NonPublic |
+                                    BindingFlags.Public) ??
+            throw new InvalidOperationException("Decompression has no ProgressFor");
+
+        LocalFileSystem fileSystem = new();
+        FileNode node = new(fileSystem, archive,
+                            fileSystem.GetStatus(archive, followSymbolicLinks: true));
+
+        return method.Invoke(null, [node]);
+    }
+
+    [Fact]
+    public void WatchesAZipByTheEntriesUnzipNames()
+    {
+        // Reported: "when I use the .zip format, I don't see any progress". unzip reports no
+        // bytes, but names each entry as it writes it, and the archive's own index says what
+        // those names weigh — so the total is known before a byte is written.
+        string plugins = PluginDirectory();
+        Assert.SkipWhen(plugins.Length == 0, "the repository layout was not found");
+
+        string source = Path.Join(_root, "src");
+        Directory.CreateDirectory(source);
+
+        for (int file = 0; file < 3; file++)
+        {
+            File.WriteAllText(Path.Join(source, $"f{file}.txt"), new string('x', 1000));
+        }
+
+        // Absolute, because Run does not set a working directory — a relative name here made
+        // the tool fail and the test skip as though zip were missing.
+        Assert.SkipUnless(Run("zip", $"-q -r -j {Path.Join(_root, "out.zip")} {source}"),
+                          "zip is not installed");
+
+        CompilationResult compiled =
+            new ScriptCompiler().Compile("archives", [Path.Join(plugins, "archives.cs")]);
+
+        Assert.True(compiled.Succeeded, string.Join("; ", compiled.Diagnostics));
+
+        object? progress = ProgressFor(compiled.Assembly!, Path.Join(_root, "out.zip"));
+
+        Assert.NotNull(progress);
+        Assert.Equal("ManifestProgress", progress.GetType().Name);
+        Assert.Equal(3000L, ((ICommandProgress)progress).Total);
+    }
+
+    [Fact]
+    public void ClaimsNothingForAnArchiveNoToolWillReportOn()
+    {
+        // A 7z archive: neither a tar to be asked for checkpoints nor an Info-ZIP that names what
+        // it writes. The spinner it always had is the honest answer.
+        string plugins = PluginDirectory();
+        Assert.SkipWhen(plugins.Length == 0, "the repository layout was not found");
+
+        string source = Path.Join(_root, "src");
+        Directory.CreateDirectory(source);
+        File.WriteAllText(Path.Join(source, "f.txt"), new string('x', 1000));
+
+        Assert.SkipUnless(Run("7z", $"a -bso0 -bsp0 {Path.Join(_root, "out.7z")} {source}"),
+                          "7z is not installed");
+
+        CompilationResult compiled =
+            new ScriptCompiler().Compile("archives", [Path.Join(plugins, "archives.cs")]);
+
+        Assert.True(compiled.Succeeded, string.Join("; ", compiled.Diagnostics));
+        Assert.Null(ProgressFor(compiled.Assembly!, Path.Join(_root, "out.7z")));
     }
 
     /// <summary>Runs a program, and says whether it was there to run and succeeded.</summary>
