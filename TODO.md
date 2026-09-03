@@ -1,5 +1,45 @@
 # Canger — port status
 
+## 7-zip cannot be made to report progress, and the attempt was reverted
+
+Asked for after "I tried archiving and unarchiving 7z and did not see any progress bar". I said the
+storing half was easy, wired it up, and it was wrong. **Reverted; do not try this again without
+reading what follows.**
+
+**What I got right.** `7z a -bb1` really does print `+ data/f0.bin` per file, and `7z x -bb1`
+prints `- data/f0.bin`. Its default output names nothing, so the flag is required.
+
+**What I failed to check: *when* those lines arrive.** All of them, at once, when the job ends.
+Measured three ways, each time with every line landing in the same 10 ms:
+
+- through a plain pipe;
+- under `stdbuf -oL`, ruling out libc buffering;
+- with `-ms=off`, ruling out solid compression as the reason (and costing 40% of the ratio: the
+  same tree came to 108 MB non-solid against 61 MB solid).
+
+`-bsp1`, its percentage display, is worse: exactly **one** line at 2% and then silence, because
+7-zip disables the updating display when standard output is not a terminal.
+
+So there is no live signal to read. Giving it a pseudo-terminal would produce one, but that means
+teaching the background runner to allocate a pty and then parsing a cursor-driven display — a
+different and much larger piece of work, and one that would have to keep working across 7-zip
+versions.
+
+**Why the revert, rather than leaving it in.** It was worse than what it replaced.
+`GrowingFileProgress` shows the archive growing — `44.6 M   873 k/s`, moving all the way. The
+manifest showed `0/147 M`, frozen, then jumped to `100%` at the end. A total that arrives with the
+completion is not progress.
+
+**The lesson, which is the ninth of its kind here.** "The mechanism exists and nothing feeds it" has
+a twin: *the mechanism exists, is fed, and is fed too late to be worth anything.* Seeing that a
+program emits the right words is not evidence that it emits them while there is still something to
+report. Timestamp the output, do not just grep it.
+
+**Left standing:** `.7z` and `.rar` show the bytes written and the rate, with no bar, because how
+large an archive ends up is a compression ratio nobody knows in advance. Unpacking either shows a
+spinner. `ManifestProgress` understands only Info-ZIP's `verb: path`; the `+`/`-` marker support
+was removed with the rest, since nothing fed it.
+
 ## Progress bar colours
 
 Reported: "the white text on cyan is hard to read". Built on a branch as an experiment, tested by
