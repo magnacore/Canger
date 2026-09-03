@@ -35,7 +35,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
 | Tests | 1947 |
 
-Nine things go deliberately beyond ranger:
+Ten things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -79,6 +79,19 @@ Nine things go deliberately beyond ranger:
   way a clipboard does, and is written whole so two windows copying at once end with whichever
   copied last. Off unless asked for, because two Cangers open on unrelated work should not have
   `dd` in one arm `pp` in the other.
+- **Archives that report as they run.** Ranger queues an archive and shows a turning spinner and
+  nothing else, for however many minutes it takes. Canger asks each tool for whatever it can say
+  and renders it as the line a copy already shows — percentage, bytes, throughput and time
+  remaining. `tar` is asked to echo a byte count at intervals. Unpacking measures against what
+  comes *out*, not the file on disk: the uncompressed size of a `.gz`, `.lz` or `.xz` is recorded
+  in the file itself and read from a few bytes at the end, so a 4 KB archive holding 27 MB does not
+  reach 100% in the first second and sit there. Info-ZIP reports no bytes at all, but names each
+  entry as it handles it, and a zip's own index says what those names weigh — so both storing and
+  unpacking a `.zip` are counted too. Where a tool can say nothing (bzip2 records no size) the
+  bytes written are shown with no bar, because a bar drawn from a guessed compression ratio would
+  lie. The bar also names the colour of the text over its fill, not only the fill —
+  `progress_bar_color` and `progress_bar_text_color` — because ranger sets the background alone and
+  leaves the words to whatever the terminal's palette makes of them.
 - **`rename_stem`.** `cw` clears the whole name, extension and all, so renaming
   `2024-01-07_15-06-24-part-005-019r-021p.mkv` means typing `.mkv` back for no reason; `a` keeps
   the name and leaves the stem to be deleted by hand. `:rename_stem` is the missing third — the
