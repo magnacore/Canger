@@ -16,8 +16,19 @@ public sealed class JungleColorScheme : DefaultColorScheme
     /// <inheritdoc />
     public override string Name => "jungle";
 
+    /// <summary>
+    /// The green jungle paints its directories, line numbers and progress bar with.
+    /// </summary>
+    /// <remarks>
+    /// Held separately from <see cref="ColorScheme.ProgressBarColor"/>, which it merely supplies
+    /// the default for. They were the same property, so configuring the bar's colour would have
+    /// repainted every directory name in the browser — a setting reaching a long way past what it
+    /// names.
+    /// </remarks>
+    private static Color Accent => Color.Green;
+
     /// <inheritdoc />
-    public override Color ProgressBarColor => Color.Green;
+    protected override Color BarColor => Accent.Bright();
 
     /// <inheritdoc />
     protected override CellStyle Use(StyleContext context)
@@ -27,14 +38,14 @@ public sealed class JungleColorScheme : DefaultColorScheme
         if (context.Has(ContextKey.Directory) &&
             !context.HasAny(ContextKey.Marked, ContextKey.Link, ContextKey.InactivePane))
         {
-            style = style with { Foreground = ProgressBarColor };
+            style = style with { Foreground = Accent };
         }
 
         if (context.Has(ContextKey.LineNumber) && !context.Has(ContextKey.Selected))
         {
             style = style with
             {
-                Foreground = ProgressBarColor,
+                Foreground = Accent,
                 Attributes = style.Attributes & ~CellAttributes.Bold,
             };
         }

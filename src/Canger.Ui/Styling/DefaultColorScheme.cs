@@ -28,7 +28,14 @@ public class DefaultColorScheme : ColorScheme
     public override string Name => "default";
 
     /// <summary>The colour of the progress bar drawn over the status bar.</summary>
-    public virtual Color ProgressBarColor => Color.Blue;
+    /// <inheritdoc />
+    /// <remarks>
+    /// Ranger's blue, brightened. Bright colours are light in every palette that follows the
+    /// convention, which is what lets the dark text over it be legible without knowing the
+    /// terminal's theme; plain blue is dark in most themes and light in some, so text over it
+    /// could not be chosen safely either way.
+    /// </remarks>
+    protected override Color BarColor => Color.Blue.Bright();
 
     /// <inheritdoc />
     protected override CellStyle Use(StyleContext context)
@@ -308,6 +315,7 @@ public class DefaultColorScheme : ColorScheme
         if (context.Has(ContextKey.Loaded))
         {
             background = ProgressBarColor;
+            foreground = ProgressBarTextColor;
         }
 
         if (context.Has(ContextKey.VcsInfo))
@@ -353,11 +361,15 @@ public class DefaultColorScheme : ColorScheme
         {
             if (context.Has(ContextKey.Selected))
             {
+                // The row under the cursor is already reversed, so the two are stated the way
+                // round the terminal will then swap them into.
                 foreground = ProgressBarColor;
+                background = ProgressBarTextColor;
             }
             else
             {
                 background = ProgressBarColor;
+                foreground = ProgressBarTextColor;
             }
         }
 

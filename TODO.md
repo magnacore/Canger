@@ -1,5 +1,51 @@
 # Canger — port status
 
+## EXPERIMENT — progress bar colours (`feature/progress-bar-colours`, unmerged)
+
+Reported: "the white text on cyan is hard to read". **On a branch for judgement; discard it with
+`git branch -D feature/progress-bar-colours` if it is not wanted.** Branched off
+`hotfix/extraction-total` rather than `develop`, so the colours can be judged with the progress
+work in place.
+
+**Diagnosis, measured.** The tinted span emitted `ESC[0;44m` — a reset, then background blue.
+Canger never chose a foreground for the bar at all: ranger's rule is `bg = progress_bar_color` with
+the text left at whatever it was, so legibility depends entirely on how the terminal renders that
+background. A palette that maps blue to something light leaves pale text on a pale bar.
+
+**1 — every scheme names a pair.** `ColorScheme` gained `ProgressBarColor` and
+`ProgressBarTextColor`. The shipped schemes pick a *bright* fill with dark text, because bright
+colours are light by convention and the direction of contrast therefore holds in any palette;
+solarized runs the other way, its blue being a mid-tone. Snow is untouched — it inverts rather than
+colours. Now `ESC[0;30;104m`, black on bright blue.
+
+**3 — two settings.** `progress_bar_color` and `progress_bar_text_color` take a colour name, a
+`bright_` name, or a palette index; empty keeps the scheme's own choice, which is a different thing
+from `default`, the terminal's own colour. A typo leaves the scheme's choice standing rather than
+drawing a colour nobody asked for. Documented in `config/cc.conf`; **deliberately not written into
+`~/.config/canger/cc.conf`**, since those lines would be errors on any build without this branch.
+
+**Jungle needed separating first.** It painted directories, line numbers *and* the bar from one
+property, so configuring the bar would have repainted every directory name in the browser. Its
+accent is now its own.
+
+### Verification
+
+| mutation | fails |
+| --- | --- |
+| status bar stops naming a text colour | 3 |
+| overrides forgotten across a scheme switch | 1 |
+| styles not discarded when the colours change | 1 |
+| browser stops feeding the settings to the scheme | **0, then 3** |
+| the two settings read the wrong way round | 3 |
+
+The fourth is the seam again — **twelfth instance**. With the whole step disconnected, none of
+2 045 tests failed: both settings would have been inert with everything looking well. Closed by
+moving the choice of *which settings to read* inside `Browser.ApplyProgressBarColors`, the shape
+`ApplySettings` already documents, and the swap control shows it now catches the subtle version too.
+
+pty, on the real binary: scheme's own `0;30;104`; after `:set progress_bar_color magenta` and
+`:set progress_bar_text_color bright_white`, `0;97;45`; after clearing the fill alone, `0;97;104`.
+
 ## The task view's text sat against the tint
 
 Reported: "the copy or compressing text should have a 1 space so it is not flush with the progress
