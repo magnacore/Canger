@@ -87,6 +87,9 @@ public sealed class SwitchableColorScheme(IColorScheme initial) : IColorScheme
 {
     private IColorScheme _current = initial ?? throw new ArgumentNullException(nameof(initial));
 
+    private Color? _barColor;
+    private Color? _barTextColor;
+
     /// <summary>The scheme currently in use.</summary>
     public IColorScheme Current => _current;
 
@@ -111,6 +114,40 @@ public sealed class SwitchableColorScheme(IColorScheme initial) : IColorScheme
         }
 
         _current = scheme;
+        Apply();
+
         return true;
+    }
+
+    /// <summary>Overrides the progress bar's colours, now and for whatever is switched to next.</summary>
+    /// <param name="fill">The fill colour, or <see langword="null"/> for the scheme's own.</param>
+    /// <param name="text">The text colour, or <see langword="null"/> for the scheme's own.</param>
+    /// <returns><see langword="true"/> when this changed anything, so the caller can redraw.</returns>
+    /// <remarks>
+    /// Remembered here rather than only pushed into the scheme, because a scheme switched to later
+    /// is a fresh object that has never been told. Without that the colours would hold until the
+    /// first <c>:set colorscheme</c> and then silently revert.
+    /// </remarks>
+    public bool SetProgressBarColors(Color? fill, Color? text)
+    {
+        if (_barColor == fill && _barTextColor == text)
+        {
+            return false;
+        }
+
+        _barColor = fill;
+        _barTextColor = text;
+        Apply();
+
+        return true;
+    }
+
+    /// <summary>Pushes the remembered overrides into whatever scheme is in use.</summary>
+    private void Apply()
+    {
+        if (_current is ColorScheme scheme)
+        {
+            scheme.SetProgressBarColors(_barColor, _barTextColor);
+        }
     }
 }

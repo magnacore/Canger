@@ -37,7 +37,15 @@ public sealed class SolarizedColorScheme : ColorScheme
     public override string Name => "solarized";
 
     /// <summary>The colour of the progress bar drawn over the status bar.</summary>
-    public static Color ProgressBarColor => Blue;
+    /// <inheritdoc />
+    protected override Color BarColor => Blue;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Solarized's blue is a mid-tone rather than a bright colour, so the contrast runs the other
+    /// way here than in the default scheme: light text over it, not dark.
+    /// </remarks>
+    protected override Color BarTextColor => Paper;
 
     /// <inheritdoc />
     protected override CellStyle Use(StyleContext context)
@@ -237,7 +245,7 @@ public sealed class SolarizedColorScheme : ColorScheme
     }
 
     /// <summary>Colours for the status bar.</summary>
-    private static (Color Foreground, Color Background, CellAttributes Attributes) StatusBar(
+    private (Color Foreground, Color Background, CellAttributes Attributes) StatusBar(
         StyleContext context)
     {
         Color foreground = Color.Default;
@@ -274,13 +282,14 @@ public sealed class SolarizedColorScheme : ColorScheme
         if (context.Has(ContextKey.Loaded))
         {
             background = ProgressBarColor;
+            foreground = ProgressBarTextColor;
         }
 
         return (foreground, background, attributes);
     }
 
     /// <summary>Colours for the task view, layered over whatever was decided already.</summary>
-    private static (Color Foreground, Color Background, CellAttributes Attributes) TaskView(
+    private (Color Foreground, Color Background, CellAttributes Attributes) TaskView(
         StyleContext context, Color foreground, Color background, CellAttributes attributes)
     {
         if (context.Has(ContextKey.Title))
@@ -297,11 +306,14 @@ public sealed class SolarizedColorScheme : ColorScheme
         {
             if (context.Has(ContextKey.Selected))
             {
+                // Reversed already, so stated the way round the terminal will swap them into.
                 foreground = ProgressBarColor;
+                background = ProgressBarTextColor;
             }
             else
             {
                 background = ProgressBarColor;
+                foreground = ProgressBarTextColor;
             }
         }
 

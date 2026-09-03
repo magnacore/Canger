@@ -77,6 +77,12 @@ public sealed class CangerSettings(ISettings settings)
     /// <summary>The <c>colorscheme</c> setting.</summary>
     public string Colorscheme => Required<string>("colorscheme");
 
+    /// <summary>What a progress bar fills with, or empty for the colourscheme's own choice.</summary>
+    public string ProgressBarColor => Required<string>("progress_bar_color");
+
+    /// <summary>The text over that fill, or empty for the colourscheme's own choice.</summary>
+    public string ProgressBarTextColor => Required<string>("progress_bar_text_color");
+
     /// <summary>The <c>draw_borders</c> setting.</summary>
     public string DrawBorders => Required<string>("draw_borders");
 
