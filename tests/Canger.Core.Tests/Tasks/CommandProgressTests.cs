@@ -498,6 +498,43 @@ public class CommandEstimateTests
     }
 
     [Fact]
+    public void PutsThePercentageAndTheEstimateOnTheStatusLine()
+    {
+        // Asked for: "when archiving, the % and time remaining should be shown in status bar
+        // also". The status bar draws whatever the queue's summary describes, and for a single
+        // job that is the job's own line — so the figures have to be in the line itself, not
+        // added by whichever view happens to be drawing it.
+        DrivenClock clock = new();
+
+        FakeFileManager.RecordingProcessRunner runner = new();
+        FakeFileManager.FakeBackgroundProcess process = new() { StepsBeforeExit = 10_000 };
+        runner.BackgroundResults["tar"] = process;
+
+        TaskQueue queue = new();
+        queue.Add(new CommandTask(runner,
+                                  new ProcessRequest("tar -cf out.tar.lz big/", default, "/w"),
+                                  "Compressing: out.tar.lz",
+                                  notify: null,
+                                  finished: null,
+                                  progress: new MarkerProgress("canger-bytes:", 1_000_000_000),
+                                  time: clock));
+
+        foreach ((double after, long completed) in
+                 new[] { (2.0, 100_000_000L), (1.0, 200_000_000L) })
+        {
+            clock.Advance(after);
+            process.StandardError = $"canger-bytes:{completed}\n";
+            queue.Work(TimeSpan.FromSeconds(1));
+        }
+
+        string line = queue.Summary()!.Describe();
+
+        Assert.Contains("Compressing: out.tar.lz:", line, StringComparison.Ordinal);
+        Assert.Contains("20%", line, StringComparison.Ordinal);
+        Assert.Contains("ETA 00:08", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SaysNothingUntilTwoReadingsHaveBeenSeen()
     {
         // One checkpoint gives a count but no interval, and a guess from it would be arbitrary.

@@ -16,6 +16,10 @@ namespace Canger.Ui.Tests.Widgets;
 /// the description where it can say neither. The middle case is the one an archiver falls into:
 /// the file can be watched growing, but how large it ends up depends on a compression ratio nobody
 /// knows in advance, so a bar there would be a bar that lies.
+///
+/// The figures come from the task's own line rather than from a column the view adds. That is what
+/// makes an archive and a copy read alike, and it is why the view no longer indents every row by
+/// the width of a field only some rows could fill.
 /// </remarks>
 public class TaskViewProgressTests
 {
@@ -32,7 +36,7 @@ public class TaskViewProgressTests
         }
     }
 
-    private static string Render(ICommandProgress? source)
+    private static string[] Rows(ICommandProgress? source)
     {
         FakeFileManager.RecordingProcessRunner runner = new();
         runner.BackgroundResults["tar"] = new FakeFileManager.FakeBackgroundProcess
@@ -56,59 +60,112 @@ public class TaskViewProgressTests
         view.Layout(new Rect(0, 0, 60, 4));
         view.Render(screen);
 
-        return string.Join("\n", Enumerable.Range(0, 4).Select(screen.TextAt));
+        return [.. Enumerable.Range(0, 4).Select(screen.TextAt)];
     }
+
+    /// <summary>The row the one queued task was drawn on.</summary>
+    private static string TaskRow(ICommandProgress? source) =>
+        Rows(source).Single(row => row.Contains("Compressing", StringComparison.Ordinal));
 
     [Fact]
     public void ShowsAPercentageWhenTheTotalIsKnown()
     {
-        Assert.Contains("   25%  Compressing: out.tar.lz",
-                        Render(new Reported(total: 1000, completed: 250)),
-                        StringComparison.Ordinal);
+        string row = TaskRow(new Reported(total: 1000, completed: 250));
+
+        Assert.Contains("Compressing: out.tar.lz:", row, StringComparison.Ordinal);
+        Assert.Contains("25%", row, StringComparison.Ordinal);
     }
 
     [Fact]
     public void ShowsTheBytesMovedWhenTheTotalIsNot()
     {
         // The archiver case. No bar, but not a bare spinner either.
-        Assert.Contains(" 4.1 k  Compressing: out.tar.lz",
-                        Render(new Reported(total: null, completed: 4096)),
-                        StringComparison.Ordinal);
+        string row = TaskRow(new Reported(total: null, completed: 4096));
+
+        Assert.Contains("4.1 k", row, StringComparison.Ordinal);
+        Assert.DoesNotContain("%", row, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void KeepsTheDescriptionOffTheEdgeWhenThereIsNoFigure()
+    public void StartsEveryRowAtTheEdgeWhateverItHasToReport()
     {
-        // Reported: the description sat flush against the left edge. The field was left out
-        // entirely when there was nothing to put in it, so a row stepped in and out as its first
-        // checkpoint arrived and rows with and without a figure did not line up.
-        string withFigure = Render(new Reported(total: 1000, completed: 250));
-        string without = Render(null);
+        // Reported: "in the task view the task item is indented to the right". A field was
+        // reserved at the head of every row for a figure, so a row began with the white space
+        // where its percentage would go — and rows that never got one were indented for nothing.
+        // The figures now sit in the task's own line, after the name, where a copy has always put
+        // them.
+        foreach (ICommandProgress? source in
+                 new ICommandProgress?[] { new Reported(1000, 250), new Reported(null, 4096), null })
+        {
+            string row = TaskRow(source);
 
-        int indented = withFigure.IndexOf("Compressing:", StringComparison.Ordinal);
-        int plain = without.IndexOf("Compressing:", StringComparison.Ordinal);
-
-        Assert.True(plain > 0, "the description is flush against the edge");
-        Assert.Equal(indented % 60, plain % 60);
+            Assert.StartsWith("Compressing:", row, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
     public void ShowsNeitherBeforeTheCommandHasSaidAnything()
     {
-        string rendered = Render(new Reported(total: 1000, completed: null));
+        string row = TaskRow(new Reported(total: 1000, completed: null));
 
-        Assert.Contains("Compressing: out.tar.lz", rendered, StringComparison.Ordinal);
-        Assert.DoesNotContain("%", rendered, StringComparison.Ordinal);
+        Assert.Contains("Compressing: out.tar.lz", row, StringComparison.Ordinal);
+        Assert.DoesNotContain("%", row, StringComparison.Ordinal);
     }
 
     [Fact]
     public void ShowsNeitherForACommandWithNoProgressSourceAtAll()
     {
         // Every other queued command, which keeps the spinner it always had.
-        string rendered = Render(null);
+        string row = TaskRow(null);
 
-        Assert.Contains("Compressing: out.tar.lz", rendered, StringComparison.Ordinal);
-        Assert.DoesNotContain("%", rendered, StringComparison.Ordinal);
+        Assert.Contains("Compressing: out.tar.lz", row, StringComparison.Ordinal);
+        Assert.DoesNotContain("%", row, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// That the view adds no figures of its own to work that already reports some.
+/// </summary>
+public class TaskViewDuplicationTests
+{
+    /// <summary>Work whose line already carries its figures, as a copy's does.</summary>
+    private sealed class AlreadyReports : ILoadable
+    {
+        public string Description => "copying big.mkv:  85%   1.2 G/1.4 G";
+
+        public double? Progress => 0.85;
+
+        public TimeSpan Idle => TimeSpan.Zero;
+
+        public IEnumerator<Unit> Steps()
+        {
+            yield return Unit.Value;
+        }
+
+        public void Dispose()
+        {
+            // Nothing held.
+        }
+    }
+
+    [Fact]
+    public void DoesNotPrintAPercentageTheTaskHasAlreadyGiven()
+    {
+        // The view used to draw its own percentage at the head of the row, so a copy — whose line
+        // has carried its figures all along — reported the same number twice.
+        TaskQueue queue = new();
+        queue.Add(new AlreadyReports());
+
+        ScreenBuffer screen = new(60, 4);
+        TaskView view = new(new DefaultColorScheme(), queue) { IsVisible = true };
+        view.Layout(new Rect(0, 0, 60, 4));
+        view.Render(screen);
+
+        string row = Enumerable.Range(0, 4).Select(screen.TextAt)
+                               .Single(r => r.Contains("copying", StringComparison.Ordinal));
+
+        Assert.Equal(1, row.Count(c => c == '%'));
+        Assert.StartsWith("copying big.mkv:", row, StringComparison.Ordinal);
     }
 }
 
@@ -124,7 +181,12 @@ public class TaskViewEstimateTests
     /// <summary>A job that reports a size and a rate and does nothing else.</summary>
     private sealed class SteadyWork(long total, long remaining, double rate) : ILoadable, ISizedWork
     {
-        public string Description => "Compressing: out.tar.lz";
+        public string Description =>
+            $"Compressing: out.tar.lz: {Canger.Core.Model.TransferFigures.Describe(Progress, total - remaining, total, BytesPerSecond, Estimate)}";
+
+        /// <summary>How much longer, composed into the line as every sized job composes it.</summary>
+        private TimeSpan? Estimate =>
+            rate > 0 ? TimeSpan.FromSeconds(remaining / rate) : null;
 
         public double? Progress => 1 - ((double)remaining / total);
 
@@ -138,7 +200,7 @@ public class TaskViewEstimateTests
 
         public double? BytesPerSecond => rate;
 
-        public string Subject => Description;
+        public string Subject => "Compressing: out.tar.lz";
 
         public IEnumerator<Unit> SizingSteps() => Enumerable.Empty<Unit>().GetEnumerator();
 
@@ -170,7 +232,7 @@ public class TaskViewEstimateTests
     public void ShowsHowMuchLongerItHas()
     {
         // 60 MB left at 1 MB/s is a minute.
-        Assert.Contains("left",
+        Assert.Contains("ETA 01:00",
                         Render(new SteadyWork(120_000_000, 60_000_000, 1_000_000)),
                         StringComparison.Ordinal);
     }
@@ -181,14 +243,14 @@ public class TaskViewEstimateTests
         // So a description is not pushed about by a figure that comes and goes.
         string rendered = Render(new SteadyWork(120_000_000, 60_000_000, 1_000_000));
 
-        Assert.True(rendered.IndexOf("left", StringComparison.Ordinal) >
+        Assert.True(rendered.IndexOf("ETA", StringComparison.Ordinal) >
                     rendered.IndexOf("out.tar.lz", StringComparison.Ordinal));
     }
 
     [Fact]
     public void SaysNothingWhenThereIsNoRateYet()
     {
-        Assert.DoesNotContain("left",
+        Assert.DoesNotContain("ETA",
                               Render(new SteadyWork(120_000_000, 60_000_000, 0)),
                               StringComparison.Ordinal);
     }

@@ -44,20 +44,26 @@ public static class TransferFigures
     /// <summary>
     /// Describes how far a transfer has got.
     /// </summary>
-    /// <param name="fraction">How far along, from 0 to 1.</param>
+    /// <param name="fraction">
+    /// How far along, from 0 to 1, or <see langword="null"/> when the work cannot say — an
+    /// archiver with no total to measure against, which reports what it has written and no more.
+    /// </param>
     /// <param name="completedBytes">Bytes accounted for.</param>
     /// <param name="totalBytes">Bytes the transfer covers, or zero when that is not known.</param>
     /// <param name="bytesPerSecond">Throughput, or <see langword="null"/> when nothing has moved.</param>
     /// <param name="estimate">Time remaining, or <see langword="null"/> when it cannot be guessed.</param>
     /// <returns>A single line, its columns aligned.</returns>
-    public static string Describe(double fraction, long completedBytes, long totalBytes,
+    public static string Describe(double? fraction, long completedBytes, long totalBytes,
                                   double? bytesPerSecond, TimeSpan? estimate)
     {
         StringBuilder text = new();
 
-        text.Append((fraction * 100).ToString("F0", CultureInfo.InvariantCulture)
-                                    .PadLeft(PercentWidth - 1))
-            .Append('%');
+        if (fraction is { } portion)
+        {
+            text.Append((portion * 100).ToString("F0", CultureInfo.InvariantCulture)
+                                       .PadLeft(PercentWidth - 1))
+                .Append('%');
+        }
 
         if (totalBytes > 0)
         {
@@ -67,21 +73,39 @@ public static class TransferFigures
             string pair = $"{HumanReadable.Format(completedBytes).PadLeft(SizeWidth)}"
                           + $"/{HumanReadable.Format(totalBytes)}";
 
-            text.Append("  ").Append(pair.PadRight(PairWidth));
+            Separate(text).Append(pair.PadRight(PairWidth));
+        }
+        else if (completedBytes > 0)
+        {
+            // No total to measure against, so the count stands alone. Same column as the pair
+            // above starts in, so a queue holding one of each does not read as ragged.
+            Separate(text).Append(HumanReadable.Format(completedBytes).PadLeft(SizeWidth)
+                                               .PadRight(PairWidth));
         }
 
         if (bytesPerSecond is { } rate)
         {
-            text.Append("  ").Append($"{HumanReadable.Format((long)rate)}/s".PadRight(RateWidth));
+            Separate(text).Append($"{HumanReadable.Format((long)rate)}/s".PadRight(RateWidth));
         }
 
         // Last, and so the one field that needs no width of its own: nothing follows it for a
         // change of width to push along.
         if (estimate is { } remaining)
         {
-            text.Append("  ETA ").Append(HumanReadable.Duration(remaining));
+            Separate(text).Append("ETA ").Append(HumanReadable.Duration(remaining));
         }
 
         return text.ToString().TrimEnd();
     }
+
+    /// <summary>Opens the next field, gapped from the last unless it is the first.</summary>
+    /// <param name="text">The line so far.</param>
+    /// <returns>The same builder, for chaining.</returns>
+    /// <remarks>
+    /// Written out rather than prefixing every field with two spaces, because a line whose first
+    /// field is absent — a percentage nobody can compute — would otherwise begin with the gap
+    /// that was meant to follow it, and sit a couple of columns in from every other line.
+    /// </remarks>
+    private static StringBuilder Separate(StringBuilder text) =>
+        text.Length > 0 ? text.Append("  ") : text;
 }

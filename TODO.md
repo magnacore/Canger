@@ -1,5 +1,58 @@
 # Canger — port status
 
+## One shape for every progress line
+
+Reported: archiving showed no figures in the status bar; the task view indented every row; and the
+status bar text jumped a column sideways as the bar appeared. Copy's line was named as the one to
+match.
+
+**The figures now live in the task's own line**, laid out by `TransferFigures` — which a copy has
+always done and a command task did not. `CommandTask` gained a `Subject` (the plain label) and a
+`Description` that appends the figures, mirroring `CopyJob`. Both views draw whatever the line
+says, so the status bar gets the percentage and the estimate for nothing: it renders
+`QueueSummary.Describe()`, which for a single job *is* that line.
+
+`TransferFigures.Describe` takes a nullable fraction and grew a byte-count branch, so unsized work
+— an archive with no total — is laid out by the same code in the same columns instead of by a
+format of the view's own.
+
+**The task view draws no figures of its own.** It reserved a right-aligned column at the head of
+every row, which is what indented them; and for a copy, whose line already carried a percentage, it
+printed the number twice. Now it draws `state + Description` from column zero.
+
+**Every status bar headline takes the same one-column margin.** The margin exists because the
+progress tint runs the full width and text in the first cell sits on its edge. It had been given to
+the running task but not to a message — and the two are the same headline a moment apart, the
+plugin's `Compressing 1 into demo3.tar.lz` then the task's own line, so the text stepped sideways
+as the bar arrived. **Divergence from ranger**, which draws messages flush left through
+`_draw_message`: ranger tints nothing beneath them, and Canger does.
+
+### Verification
+
+Controls, each checked for having compiled:
+
+| mutation | fails |
+| --- | --- |
+| task view draws its own figure column again | 6 |
+| status bar margin for the task only | 2 |
+| command task stops carrying its figures | 3 |
+| unsized byte branch removed from the formatter | 1 |
+
+The third started at **2 failures, both in the task view** — nothing pinned the user's actual ask,
+that the *status bar* carry the figures. `PutsThePercentageAndTheEstimateOnTheStatusLine` drives a
+real `TaskQueue` and asserts on `Summary().Describe()`, and takes it to 3.
+
+pty, on the real binary. Task view rows start at column 0, status bar at column 1, both the same
+shape for either kind of work:
+
+```
+|Compressing: demo2.tar.lz:  51%  24.6 M/48 M    1.1 M/s   ETA 00:21
+|copying big.bin:  50%   746 M/1.5 G   2.22 G/s  ETA 00:00
+```
+
+and the message-to-task transition no longer moves: `Compressing 1 into demo3.tar.lz` and
+`Compressing: demo3.tar.lz:  34%  16.4 M/48 M` both start at column 1.
+
 ## Unpacking now measures against what comes out, and the countdown is honest
 
 Two defects, found one after the other from "the extraction goes on for a few more seconds after

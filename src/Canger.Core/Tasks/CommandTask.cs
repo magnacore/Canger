@@ -108,11 +108,30 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
         _finished = finished;
         _progress = progress;
         _time = time ?? TimeProvider.System;
-        Description = description;
+        Subject = description;
     }
 
     /// <inheritdoc />
-    public string Description { get; }
+    public string Subject { get; }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The subject, then whatever figures the command can offer, in the columns a copy uses. Laid
+    /// out by <see cref="Model.TransferFigures"/> rather than here so that a line about an archive
+    /// and a line about a copy are the same shape — which is the whole reason the task view and
+    /// the status bar can show either without a format of their own.
+    /// </remarks>
+    public string Description
+    {
+        get
+        {
+            string figures = Model.TransferFigures.Describe(
+                Progress, _progress?.Completed ?? 0, _progress?.Total ?? 0, BytesPerSecond,
+                Estimate);
+
+            return figures.Length > 0 ? $"{Subject}: {figures}" : Subject;
+        }
+    }
 
     /// <summary>
     /// How far along it is, when the command was set up to say.
@@ -208,9 +227,6 @@ public sealed class CommandTask : ILoadable, IReportsBytes, ISizedWork
     /// </remarks>
     public TimeSpan? Estimate =>
         RemainingBytes is { } remaining ? _rate.Estimate(remaining) : null;
-
-    /// <inheritdoc />
-    public string Subject => Description;
 
     /// <inheritdoc />
     public IEnumerator<Unit> Steps()
