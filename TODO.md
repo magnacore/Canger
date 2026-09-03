@@ -1,11 +1,9 @@
 # Canger — port status
 
-## EXPERIMENT — progress bar colours (`feature/progress-bar-colours`, unmerged)
+## Progress bar colours
 
-Reported: "the white text on cyan is hard to read". **On a branch for judgement; discard it with
-`git branch -D feature/progress-bar-colours` if it is not wanted.** Branched off
-`hotfix/extraction-total` rather than `develop`, so the colours can be judged with the progress
-work in place.
+Reported: "the white text on cyan is hard to read". Built on a branch as an experiment, tested by
+the user, and accepted into 0.8.0.
 
 **Diagnosis, measured.** The tinted span emitted `ESC[0;44m` — a reset, then background blue.
 Canger never chose a foreground for the bar at all: ranger's rule is `bg = progress_bar_color` with
@@ -21,8 +19,9 @@ colours. Now `ESC[0;30;104m`, black on bright blue.
 **3 — two settings.** `progress_bar_color` and `progress_bar_text_color` take a colour name, a
 `bright_` name, or a palette index; empty keeps the scheme's own choice, which is a different thing
 from `default`, the terminal's own colour. A typo leaves the scheme's choice standing rather than
-drawing a colour nobody asked for. Documented in `config/cc.conf`; **deliberately not written into
-`~/.config/canger/cc.conf`**, since those lines would be errors on any build without this branch.
+drawing a colour nobody asked for. Documented in `config/cc.conf`, and added to the user's own
+`cc.conf` once the branch was accepted — while it was still an experiment those lines were kept out
+of it, since they would have been errors on any build without the branch.
 
 **Jungle needed separating first.** It painted directories, line numbers *and* the bar from one
 property, so configuring the bar would have repainted every directory name in the browser. Its
