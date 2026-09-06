@@ -1,5 +1,50 @@
 # Canger — port status
 
+## Opening a folder puts the cursor on its first row
+
+Reported twice over: under `sort=mtime` the highlighted entry was the first *alphabetical* name,
+halfway down the list; and where the first row was a symlink, the cursor sat on the first non-link
+folder instead. **One cause.**
+
+**The defect.** A directory learned its sort order a frame after it was loaded, when the render
+path walked the visible columns. The first load is when the cursor is placed, so it was placed on
+row 0 of a listing ordered by *name*; when the real order arrived, `Refilter` kept the cursor on
+that same entry and carried it down the list. With the default `sort natural` the two orders agree,
+which is why only a non-default sort showed it.
+
+**The fix.** The listing settings are now a `DirectorySettings` value the cache holds and stamps on
+every directory it hands out — ranger's rule, where a directory binds itself to them in its
+constructor (`container/directory.py:140-148`).
+
+Stamping at *creation* alone fixed nothing, and the pty run proved it: a subdirectory's node is
+made while its **parent** is listed, long before the user changes the sort, so by the time the
+folder is opened the node already exists and was skipped. They are applied on the way past instead,
+which costs nothing because every setter returns at once on a non-change.
+
+**Parity, by running ranger's own `Directory` over the same fixture** rather than reading it. For a
+tree holding a directory, a symlink to a directory, its target and a file, `sort=mtime`,
+directories first:
+
+```
+bbb-dir      mtime=1577817000     ranger's pointer: index 0
+zzz-link     mtime=1546281000     <- the target's mtime, not the link's own 2026
+real-target  mtime=1546281000
+ccc-file.txt mtime=1609439400
+```
+
+So ranger sorts a symlink by its **target's** mtime, groups a link to a directory with the
+directories, and points at index 0. Canger now agrees on all three. The only difference left is the
+order of two entries whose mtimes are identical, which is arbitrary in both.
+
+**Controls**, each with the mutation confirmed to compile: configuring only newly created nodes
+fails 2; configuring nothing on creation fails 1; not telling the cache at all fails 5.
+
+**The tests failed all three controls at 0 on their first draft.** The directory they opened was
+also the *previewed* one, so the walk over the visible columns configured it directly and the cache
+path was never exercised. They now park the cursor on a file — through the **tab's** cursor, not
+the directory's, since the preview column follows the tab — and assert the preview is empty before
+measuring anything.
+
 ## The launcher's PATH covers three directories
 
 `canger.sh` prepended `~/.local/bin` when it was missing; `/usr/local/bin` and `/sbin` now go

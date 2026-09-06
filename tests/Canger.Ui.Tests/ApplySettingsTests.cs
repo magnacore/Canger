@@ -248,6 +248,47 @@ public class DirectorySettingsAtOpenTests
     }
 
     [Fact]
+    public void ALinkOnTheFirstRowIsSelectedLikeAnythingElse()
+    {
+        // The other half of the report: "if the first item in a folder is a link ranger selects
+        // it, but canger selects the first folder which is a non-link". It was the same defect
+        // seen from another angle — the cursor was stuck on the alphabetically first directory —
+        // so what has to be pinned is that nothing about a link makes the cursor step over it.
+        InMemoryFileSystem fs = new InMemoryFileSystem()
+            .AddDirectory("/home")
+            .AddDirectory("/home/work")
+            .AddDirectory("/home/work/linked")
+            .AddDirectory("/home/work/linked/real")
+            .AddFile("/home/work/here.txt");
+
+        fs.AddSymbolicLink("/home/work/linked/aaa-link", "/home/work/linked/real");
+
+        DirectoryCache cache = new(fs);
+        Tab tab = new(cache, "/home/work", 20);
+        tab.Current.Load(TestContext.Current.CancellationToken);
+
+        IReadOnlyList<FsNode> entries = tab.Current.Entries;
+        tab.MoveCursor(entries.ToList().FindIndex(e => e.Basename == "here.txt"));
+        Assert.Null(tab.SelectedDirectory);
+
+        Browser.ApplySettings(
+            tab,
+            new Dictionary<int, Tab> { [1] = tab },
+            viewmode: null,
+            new SortOrder(SortKey.Natural, Reverse: false, DirectoriesFirst: true,
+                          CaseInsensitive: true, UseUnicodeCollation: false),
+            showHidden: false,
+            hiddenPattern: string.Empty,
+            autoupdate: false);
+
+        DirectoryNode opened = cache.GetLoaded("/home/work/linked",
+                                               TestContext.Current.CancellationToken);
+
+        Assert.Equal("aaa-link", opened.Entries[0].Basename);
+        Assert.Equal("aaa-link", opened.Selected?.Basename);
+    }
+
+    [Fact]
     public void TheDefaultSortStillOpensOnItsFirstRow()
     {
         // The case that always worked, kept so a fix aimed at the other one cannot break it.
