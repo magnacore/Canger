@@ -55,10 +55,8 @@ public class ApplySettingsTests
             tab,
             new Dictionary<int, Tab> { [1] = tab },
             viewmode: null,
-            new SortOrder(SortKey.Basename, reverse, true, true, false),
-            showHidden,
-            HiddenFilter,
-            autoupdate: false);
+            _ => new DirectorySettings(new SortOrder(SortKey.Basename, reverse, true, true, false),
+                                       showHidden, HiddenFilter, AutoupdateCumulativeSize: false));
 
     private static IReadOnlyList<string> Names(DirectoryNode directory) =>
         [.. directory.Entries.Select(e => e.Basename)];
@@ -185,11 +183,11 @@ public class DirectorySettingsAtOpenTests
             tab,
             new Dictionary<int, Tab> { [1] = tab },
             viewmode: null,
-            new SortOrder(key, reverse, DirectoriesFirst: true, CaseInsensitive: true,
-                          UseUnicodeCollation: false),
-            showHidden: false,
-            hiddenPattern: string.Empty,
-            autoupdate: false);
+            _ => new DirectorySettings(
+                new SortOrder(key, reverse, DirectoriesFirst: true, CaseInsensitive: true,
+                              UseUnicodeCollation: false),
+                ShowHidden: false, HiddenPattern: string.Empty,
+                AutoupdateCumulativeSize: false));
     }
 
     [Fact]
@@ -275,17 +273,52 @@ public class DirectorySettingsAtOpenTests
             tab,
             new Dictionary<int, Tab> { [1] = tab },
             viewmode: null,
-            new SortOrder(SortKey.Natural, Reverse: false, DirectoriesFirst: true,
-                          CaseInsensitive: true, UseUnicodeCollation: false),
-            showHidden: false,
-            hiddenPattern: string.Empty,
-            autoupdate: false);
+            _ => new DirectorySettings(
+                new SortOrder(SortKey.Natural, Reverse: false, DirectoriesFirst: true,
+                              CaseInsensitive: true, UseUnicodeCollation: false),
+                ShowHidden: false, HiddenPattern: string.Empty,
+                AutoupdateCumulativeSize: false));
 
         DirectoryNode opened = cache.GetLoaded("/home/work/linked",
                                                TestContext.Current.CancellationToken);
 
         Assert.Equal("aaa-link", opened.Entries[0].Basename);
         Assert.Equal("aaa-link", opened.Selected?.Basename);
+    }
+
+    [Fact]
+    public void AFolderWithASortRuleOfItsOwnOpensOnItsFirstRow()
+    {
+        // The case that was still wrong after the first fix. `setinregex` and `setlocal` scope a
+        // setting to a path, so the folder being opened can want a different order from the one
+        // the user is standing in — and it is the folder's own answer that has to reach it before
+        // its first load, because that load is when the cursor is placed.
+        (Tab tab, DirectoryCache cache) = Build();
+
+        Browser.ApplySettings(
+            tab,
+            new Dictionary<int, Tab> { [1] = tab },
+            viewmode: null,
+
+            // Natural everywhere except `later`, which is held reversed by a rule of its own.
+            path => new DirectorySettings(
+                new SortOrder(SortKey.Natural,
+                              Reverse: path == "/home/work/later",
+                              DirectoriesFirst: true, CaseInsensitive: true,
+                              UseUnicodeCollation: false),
+                ShowHidden: false, HiddenPattern: string.Empty,
+                AutoupdateCumulativeSize: false));
+
+        DirectoryNode opened = cache.GetLoaded("/home/work/later",
+                                               TestContext.Current.CancellationToken);
+
+        Assert.Equal(["c.txt", "b.txt", "a.txt"],
+                     opened.Entries.Select(e => e.Basename).ToArray());
+        Assert.Equal("c.txt", opened.Selected?.Basename);
+
+        // And the tab's own directory keeps the answer that is right for it.
+        Assert.Equal(["later", "here.txt"],
+                     tab.Current.Entries.Select(e => e.Basename).ToArray());
     }
 
     [Fact]

@@ -1,5 +1,48 @@
 # Canger — port status
 
+## A directory resolves its settings for its own path
+
+The first fix was not enough, and the report said so. It resolved one set of settings from the
+directory the user was standing in and stamped that on every directory the cache handed out. But
+`setinregex` and `setlocal` scope a setting to a path, and the folders in question are held at
+`sort mtime` with `sort_reverse true` by regex — so opening one from elsewhere still listed it by
+name for its first load, which is when the cursor is placed.
+
+Settings are now resolved **per directory path**, through
+`CangerSettings.DirectorySettingsFor(path)`, and the cache holds a function rather than a value.
+That is ranger's arrangement: a directory owns a settings object bound to its own path and every
+lookup goes through it (`container/settings.py:338`).
+
+**Verified on the reporter's own folders**, not a fixture. `STUDY PASSIVE TRADING` now matches
+`ls -tr` exactly — oldest first, which is what `sort mtime` plus `sort_reverse true` asks for — with
+the cursor on row 0. `04 RA RP SP` now opens with `JOY`, a symlink, on row 0 and selected; it used
+to select `AUDIO SPLIT`.
+
+**Control:** resolving once from the current directory instead of per directory fails
+`AFolderWithASortRuleOfItsOwnOpensOnItsFirstRow`.
+
+## `on` and `oM` in a folder held by `setinregex` — not a defect
+
+Reported as a second problem: pressing `on` in a folder configured by `setinregex` does nothing.
+Ranger's own settings container, run directly, gives the answer:
+
+```
+path-scoped sort=mtime, global sort=natural:
+  global             -> natural
+  for /home/me/Study -> mtime
+after a further global set, which is what `on` does:
+  global             -> basename
+  for /home/me/Study -> mtime        (unchanged)
+```
+
+A path-scoped setting wins over the global and a later global `set` does not disturb it. `on` is
+`set sort=natural`, a global set, so the folder keeps its own rule. Canger matches.
+
+**A real gap alongside it:** ranger's `setlocal` is an ordinary command and can be typed at the
+console to override a path-scoped setting for the session. Canger answers "setlocal is only
+available in the configuration file so far", so there is no runtime override at all. Not fixed
+here; worth doing if the interactive override is wanted.
+
 ## Opening a folder puts the cursor on its first row
 
 Reported twice over: under `sort=mtime` the highlighted entry was the first *alphabetical* name,

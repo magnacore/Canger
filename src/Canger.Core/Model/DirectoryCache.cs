@@ -60,12 +60,19 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
     /// applying them on the way past costs nothing.
     /// </para>
     /// <para>
+    /// A function of the path, not one value for all of them, because <c>setlocal</c> and
+    /// <c>setinregex</c> scope a setting to a directory. One resolved value pushed onto every
+    /// directory is right only while they all agree, and a folder held at <c>sort mtime</c> by a
+    /// regex is exactly the case where they do not.
+    /// </para>
+    /// <para>
     /// Ranger has no such gap because a directory binds itself to these settings in its
-    /// constructor (<c>container/directory.py:140-148</c>). This is that, in the one place every
-    /// directory is fetched.
+    /// constructor and resolves them against its own path
+    /// (<c>container/directory.py:140-148</c>, <c>container/settings.py:338</c>). This is that, in
+    /// the one place every directory is fetched.
     /// </para>
     /// </remarks>
-    public DirectorySettings Settings { get; set; } = DirectorySettings.Default;
+    public Func<string, DirectorySettings> Settings { get; set; } = _ => DirectorySettings.Default;
 
     /// <summary>How many directories are currently held.</summary>
     public int Count => _directories.Count;
@@ -87,7 +94,7 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
 
         if (_directories.TryGetValue(key, out DirectoryNode? existing))
         {
-            Settings.ApplyTo(existing);
+            Settings(key).ApplyTo(existing);
             return existing;
         }
 
@@ -95,7 +102,7 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
             _fileSystem, key, _fileSystem.GetStatus(key, followSymbolicLinks: true),
             _fileSystem.GetStatus(key), relativeToPath: null, cache: this);
 
-        Settings.ApplyTo(directory);
+        Settings(key).ApplyTo(directory);
         _directories[key] = directory;
         return directory;
     }
@@ -133,14 +140,14 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
             // to the listing being built — a flattened listing measures it from further up.
             existing.UpdateStatus(status, linkStatus);
             existing.RebaseRelativePath(relativeToPath);
-            Settings.ApplyTo(existing);
+            Settings(key).ApplyTo(existing);
 
             return existing;
         }
 
         DirectoryNode directory = new(_fileSystem, key, status, linkStatus, relativeToPath, this);
 
-        Settings.ApplyTo(directory);
+        Settings(key).ApplyTo(directory);
         _directories[key] = directory;
 
         return directory;
