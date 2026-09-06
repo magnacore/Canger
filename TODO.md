@@ -1,5 +1,26 @@
 # Canger — port status
 
+## The launcher's PATH covers three directories
+
+`canger.sh` prepended `~/.local/bin` when it was missing; `/usr/local/bin` and `/sbin` now go
+through the same guard. A Canger started from a window-manager keybinding inherits a bare `PATH`,
+and none of the commands its bindings run can be found without them.
+
+Gathered into one prefix in the order written rather than each prepending in turn, because
+prepending in a loop reverses the list: a fourth directory appended to that list would otherwise
+have landed in front of the other three. `/sbin` carries no trailing slash — `/sbin/` would not
+match a `/sbin` already on `PATH`, so the directory would be added a second time under a spelling
+of its own, which is the pile-up the guard exists to prevent. On a usrmerge system `/sbin` is a
+symlink to `/usr/sbin`, so where `/usr/sbin` is already present this is a second name for a
+directory that is already reachable.
+
+**Verified against the real launcher** through `CANGER_BINARY`, not against a copy of the snippet:
+a bare `PATH` gains all three in order; a `PATH` already holding them is untouched;
+`~/.local/bin-old` and `/opt/home/manuj/.local/bin` are not mistaken for the real entry; and
+feeding the launcher its own output back leaves `PATH` byte-identical. **Control:** dropping the
+colon padding from the candidate makes both look-alike cases report the directory as present, so it
+is never added.
+
 ## 7-zip cannot be made to report progress, and the attempt was reverted
 
 Asked for after "I tried archiving and unarchiving 7z and did not see any progress bar". I said the
