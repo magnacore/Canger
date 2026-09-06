@@ -89,7 +89,9 @@ Ten things go deliberately beyond ranger:
   entry as it handles it, and a zip's own index says what those names weigh — so both storing and
   unpacking a `.zip` are counted too. Where a tool can say nothing (bzip2 records no size) the
   bytes written are shown with no bar, because a bar drawn from a guessed compression ratio would
-  lie. The bar also names the colour of the text over its fill, not only the fill —
+  lie — which is also where `.7z` and `.rar` land, since 7-zip emits its per-file announcements
+  only once the job has finished and suppresses its own percentage display unless it is talking to
+  a terminal. The bar also names the colour of the text over its fill, not only the fill —
   `progress_bar_color` and `progress_bar_text_color` — because ranger sets the background alone and
   leaves the words to whatever the terminal's palette makes of them.
 - **`rename_stem`.** `cw` clears the whole name, extension and all, so renaming
@@ -264,9 +266,10 @@ skips the build. Do not measure anything with it.
 **`canger.sh`** is the one to use day to day, and the one to put on your `PATH`. It picks the
 fastest build present — published, then Release, then Debug — and says so on stderr when it has
 had to fall back to Debug. It also sets the handful of variables Canger's own commands need
-(`PATH` including `~/.local/bin`, `VISUAL`, `EDITOR`, `TERMINFO`), which matters when Canger is
-started from a window-manager keybinding rather than a shell, where it would otherwise inherit
-almost nothing. `CANGER_BINARY` overrides which build it runs.
+(`PATH` gaining `~/.local/bin`, `/usr/local/bin` and `/sbin` when they are missing, plus `VISUAL`,
+`EDITOR` and `TERMINFO`), which matters when Canger is started from a window-manager keybinding
+rather than a shell, where it would otherwise inherit almost nothing. Each entry is added only if
+it is not already there, so nothing accumulates however often the launcher runs. `CANGER_BINARY` overrides which build it runs.
 
 To have `canger` as a command:
 
