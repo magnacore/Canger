@@ -21,12 +21,33 @@ set -eu
 self=$(readlink -f "$0")
 here=$(dirname "$self")
 
-# Prepended, and only when missing, so an environment that already has it is left alone and the
-# entry cannot pile up on repeated launches.
-case ":${PATH}:" in
-    *":${HOME}/.local/bin:"*) ;;
-    *) PATH="${HOME}/.local/bin:${PATH}" ;;
-esac
+# Prepended, and only when missing, so an environment that already has one is left alone and the
+# entries cannot pile up on repeated launches. The colons on both sides are what make the test
+# exact: PATH separates its entries rather than terminating them, so padding the list and the
+# candidate alike is what stops a `/home/me/.local/bin-old` on PATH from being read as
+# `/home/me/.local/bin` already being there.
+#
+# No trailing slashes, for the same reason: `/sbin/` would not match a `/sbin` already on PATH, and
+# the directory would be added a second time in a spelling of its own.
+#
+# Gathered into one prefix in the order written here rather than each prepending in turn, because
+# prepending in a loop reverses the list — a fourth directory added to the end of this one would
+# otherwise quietly land in front of the other three.
+path_prefix=""
+
+for directory in "${HOME}/.local/bin" /usr/local/bin /sbin
+do
+    case ":${PATH}:" in
+        *":${directory}:"*) ;;
+        *) path_prefix="${path_prefix:+${path_prefix}:}${directory}" ;;
+    esac
+done
+
+# Joined with a colon only when there is something to join, since a PATH with an empty entry in it
+# means the current directory, and that is not something a launcher should add on anyone's behalf.
+if [ -n "$path_prefix" ]; then
+    PATH="${path_prefix}:${PATH}"
+fi
 
 # Where the SDK is. CANGER_DOTNET_ROOT wins; then the path it lives at on the machine Canger was
 # written on, which is outside the default search path; then whatever `dotnet` is on PATH, which
