@@ -2388,12 +2388,19 @@ public sealed class Browser : IFileManager, IDisposable
         ArgumentNullException.ThrowIfNull(tabs);
         ArgumentNullException.ThrowIfNull(hiddenPattern);
 
+        DirectorySettings settings =
+            new(order, showHidden, hiddenPattern, autoupdate);
+
+        // The directories that exist, and then the ones that do not yet. A directory created
+        // later — the next one opened — is born with these rather than with the defaults, because
+        // its first load is when its cursor is placed and a listing ordered by the wrong key puts
+        // the cursor on the wrong row. The cache is reached through the tab rather than passed in,
+        // so there is no choice of cache for a caller to get wrong.
+        current.Directories.Settings = settings;
+
         foreach (DirectoryNode directory in VisibleDirectories(current, tabs, viewmode))
         {
-            directory.ShowHidden = showHidden;
-            directory.HiddenPattern = hiddenPattern;
-            directory.SortOrder = order;
-            directory.AutoupdateCumulativeSize = autoupdate;
+            settings.ApplyTo(directory);
         }
     }
 

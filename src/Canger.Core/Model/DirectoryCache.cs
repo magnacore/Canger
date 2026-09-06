@@ -40,6 +40,33 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
 
     private readonly Dictionary<string, DirectoryNode> _directories = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The listing settings every directory is born with.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A directory used to be created with the defaults and given the real settings a frame later,
+    /// once something walked the visible columns. That is a frame too late: the first load has
+    /// already ordered the entries by name and put the cursor on the first of them, and when the
+    /// real order arrives the cursor follows that entry to wherever it now belongs. Opening a
+    /// folder under <c>sort=mtime</c> therefore landed on the alphabetically first name, halfway
+    /// down the list, instead of on the first row.
+    /// </para>
+    /// <para>
+    /// Applied whenever a directory is handed out, not only when one is made. Stamping at
+    /// creation alone fixed nothing: a subdirectory's node is created while its *parent* is being
+    /// listed, which is long before the user changes the sort, so by the time the folder is opened
+    /// the node already exists and was skipped. Every setter re-derives only on a change, so
+    /// applying them on the way past costs nothing.
+    /// </para>
+    /// <para>
+    /// Ranger has no such gap because a directory binds itself to these settings in its
+    /// constructor (<c>container/directory.py:140-148</c>). This is that, in the one place every
+    /// directory is fetched.
+    /// </para>
+    /// </remarks>
+    public DirectorySettings Settings { get; set; } = DirectorySettings.Default;
+
     /// <summary>How many directories are currently held.</summary>
     public int Count => _directories.Count;
 
@@ -60,6 +87,7 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
 
         if (_directories.TryGetValue(key, out DirectoryNode? existing))
         {
+            Settings.ApplyTo(existing);
             return existing;
         }
 
@@ -67,6 +95,7 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
             _fileSystem, key, _fileSystem.GetStatus(key, followSymbolicLinks: true),
             _fileSystem.GetStatus(key), relativeToPath: null, cache: this);
 
+        Settings.ApplyTo(directory);
         _directories[key] = directory;
         return directory;
     }
@@ -104,11 +133,14 @@ public sealed class DirectoryCache(IFileSystem fileSystem)
             // to the listing being built — a flattened listing measures it from further up.
             existing.UpdateStatus(status, linkStatus);
             existing.RebaseRelativePath(relativeToPath);
+            Settings.ApplyTo(existing);
 
             return existing;
         }
 
         DirectoryNode directory = new(_fileSystem, key, status, linkStatus, relativeToPath, this);
+
+        Settings.ApplyTo(directory);
         _directories[key] = directory;
 
         return directory;
