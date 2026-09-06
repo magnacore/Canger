@@ -1,5 +1,45 @@
 # Canger — port status
 
+## `setlocal` works at the console
+
+It used to answer "setlocal is only available in the configuration file so far", which left a
+directory held at a sort by `setinregex` with no way to be re-sorted at all: a path-scoped setting
+outranks the global one `on` and `om` write, in Canger as in ranger. Ranger has `setlocal` as an
+ordinary command, so this was a gap rather than a decision.
+
+**All four spellings** are now commands — `setlocal`, `setinpath`, `setinregex`, `setintag` — and
+they hand the line to the same `SetDirective` the configuration reader uses, so the quoting rules,
+the `~` expansion, the `option!` toggle and the way a path becomes a pattern cannot drift apart
+between a file and a keystroke.
+
+**Naming no scope means the directory you are in.** Ranger does the same
+(`config/commands.py:547-548`, falling back to `fm.thisdir.path`), and its fallback is
+`None` while a configuration file is being read — so reading a file still refuses rather than
+guessing. `setlocal sort=natural` counts as naming no scope: the operand pattern matches it, but
+`sort=` is not one of the words that introduce one.
+
+**A deliberate divergence.** The implicit scope is escaped and anchored even for the
+regular-expression spelling. Ranger uses the path as a raw expression there, which turns a `+`, a
+`(` or a `#` in a folder name into syntax — and the reporter has a folder called `C#`.
+
+**Controls:** the parser's fallback removed fails 13; the command passing no current directory
+fails 5.
+
+**Verified in the reporter's own folder**, which is held at `sort mtime` with `sort_reverse true`
+by `setinregex`:
+
+```
+on arrival                      he-chose-this-over-3-crore-salary...   (oldest first)
+after `on`                      unchanged, as ranger behaves
+:setlocal sort natural + gg     5-signs-youre-about-to-become...       (natural: 5 before 15)
+:setlocal sort_reverse false    unchanged order, now ascending
+:setlocal sort mtime + gg       decans-market-cycles-wheels...         (the newest file)
+:setlocal nonsense_setting 1    No such setting: 'nonsense_setting'.
+```
+
+The rule survives leaving the directory and coming back, and the cursor follows the file it was on
+across a re-sort, which is what ranger's `refilter` does too.
+
 ## A directory resolves its settings for its own path
 
 The first fix was not enough, and the report said so. It resolved one set of settings from the
