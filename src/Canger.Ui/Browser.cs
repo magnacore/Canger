@@ -323,6 +323,9 @@ public sealed class Browser : IFileManager, IDisposable
     public DirectoryCache Directories { get; }
 
     /// <inheritdoc />
+    public Core.Tasks.IBackgroundActivity? BackgroundActivity { get; set; }
+
+    /// <inheritdoc />
     public IFileSystem FileSystem { get; }
 
     /// <inheritdoc />
@@ -2769,6 +2772,21 @@ public sealed class Browser : IFileManager, IDisposable
             // The queue's line, not the running job's: with more than one thing queued the bar
             // speaks for all of it, and with one it is the job's own line unchanged.
             _statusBar.TaskDescription = Tasks.Summary()?.Describe();
+
+            // Asked only where the queue has nothing to say, and asked *while drawing*, which is
+            // the heartbeat a plugin has no other way of getting. A copy therefore takes the bar
+            // back for as long as it runs, and the quieter thing reappears when it is done.
+            _statusBar.ActivityDescription = null;
+
+            if (_statusBar.TaskDescription is null && BackgroundActivity is { } activity)
+            {
+                _statusBar.ActivityDescription = activity.Describe();
+
+                if (_statusBar.ActivityDescription is not null)
+                {
+                    _statusBar.Progress = activity.Progress;
+                }
+            }
             _statusBar.FreeBytes = FreeSpace();
             _statusBar.Render(_screen);
         }

@@ -46,6 +46,17 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     /// <summary>Whether the message reports a problem.</summary>
     public bool MessageIsError { get; set; }
 
+    /// <summary>
+    /// What something running outside the task queue has to say, or <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="TaskDescription"/> this does not take the bar over. Audio playing in the
+    /// background is worth a glance, not the whole line: the permissions on the left and the free
+    /// space and position on the right stay where they are, and this sits in the gap between them,
+    /// against the right-hand block. A queued task outranks it and replaces everything, as before.
+    /// </remarks>
+    public string? ActivityDescription { get; set; }
+
     /// <summary>Progress of outstanding work, drawn as a tint across the bar.</summary>
     public double? Progress { get; set; }
 
@@ -124,16 +135,58 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         // grow with what they describe — a long commit summary on one, a marked-file total on
         // the other — and without a limit the longer simply overwrote the shorter.
         int right = DrawRight(screen, baseStyle);
-        DrawLeft(screen, baseStyle, Bounds.Right - right);
+
+        // The left block is drawn first and says where it ended, because it describes the file
+        // under the cursor and must not be shortened for anything. What is left between the two
+        // is where a background activity goes, if it fits at all.
+        int left = DrawLeft(screen, baseStyle, Bounds.Right - right);
+
+        DrawActivity(screen, baseStyle, left, Bounds.Right - right);
         DrawProgress(screen);
     }
 
+    /// <summary>
+    /// Draws what a background activity has to say, up against the right-hand block.
+    /// </summary>
+    /// <param name="screen">Where to draw.</param>
+    /// <param name="baseStyle">The bar's own colours.</param>
+    /// <param name="after">The column the left-hand block finished at.</param>
+    /// <param name="limit">One past the last column the right-hand block left free.</param>
+    /// <remarks>
+    /// Right-aligned against the right-hand block rather than centred, so it does not wander as
+    /// its figures change width — a clock counting up would otherwise shuffle a column sideways
+    /// every second. Two spaces of gap, so it reads as its own field rather than as part of its
+    /// neighbour.
+    /// </remarks>
+    private void DrawActivity(ScreenBuffer screen, CellStyle baseStyle, int after, int limit)
+    {
+        if (ActivityDescription is not { Length: > 0 } text)
+        {
+            return;
+        }
+
+        // Measured as it will be drawn, not by character count: a CJK title is twice as wide as
+        // its length suggests, and the left block would be overwritten by the difference.
+        int width = new WideString(text).Width + 2;
+
+        // Left out rather than truncated, and left out rather than written over the file under
+        // the cursor: on a narrow terminal what is under the cursor is worth more than what is
+        // playing.
+        if (limit - width < after + 1)
+        {
+            return;
+        }
+
+        screen.Write(limit - width, Bounds.Y, text, baseStyle);
+    }
+
     /// <summary>Draws permissions, ownership, size and time for the file under the cursor.</summary>
-    private void DrawLeft(ScreenBuffer screen, CellStyle baseStyle, int limit)
+    /// <returns>The column after the last one it wrote, so the rest of the bar can share it.</returns>
+    private int DrawLeft(ScreenBuffer screen, CellStyle baseStyle, int limit)
     {
         if (Tab?.Selected is not { } entry || entry.Status is not { } status)
         {
-            return;
+            return Bounds.X;
         }
 
         // `l` for a link, with the permission bits of whatever it points at. That is what ranger
@@ -197,6 +250,8 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         }
 
         DrawVcs(screen, x, baseStyle, limit);
+
+        return x;
     }
 
     /// <summary>

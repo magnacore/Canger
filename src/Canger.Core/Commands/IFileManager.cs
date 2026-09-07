@@ -48,6 +48,16 @@ public interface IFileManager
     /// <summary>Background work.</summary>
     TaskQueue Tasks { get; }
 
+    /// <summary>
+    /// Something running outside the queue that wants a line in the status bar.
+    /// </summary>
+    /// <remarks>
+    /// One at a time, and a plugin's to set — audio playback is what it was added for. Shown only
+    /// where the queue has nothing to say, so a copy or an archive takes the bar back for as long
+    /// as it runs and the quieter thing reappears afterwards.
+    /// </remarks>
+    Tasks.IBackgroundActivity? BackgroundActivity { get; set; }
+
     /// <summary>The key bindings, so the map commands can change them at run time.</summary>
     KeyMaps KeyMaps { get; }
 

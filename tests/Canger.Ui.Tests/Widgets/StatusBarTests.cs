@@ -496,3 +496,145 @@ public class StatusBarTests
         Assert.NotEqual(Color.Blue, screen[0, 0].Style.Background);
     }
 }
+
+/// <summary>
+/// The line something outside the task queue contributes — audio playing in the background.
+/// </summary>
+/// <remarks>
+/// Three rules, and the whole point of the field is the third: a message outranks everything, a
+/// queued task replaces the bar as it always did, and this shares the bar with what is already
+/// there rather than taking it over.
+/// </remarks>
+public class StatusBarActivityTests
+{
+    private const string Playing = "00:04:21 / 00:06:44 (3%) 1.5x";
+
+    /// <summary>A bar wide enough for all three fields, as a real terminal is.</summary>
+    private const int Roomy = 160;
+
+    private static (StatusBar Bar, ScreenBuffer Screen) Build(int width = Roomy)
+    {
+        InMemoryFileSystem fs = new();
+        fs.AddFileOfSize("/home/a.txt", 1000, DateTimeOffset.UnixEpoch);
+        fs.AddFileOfSize("/home/b.txt", 2000, DateTimeOffset.UnixEpoch);
+
+        DirectoryCache cache = new(fs);
+        Tab tab = new(cache, "/home", 20);
+        tab.Current.Load(TestContext.Current.CancellationToken);
+
+        // FreeBytes is what makes the right-hand block appear, as the tests above rely on.
+        StatusBar bar = new(new DefaultColorScheme()) { Tab = tab, FreeBytes = 1_000_000_000 };
+        bar.Layout(new Rect(0, 0, width, 1));
+
+        return (bar, new ScreenBuffer(width, 1));
+    }
+
+    [Fact]
+    public void ItSharesTheBarWithWhatIsAlreadyThere()
+    {
+        // Not a takeover: the file under the cursor and the free space both stay put. That is the
+        // difference between this and a queued task, and it is what the report asked for — "so it
+        // does not interfere with the rest of the status bar elements".
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ActivityDescription = Playing;
+
+        bar.Render(screen);
+        string line = screen.TextAt(0);
+
+        Assert.Contains(Playing, line, StringComparison.Ordinal);
+        Assert.StartsWith("-rw", line.TrimStart(), StringComparison.Ordinal);
+        Assert.Contains("free", line, StringComparison.Ordinal);
+        Assert.Contains("1/2", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ItSitsBetweenTheTwoBlocksAndNotOnTopOfEither()
+    {
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ActivityDescription = Playing;
+
+        bar.Render(screen);
+        string line = screen.TextAt(0);
+
+        int activity = line.IndexOf(Playing, StringComparison.Ordinal);
+        int permissions = line.IndexOf("-rw", StringComparison.Ordinal);
+        int free = line.IndexOf("free", StringComparison.Ordinal);
+
+        Assert.True(permissions < activity, "the activity overlaps the left-hand block");
+        Assert.True(activity + Playing.Length < free, "the activity overlaps the right-hand block");
+    }
+
+    [Fact]
+    public void ItKeepsItsColumnAsItsFiguresChangeWidth()
+    {
+        // Right-aligned, so a clock counting up does not shuffle the text sideways every second.
+        (StatusBar first, ScreenBuffer one) = Build();
+        first.ActivityDescription = "00:04:21 / 00:06:44 (3%) 1.5x";
+        first.Render(one);
+
+        (StatusBar second, ScreenBuffer two) = Build();
+        second.ActivityDescription = "00:04:22 / 00:06:44 (100%) 1.5x";
+        second.Render(two);
+
+        int endOfFirst = one.TextAt(0).IndexOf("1.5x", StringComparison.Ordinal) + 4;
+        int endOfSecond = two.TextAt(0).IndexOf("1.5x", StringComparison.Ordinal) + 4;
+
+        Assert.Equal(endOfFirst, endOfSecond);
+    }
+
+    [Fact]
+    public void AQueuedTaskTakesTheBarBack()
+    {
+        // Asked for: "if an mka is playing and some other archiving or copy status bar appears, it
+        // will override it till its done". The browser stops asking the activity at all while the
+        // queue has something to say, so this is what the bar does with both set.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.TaskDescription = "copying big.bin:  38%   570 M/1.5 G";
+        bar.ActivityDescription = Playing;
+
+        bar.Render(screen);
+        string line = screen.TextAt(0);
+
+        Assert.Contains("copying big.bin", line, StringComparison.Ordinal);
+        Assert.DoesNotContain(Playing, line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMessageStillOutranksIt()
+    {
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.Message = "rename: already exists";
+        bar.ActivityDescription = Playing;
+
+        bar.Render(screen);
+        string line = screen.TextAt(0);
+
+        Assert.Contains("rename:", line, StringComparison.Ordinal);
+        Assert.DoesNotContain(Playing, line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ItIsLeftOutRatherThanTruncatedOnANarrowTerminal()
+    {
+        // A clipped clock is worse than none, and what is under the cursor matters more.
+        (StatusBar bar, ScreenBuffer screen) = Build(width: 48);
+        bar.ActivityDescription = Playing;
+
+        bar.Render(screen);
+        string line = screen.TextAt(0);
+
+        Assert.DoesNotContain("00:04:21", line, StringComparison.Ordinal);
+        Assert.StartsWith("-rw", line.TrimStart(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NothingIsDrawnWhenThereIsNothingToSay()
+    {
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ActivityDescription = null;
+
+        bar.Render(screen);
+
+        Assert.Contains("free", screen.TextAt(0), StringComparison.Ordinal);
+    }
+}

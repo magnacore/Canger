@@ -1,5 +1,76 @@
 # Canger — port status
 
+## Background audio (`feature/mka-playback`, unmerged)
+
+Asked for: Enter on an `.mka` plays it without blocking the interface, `pap` pauses and resumes,
+`pas` stops, mpv's own progress line appears in the gap in the status bar, and a copy or an archive
+takes the bar back while it runs. **On a branch for testing; not merged.**
+
+### What mpv actually does, measured
+
+Every one of these decided the design, and three of them are traps.
+
+- `--term-status-msg` **is** written to standard output through a pipe, about eight times a second,
+  with `${time-pos}`, `${duration}`, `${percent-pos}` and `${speed}` already formatted. So mpv does
+  the formatting and there is no arithmetic here to disagree with what the user sees.
+- **`--no-terminal` silences it**, and so does every `--msg-level=all=…` value tried — no, error,
+  warn — because the status message rides that log level. Both are the obvious way to quieten a
+  background player, and either would have shipped a plugin that plays perfectly and shows nothing.
+  `--input-terminal=no` keeps the line and still stops mpv reading the keyboard: sixteen readings
+  in two seconds against zero.
+- **A unix socket path is about 108 bytes**, and mpv reports only "Could not create IPC socket"
+  past that. The scratch path used for the first probe was longer, which looked exactly like mpv
+  having no IPC at all. The socket lives in `$XDG_RUNTIME_DIR`.
+- **A paused mpv writes nothing further**, so the last reading to arrive is the one from just
+  before the pause. Taking the `(paused)` label from mpv's own `${?pause==yes:…}` therefore showed
+  it only once playback *resumed*, by which time it was wrong. This side of the socket knows the
+  answer as the command is sent, so it keeps the flag itself and asks for a redraw.
+- The newest reading has **no terminator** until the one after it arrives. Waiting for one showed
+  the reading before last, which froze the clock the moment playback paused.
+
+### Core additions
+
+- `IBackgroundActivity`, and `IFileManager.BackgroundActivity`. The task queue is for work that
+  finishes; playback has no end to wait for and must not hold a place other work queues behind.
+  `Describe()` is called while the bar is drawn, which is the only heartbeat a plugin gets.
+- The status bar draws it **between** the two existing blocks rather than over them: the left block
+  is drawn first and reports where it stopped, the right block is measured first as before, and the
+  activity is right-aligned in what is left — or left out entirely when the gap is too small, since
+  a clipped clock is worth less than what is under the cursor. A queued task still replaces the
+  whole line, and a message still outranks everything.
+- `ScriptCompiler` now references **the whole framework** rather than only what Canger has loaded.
+  A plugin asking for `System.Net.Sockets` was told the namespace does not exist merely because
+  Canger had never opened a socket — a plugin's reach depended on what the program happened to have
+  done first. Cold compile went from 0.93 s to 0.98 s, and nothing when cached.
+
+### Verification
+
+Controls, each with the mutation confirmed to compile: the silencing flags reintroduced fails 2;
+Enter no longer falling through for non-audio fails 2; the newest reading skipped fails 1; the
+activity overlapping the left block fails 1; drawing it left-aligned fails 1; the framework
+references removed fails 2.
+
+pty, on the real binary, with ten minutes of silence so the machine stayed quiet:
+
+```
+playing            00:00:05 / 00:10:00 (1%) 1.5x
+after pap          (paused) 00:00:08 / 00:10:00 (1%) 1.5x
++3s paused         (paused) 00:00:08 / 00:10:00 (1%) 1.5x     unchanged
+after pap again    00:00:11 / 00:10:00 (2%) 1.5x
+after pas          gone
+```
+
+and the precedence, with an archive started while playing:
+
+```
+archive running    Compressing: out.tar.lz:  51%  24.6 M/48 M
+after it ends      00:00:39 / 00:10:00 (7%)                   playback never stopped
+```
+
+**Not merged, and one thing to decide before it is:** `map <CR> mka_open` and the `pap`/`pas`
+bindings are in `~/.config/canger/cc.conf` but not in the shipped `config/cc.conf`, and the plugin
+covers nine audio extensions rather than `.mka` alone. Both are easy to narrow.
+
 ## `setlocal` works at the console
 
 It used to answer "setlocal is only available in the configuration file so far", which left a
