@@ -1,5 +1,17 @@
 # Canger — port status
 
+## Starting and stopping playback say nothing
+
+A message outranks the activity line, so "playing OSHO.mka" sat over the very clock it was
+announcing until something else displaced it, and "stopped OSHO.mka" covered the bar it had just
+vacated. Both are gone: the clock appearing *is* the announcement, and its leaving is the other one.
+
+The messages that remain are the ones where nothing visible happens — mpv failing to start, a pause
+or stop with nothing playing, and a control socket that does not answer.
+
+**Controls:** either announcement restored fails a test. pty: the clock appears about two seconds
+after opening, which is mpv's own start-up, and stopping returns the ordinary status bar at once.
+
 ## The status line is mpv's own format, read from mpv's own configuration
 
 Asked for: "can it not just read the mpv setting itself rather than duplicating it in the plugin?"

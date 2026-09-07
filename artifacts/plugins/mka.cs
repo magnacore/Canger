@@ -126,9 +126,6 @@ internal sealed class Playback : IBackgroundActivity
     /// <param name="fileManager">Used to start mpv and to say what happened.</param>
     internal Playback(IFileManager fileManager) => _fileManager = fileManager;
 
-    /// <summary>What is playing, for a message.</summary>
-    internal string? Basename { get; private set; }
-
     /// <summary>Whether something is playing or paused.</summary>
     internal bool IsActive => _process is { HasExited: false };
 
@@ -211,13 +208,15 @@ internal sealed class Playback : IBackgroundActivity
             return;
         }
 
-        Basename = Path.GetFileName(path);
         _text = null;
         _progress = null;
         _paused = false;
 
+        // Said with the status line rather than with a message. A message outranks the activity
+        // it is announcing, so "playing OSHO.mka" sat over the very clock it was telling the user
+        // about until something else displaced it. Starting to play is visible the moment mpv
+        // reports, which is well under a second; failing to start still says so.
         _fileManager.BackgroundActivity = this;
-        _fileManager.Notify($"playing {Basename}");
     }
 
     /// <summary>Pauses if playing, resumes if paused.</summary>
@@ -376,7 +375,6 @@ internal sealed class Playback : IBackgroundActivity
         _text = null;
         _progress = null;
         _paused = false;
-        Basename = null;
 
         if (ReferenceEquals(_fileManager.BackgroundActivity, this))
         {
@@ -567,9 +565,9 @@ public sealed class MkaStopCommand : CangerCommand
             return;
         }
 
-        string? name = playback.Basename;
+        // Nothing to say: the clock leaving the status bar is the message, and a message would
+        // only cover the bar it just vacated.
         playback.Stop();
-        FileManager.Notify($"stopped {name}");
     }
 }
 

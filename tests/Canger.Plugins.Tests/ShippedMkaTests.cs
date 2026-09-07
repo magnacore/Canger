@@ -315,6 +315,49 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
+    public void StartingSaysNothing()
+    {
+        // A message outranks the activity line it would be announcing, so "playing OSHO.mka" sat
+        // over the very clock it was telling the user about. Starting successfully is silent; the
+        // clock appearing is the announcement.
+        FakeFileManager manager = Build();
+
+        manager.Execute("mka_open");
+
+        Assert.Empty(manager.Messages);
+    }
+
+    [Fact]
+    public void StoppingSomethingThatWasPlayingSaysNothingEither()
+    {
+        FakeFileManager manager = Build();
+        FakeFileManager.RecordingProcessRunner runner =
+            (FakeFileManager.RecordingProcessRunner)manager.Runner;
+
+        runner.BackgroundResults["mpv"] = new FakeFileManager.FakeBackgroundProcess
+        {
+            StepsBeforeExit = 10_000,
+        };
+
+        manager.Execute("mka_open");
+        manager.Execute("mka_stop");
+
+        Assert.Empty(manager.Messages);
+    }
+
+    [Fact]
+    public void FailingToStartStillSaysSo()
+    {
+        // The half that must keep talking: silence is only right when something visible happens.
+        FakeFileManager manager = Build();
+        ((FakeFileManager.RecordingProcessRunner)manager.Runner).BackgroundStartFails = true;
+
+        manager.Execute("mka_open");
+
+        Assert.Contains(manager.Messages, m => m.IsError);
+    }
+
+    [Fact]
     public void PausingWithNothingPlayingSaysSo()
     {
         FakeFileManager manager = Build();
