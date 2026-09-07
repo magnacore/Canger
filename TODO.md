@@ -1,5 +1,39 @@
 # Canger — port status
 
+## Background audio: every key that opens a file has to be rebound, not just Enter
+
+Reported as "it still plays in the terminal", twice, and I twice explained it away as a session
+that predated the feature. The second time the session was demonstrably newer, and the running
+process settled it in one line:
+
+```
+mpv -- /home/manuj/.../OSHO.mka
+```
+
+That is rifle's command line (`mpv -- "$@"`), not the plugin's, which carries `--no-video`,
+`--input-terminal=no`, `--input-ipc-server=` and `--term-status-msg=`. The reporter also said space
+paused it, which is the same evidence from the other end: the plugin's mpv is started with
+`--input-terminal=no` and ignores the keyboard entirely.
+
+So `mka_open` never ran. **The configuration binds two keys to opening a file** — `<CR>` at line 519
+and `<RIGHT>` at line 511 — and only the first had been rebound. The reporter navigates with the
+arrow keys.
+
+Both now go through `mka_open`, and the arrow key was verified the same way as Enter: the listing
+stays up, the bar reads `playing OSHO.mka`, and `pap` gives
+`(paused) 00:00:04 / 00:07:36 (1%)`.
+
+**What to do about it properly.** Rebinding openers one at a time is a rule nobody can keep — a
+mouse binding or a fresh `map l move right=1` would silently bypass the plugin again. The right
+answer is a hook on the *opening* of a file rather than on the keys that lead to it, which Canger
+does not have; `move right` and rifle would have to offer one. Worth doing before this merges, or
+worth stating plainly in the plugin's own comment.
+
+**The lesson, and it is the third time this shape has appeared:** an explanation that fits the
+evidence is not the same as evidence. "The session predates the feature" fitted twice and was
+wrong twice; `ps` gave the answer in one command. Look at what is running before explaining why it
+cannot be happening.
+
 ## Background audio (`feature/mka-playback`, unmerged)
 
 Asked for: Enter on an `.mka` plays it without blocking the interface, `pap` pauses and resumes,
