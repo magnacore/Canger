@@ -111,6 +111,9 @@ public sealed class FakeFileManager : IFileManager
     public Canger.Core.Tasks.IBackgroundActivity? BackgroundActivity { get; set; }
 
     /// <inheritdoc />
+    public IList<Func<IReadOnlyList<string>, bool>> FileOpeners { get; } = [];
+
+    /// <inheritdoc />
     public DirectoryCache Directories { get; }
 
     /// <inheritdoc />

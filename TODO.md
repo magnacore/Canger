@@ -1,5 +1,36 @@
 # Canger — port status
 
+## A plugin claims a file type instead of taking a key binding
+
+Reported: "I removed the mka plugin to test whether Canger works without it, and now I cannot open
+any folder — it says unknown command: mka_open." Exactly right, and the fault was the design.
+Pointing `<CR>` and `<RIGHT>` at a plugin's command meant the configuration named something that
+only existed while the plugin did, so removing the plugin took navigation with it — not just files,
+but folders too, because the same key does both.
+
+`IFileManager.FileOpeners` is the fix: a list of things offered a file before the ordinary rules
+are asked, each answering whether it took it. The plugin adds one in `OnInit`; nothing is rebound,
+`<CR>` and `<RIGHT>` are back to `move right=1`, and removing the file restores the ordinary
+behaviour exactly. Consulted only for a plain open, because `:open_with mpv` names its program on
+purpose.
+
+**Verified by removing the plugin and putting it back**, which is the property that was broken:
+
+```
+plugin installed:  folder opens=yes  tui intact=yes  clock in bar=yes
+plugin removed:    folder opens=yes  tui intact=no   (rifle, as before)
+```
+
+**Controls:** openers never consulted fails 15; consulted even for a named program fails 1; a claim
+no longer ending the matter fails 2.
+
+**The first attempt at verifying this was unsound**, and is worth recording. The check was "is
+there a clock", which matched *mpv's own status line printed to the terminal* just as happily as
+Canger's status bar — because the format is the user's and identical in both. Removing the plugin
+looked like success. What discriminates is whether the listing frame is still on screen: with the
+plugin, Canger keeps the terminal; without it, mpv takes it. Prove the state, not a symptom that
+two states share.
+
 ## The loop has to wake for a background activity, as it does for a task
 
 Reported: audio plays at once but the status bar takes a few seconds to show it. Measured, and it

@@ -326,6 +326,9 @@ public sealed class Browser : IFileManager, IDisposable
     public Core.Tasks.IBackgroundActivity? BackgroundActivity { get; set; }
 
     /// <inheritdoc />
+    public IList<Func<IReadOnlyList<string>, bool>> FileOpeners { get; } = [];
+
+    /// <inheritdoc />
     public IFileSystem FileSystem { get; }
 
     /// <inheritdoc />

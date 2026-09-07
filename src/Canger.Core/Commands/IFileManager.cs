@@ -58,6 +58,30 @@ public interface IFileManager
     /// </remarks>
     Tasks.IBackgroundActivity? BackgroundActivity { get; set; }
 
+    /// <summary>
+    /// Things offered a file before the ordinary rules are asked.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A plugin adds one to claim a kind of file for itself — audio, to play in the background
+    /// rather than hand to a program that would take the terminal. Each is given the paths and
+    /// answers whether it took them; the first that does ends the matter, and where none does,
+    /// the file opens exactly as it always did.
+    /// </para>
+    /// <para>
+    /// Here rather than in a key binding, which was the first attempt and was worse than the
+    /// problem: pointing <c>&lt;CR&gt;</c> and <c>&lt;RIGHT&gt;</c> at a plugin's command meant
+    /// that removing the plugin left the configuration naming a command that no longer existed,
+    /// and neither key would open anything at all — not a file, not a folder. A plugin has to be
+    /// removable without taking navigation with it.
+    /// </para>
+    /// <para>
+    /// Consulted only for a plain open. <c>:open_with mpv</c> names its program deliberately, and
+    /// something quietly taking the file instead would be the opposite of what was asked.
+    /// </para>
+    /// </remarks>
+    IList<Func<IReadOnlyList<string>, bool>> FileOpeners { get; }
+
     /// <summary>The key bindings, so the map commands can change them at run time.</summary>
     KeyMaps KeyMaps { get; }
 

@@ -83,6 +83,9 @@ public sealed class ShippedMkaTests : IDisposable
                     "the shipped mka.cs did not compile: " +
                     string.Join("; ", load.Diagnostics ?? []));
 
+        // What Canger does at start-up, and what registers the plugin's claim on audio files.
+        host.NotifyInit(manager);
+
         IReadOnlyList<Canger.Core.Model.FsNode> entries = manager.CurrentTab.Current.Entries;
         int index = entries.ToList().FindIndex(e => e.Basename == selected);
         Assert.True(index >= 0, $"{selected} is not in the listing");
@@ -99,7 +102,7 @@ public sealed class ShippedMkaTests : IDisposable
     {
         FakeFileManager manager = Build();
 
-        Assert.True(manager.Execute("mka_open"));
+        Assert.True(manager.Execute("open"));
 
         string command = CommandFor(manager);
 
@@ -113,7 +116,7 @@ public sealed class ShippedMkaTests : IDisposable
     public void ItAsksMpvForTheStatusLineItThenReads()
     {
         FakeFileManager manager = Build();
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         string command = CommandFor(manager);
 
@@ -144,7 +147,7 @@ public sealed class ShippedMkaTests : IDisposable
         try
         {
             FakeFileManager manager = Build();
-            manager.Execute("mka_open");
+            manager.Execute("open");
 
             Assert.Contains(Distinctive, CommandFor(manager), StringComparison.Ordinal);
         }
@@ -167,7 +170,7 @@ public sealed class ShippedMkaTests : IDisposable
         try
         {
             FakeFileManager manager = Build();
-            manager.Execute("mka_open");
+            manager.Execute("open");
 
             Assert.Contains("${time-pos}", CommandFor(manager), StringComparison.Ordinal);
         }
@@ -193,7 +196,7 @@ public sealed class ShippedMkaTests : IDisposable
             StandardOutput = "canger-mka:2|00:04:56 / 00:07:36 (2%) 1.5x (Paused)\r",
         };
 
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         IBackgroundActivity activity = manager.BackgroundActivity!;
 
@@ -263,7 +266,7 @@ public sealed class ShippedMkaTests : IDisposable
         // because the status message rides that log level. Either would leave playback working
         // and the bar empty.
         FakeFileManager manager = Build();
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         string command = CommandFor(manager);
 
@@ -278,7 +281,7 @@ public sealed class ShippedMkaTests : IDisposable
         // socket" past that, leaving no way to pause. The runtime directory is short; a
         // temporary directory under a session path is not.
         FakeFileManager manager = Build();
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         string command = CommandFor(manager);
         int at = command.IndexOf("--input-ipc-server=", StringComparison.Ordinal);
@@ -298,7 +301,7 @@ public sealed class ShippedMkaTests : IDisposable
         // directory opens, exactly as `move right=1` always did.
         FakeFileManager manager = Build(selected: "notes.txt");
 
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         Assert.DoesNotContain(((FakeFileManager.RecordingProcessRunner)manager.Runner).Requests,
                               r => r.Command.Contains("mpv", StringComparison.Ordinal));
@@ -309,7 +312,9 @@ public sealed class ShippedMkaTests : IDisposable
     {
         FakeFileManager manager = Build(selected: "folder");
 
-        manager.Execute("mka_open");
+        // What the key actually runs, rather than a stand-in for it: a directory is entered
+        // before anything is opened at all, and must stay that way with the plugin loaded.
+        manager.Execute("move right=1");
 
         Assert.Equal("/home/audio/folder", manager.CurrentTab.Path);
     }
@@ -322,7 +327,7 @@ public sealed class ShippedMkaTests : IDisposable
         // clock appearing is the announcement.
         FakeFileManager manager = Build();
 
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         Assert.Empty(manager.Messages);
     }
@@ -339,7 +344,7 @@ public sealed class ShippedMkaTests : IDisposable
             StepsBeforeExit = 10_000,
         };
 
-        manager.Execute("mka_open");
+        manager.Execute("open");
         manager.Execute("mka_stop");
 
         Assert.Empty(manager.Messages);
@@ -352,7 +357,7 @@ public sealed class ShippedMkaTests : IDisposable
         FakeFileManager manager = Build();
         ((FakeFileManager.RecordingProcessRunner)manager.Runner).BackgroundStartFails = true;
 
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         Assert.Contains(manager.Messages, m => m.IsError);
     }
@@ -384,7 +389,7 @@ public sealed class ShippedMkaTests : IDisposable
 
         Assert.Null(manager.BackgroundActivity);
 
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         Assert.NotNull(manager.BackgroundActivity);
     }
@@ -408,7 +413,7 @@ public sealed class ShippedMkaTests : IDisposable
                 "canger-mka:33.4|00:03:21 / 00:10",
         };
 
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         IBackgroundActivity activity = Assert.IsAssignableFrom<IBackgroundActivity>(
             manager.BackgroundActivity);
@@ -431,7 +436,7 @@ public sealed class ShippedMkaTests : IDisposable
             StandardOutput = "canger-mka:33.3|00:03:20 / 00:1",
         };
 
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         Assert.Null(manager.BackgroundActivity!.Describe());
     }
@@ -450,7 +455,7 @@ public sealed class ShippedMkaTests : IDisposable
         };
 
         runner.BackgroundResults["mpv"] = mpv;
-        manager.Execute("mka_open");
+        manager.Execute("open");
 
         IBackgroundActivity activity = manager.BackgroundActivity!;
         Assert.NotNull(activity.Describe());

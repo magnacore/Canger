@@ -571,27 +571,37 @@ public sealed class MkaStopCommand : CangerCommand
     }
 }
 
-/// <summary>
-/// Enter: plays an audio file, and does whatever Enter did for everything else.
-/// </summary>
+/// <summary>Claims audio files, so Enter and the right arrow play them.</summary>
 /// <remarks>
-/// Bound over <c>&lt;CR&gt;</c> in place of <c>move right=1</c>. Anything that is not one of the
-/// audio formats is handed straight back to <c>move right=1</c>, so a directory still opens and a
-/// document still goes to rifle — the binding adds a case rather than replacing the key.
+/// <para>
+/// Registered with <see cref="IFileManager.FileOpeners"/> rather than bound over
+/// <c>&lt;CR&gt;</c> and <c>&lt;RIGHT&gt;</c>, which is how this worked first and was a trap: the
+/// configuration then named a command that only existed while the plugin did, so taking the
+/// plugin away left neither key able to open anything — not a file, and not a folder either.
+/// Nothing needs rebinding now, and removing this file restores the ordinary behaviour exactly.
+/// </para>
+/// <para>
+/// One file at a time, and only a plain open. A selection of several is left to the ordinary
+/// rules, and <c>:open_with</c> names its program on purpose.
+/// </para>
 /// </remarks>
-[Command("mka_open", Summary = "Play an audio file, or open anything else as usual.")]
-public sealed class MkaOpenCommand : CangerCommand
+public sealed class MkaPlugin : ICangerPlugin
 {
     /// <inheritdoc />
-    public override void Execute()
+    public void OnInit(IFileManager fileManager)
     {
-        if (FileManager.CurrentFile is { IsDirectory: false } file &&
-            Playable.Matches(file.Basename))
-        {
-            Current.For(FileManager).Start(file.Path);
-            return;
-        }
+        ArgumentNullException.ThrowIfNull(fileManager);
 
-        FileManager.Execute("move right=1");
+        fileManager.FileOpeners.Add(paths =>
+        {
+            if (paths.Count != 1 || !Playable.Matches(paths[0]))
+            {
+                return false;
+            }
+
+            Current.For(fileManager).Start(paths[0]);
+
+            return true;
+        });
     }
 }
