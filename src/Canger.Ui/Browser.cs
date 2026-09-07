@@ -1423,11 +1423,9 @@ public sealed class Browser : IFileManager, IDisposable
             // While a job is only waiting on an outside program there is nothing to come back
             // for, so the wait happens here — where a keystroke ends it immediately — instead of
             // inside the job, where it would hold up everything else.
-            int timeout = _decoder.HasPendingInput
-                ? EscapeDelayMilliseconds
-                : Volatile.Read(ref _needsRedraw) ? 0
-                : Tasks.HasWork ? (int)Tasks.IdleDelay.TotalMilliseconds
-                : Settings.IdleDelay;
+            int timeout = IdleTimeout(
+                _decoder.HasPendingInput, Volatile.Read(ref _needsRedraw), Tasks.HasWork,
+                Tasks.IdleDelay, BackgroundActivity is not null, Settings.IdleDelay);
 
             // A message showing has to be taken down on time, and the loop is otherwise asleep
             // for the whole idle delay. Without this it would linger for up to `idle_delay`
@@ -2393,6 +2391,57 @@ public sealed class Browser : IFileManager, IDisposable
             resolve(directory.Path).ApplyTo(directory);
         }
     }
+
+    /// <summary>How long the loop may sleep before it looks at the screen again.</summary>
+    /// <param name="pendingInput">Whether an escape sequence may still be in flight.</param>
+    /// <param name="needsRedraw">Whether something answered from another thread.</param>
+    /// <param name="hasWork">Whether the queue has a job to advance.</param>
+    /// <param name="taskDelay">How long that job is content to wait.</param>
+    /// <param name="hasActivity">Whether something outside the queue is reporting.</param>
+    /// <param name="idleDelay">The <c>idle_delay</c> setting, in milliseconds.</param>
+    /// <returns>The poll timeout, in milliseconds.</returns>
+    /// <remarks>
+    /// <para>
+    /// A background activity has to shorten the wait as a queued job does, and for the same
+    /// reason: something on screen is changing without anyone touching the keyboard. It did not,
+    /// and the effect was measured — audio started at once while its clock took 2.11 s to appear
+    /// and then moved in 2.0 s steps, because mpv was reporting eight times a second into a loop
+    /// that looked twice a minute.
+    /// </para>
+    /// <para>
+    /// Half a second rather than the queue's own delay, which is however long the running job is
+    /// content to wait and is measured in milliseconds. A clock counting in seconds needs no more
+    /// than this, and a file listened to for an hour should not hold the processor awake for the
+    /// sake of a figure that changes once a second.
+    /// </para>
+    /// <para>
+    /// Static, and given everything it needs, so the rule can be checked without standing up a
+    /// terminal — as <see cref="VisibleDirectories"/> and <see cref="ApplySettings"/> are.
+    /// </para>
+    /// </remarks>
+    internal static int IdleTimeout(bool pendingInput, bool needsRedraw, bool hasWork,
+                                    TimeSpan taskDelay, bool hasActivity, int idleDelay)
+    {
+        if (pendingInput)
+        {
+            return EscapeDelayMilliseconds;
+        }
+
+        if (needsRedraw)
+        {
+            return 0;
+        }
+
+        if (hasWork)
+        {
+            return (int)taskDelay.TotalMilliseconds;
+        }
+
+        return hasActivity ? Math.Min(ActivityDelayMilliseconds, idleDelay) : idleDelay;
+    }
+
+    /// <summary>How often the screen is looked at while something outside the queue reports.</summary>
+    private const int ActivityDelayMilliseconds = 500;
 
     /// <summary>Draws the info lines over the bottom of the listing.</summary>
     /// <param name="lines">What to show, one per row.</param>

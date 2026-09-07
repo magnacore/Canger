@@ -1,5 +1,29 @@
 # Canger — port status
 
+## The loop has to wake for a background activity, as it does for a task
+
+Reported: audio plays at once but the status bar takes a few seconds to show it. Measured, and it
+was not mpv — its first reading is on the pipe in **0.12 s**. Inside Canger the clock appeared at
+**2.11 s** and then moved in **2.0 s** steps, because the main loop sleeps for `idle_delay`
+(2000 ms, ranger's default) and only a *queued job* shortened that. Playback is not a queued job,
+by design, so nothing did. mpv was reporting eight times a second into a loop that looked twice a
+minute.
+
+The wait is now shortened while any `IBackgroundActivity` is present — half a second, not the
+queue's own delay, because a clock counting in seconds needs no more and a file listened to for an
+hour should not hold the processor awake. An `idle_delay` set shorter than that is respected.
+
+The rule moved out of the loop into `Browser.IdleTimeout`, static and given everything it needs, so
+it can be checked without standing up a terminal — the same treatment `VisibleDirectories` and
+`ApplySettings` have.
+
+**Control:** the activity no longer shortening the wait fails 1. **Measured after:** the clock
+appears at **0.56 s** and follows each tick within half a second.
+
+**The shape worth remembering:** a new kind of thing was added to the interface and every place
+that already knew about *tasks* had to learn about it too. The status bar was the obvious one and
+was done; the main loop's timeout was not, and it is what made the feature feel broken.
+
 ## Starting and stopping playback say nothing
 
 A message outranks the activity line, so "playing OSHO.mka" sat over the very clock it was
