@@ -77,16 +77,37 @@ internal sealed class Playback : IBackgroundActivity
     /// here to disagree with what the user sees when they run mpv themselves. <c>${=percent-pos}</c>
     /// is the same figure unrounded, which is what the bar is tinted from.
     /// </remarks>
-    private const string StatusFormat =
-        Marker + "${=percent-pos}|${time-pos} / ${duration} (${percent-pos}%) ${speed}x";
+    private const string DefaultStatusFormat =
+        "${time-pos} / ${duration} (${percent-pos}%) ${speed}x";
+
+    /// <summary>
+    /// What mpv is asked to print: the marker, a machine-readable percentage, then the line as a
+    /// person reads it.
+    /// </summary>
+    /// <param name="display">The format for the readable half.</param>
+    /// <returns>The whole format to hand to <c>--term-status-msg</c>.</returns>
+    /// <remarks>
+    /// Only the first two fields are Canger's. Everything after the bar is whatever format is in
+    /// force — the user's own <c>term-status-msg</c> where they have set one — so what the status
+    /// bar shows is what mpv would have shown them, down to the field order and the wording.
+    /// <c>${=percent-pos}</c> is the same figure unrounded, and is what the bar is tinted from;
+    /// it has to be asked for separately because a format written for a person need not contain a
+    /// percentage at all.
+    /// </remarks>
+    private static string StatusFormat(string display) =>
+        Marker + "${=percent-pos}|" + display;
 
     /// <summary>What is shown in front of the clock while playback is held.</summary>
     /// <remarks>
-    /// Kept here rather than taken from mpv's own <c>${?pause==yes:…}</c>, which reads better on
-    /// paper and is useless in practice: a paused mpv writes nothing further, so the last line to
-    /// arrive is the one from just *before* the pause and the word only turned up when playback
-    /// resumed — by which time it was wrong. This side of the socket knows the answer the instant
-    /// the command is sent.
+    /// Added by this side rather than taken from mpv's own <c>${?pause==yes:…}</c>, which reads
+    /// better on paper and is useless in practice: a paused mpv writes nothing further, so the
+    /// last line to arrive is the one from just *before* the pause, and the word only turned up
+    /// once playback resumed — by which time it was wrong. This side of the socket knows the
+    /// answer the instant the command is sent.
+    ///
+    /// Left off when the line already says it, so a format carrying its own
+    /// <c>${?pause==yes:(Paused)}</c> does not end up saying it twice on the occasions mpv does
+    /// manage to report it.
     /// </remarks>
     private const string PausedPrefix = "(paused) ";
 
@@ -97,6 +118,9 @@ internal sealed class Playback : IBackgroundActivity
     private string? _text;
     private double? _progress;
     private bool _paused;
+
+    /// <summary>The format used where mpv's configuration names none.</summary>
+    internal static string PlainStatusFormat => DefaultStatusFormat;
 
     /// <summary>Prepares the slot.</summary>
     /// <param name="fileManager">Used to start mpv and to say what happened.</param>
@@ -129,7 +153,14 @@ internal sealed class Playback : IBackgroundActivity
             return null;
         }
 
-        return _text is null ? null : _paused ? PausedPrefix + _text : _text;
+        if (_text is null)
+        {
+            return null;
+        }
+
+        return _paused && !_text.Contains("paused", StringComparison.OrdinalIgnoreCase)
+            ? PausedPrefix + _text
+            : _text;
     }
 
     /// <summary>Starts playing a file, replacing whatever was playing.</summary>
@@ -169,7 +200,8 @@ internal sealed class Playback : IBackgroundActivity
         string command =
             $"mpv --no-video --idle=no --input-terminal=no " +
             $"--input-ipc-server={Quote(_socket)} " +
-            $"--term-status-msg={Quote(StatusFormat)} {Quote(path)}";
+            $"--term-status-msg={Quote(StatusFormat(MpvConfiguration.StatusFormat()))} " +
+            $"{Quote(path)}";
 
         _process = _fileManager.Runner.StartInBackground(new ProcessRequest(command));
 
@@ -253,7 +285,18 @@ internal sealed class Playback : IBackgroundActivity
     /// </remarks>
     private void Read(string output)
     {
-        int at = output.LastIndexOf(Marker, StringComparison.Ordinal);
+        // Searched back from the last separator rather than from the end, so that a part-line
+        // still being written does not hide the finished one in front of it. Looking for the last
+        // marker outright found the unfinished one and then gave up for want of a terminator,
+        // which left the clock on whatever it had shown before.
+        int terminator = output.LastIndexOfAny(['\r', '\n']);
+
+        if (terminator < 0)
+        {
+            return;
+        }
+
+        int at = output.LastIndexOf(Marker, terminator, StringComparison.Ordinal);
 
         if (at < 0)
         {
@@ -262,13 +305,25 @@ internal sealed class Playback : IBackgroundActivity
 
         int start = at + Marker.Length;
         int end = output.IndexOfAny(['\r', '\n'], start);
-        string line = (end < 0 ? output[start..] : output[start..end]).TrimEnd();
 
+        // Terminated, or not used. Anything after the final separator is a line still being
+        // written, and showing half of one is worse than showing the previous one for another
+        // frame. There is no need to reach for it: while playback is held, the reading from just
+        // before the pause is exactly what should be on screen, and the word "paused" in front of
+        // it comes from this side rather than from mpv.
+        //
+        // Not judged by what the line ends with, either. That was tried — the format used to end
+        // in ${speed}x, so a line ending in "x" was taken to be whole — and it stopped working
+        // the moment the format became the user's own, whose line ends in ${?pause==yes:(Paused)}.
+        if (end < 0)
+        {
+            return;
+        }
+
+        string line = output[start..end].TrimEnd();
         int bar = line.IndexOf('|', StringComparison.Ordinal);
 
-        // Half-written: the percentage and the speed bracket the whole line, so a line with both
-        // is a line that arrived entire.
-        if (bar < 0 || !line.EndsWith('x'))
+        if (bar < 0)
         {
             return;
         }
@@ -345,6 +400,114 @@ internal sealed class Playback : IBackgroundActivity
 
     /// <summary>Wraps an argument for the shell that runs the command line.</summary>
     private static string Quote(string text) => "'" + text.Replace("'", @"'\''") + "'";
+}
+
+/// <summary>What mpv's own configuration says about how a status line should read.</summary>
+/// <remarks>
+/// Read rather than imposed: the point of showing mpv's status line in the status bar is that it
+/// is the line the user already knows, and they have said how it should look. A format of Canger's
+/// own would be a second thing to configure and a second thing to disagree.
+/// </remarks>
+internal static class MpvConfiguration
+{
+    /// <summary>The <c>term-status-msg</c> in force, or a plain default.</summary>
+    /// <returns>An mpv format string, never empty.</returns>
+    /// <remarks>
+    /// mpv looks in <c>$MPV_HOME</c>, then <c>$XDG_CONFIG_HOME/mpv</c>, then <c>~/.config/mpv</c>,
+    /// and this looks in the same places and stops at the first file that has the option. Includes
+    /// are not followed: a setting reached that way is rare, and reading the wrong one would be
+    /// worse than falling back to something plain.
+    /// </remarks>
+    internal static string StatusFormat()
+    {
+        foreach (string directory in Directories())
+        {
+            string file = Path.Join(directory, "mpv.conf");
+
+            try
+            {
+                if (!File.Exists(file))
+                {
+                    continue;
+                }
+
+                foreach (string line in File.ReadLines(file))
+                {
+                    if (Option(line) is { Length: > 0 } format)
+                    {
+                        return format;
+                    }
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Unreadable configuration is not a reason to refuse to play anything.
+            }
+        }
+
+        return Playback.PlainStatusFormat;
+    }
+
+    /// <summary>Where mpv looks for its configuration.</summary>
+    /// <returns>The directories to read, in order.</returns>
+    /// <remarks>
+    /// <c>MPV_HOME</c> <em>replaces</em> the configuration directory rather than being searched
+    /// before it, which is how mpv itself treats it. Falling through to <c>~/.config/mpv</c>
+    /// afterwards read a format the user had deliberately pointed away from — caught by the test
+    /// for the plain fallback, which found the ambient configuration instead of the empty one it
+    /// had just been given.
+    /// </remarks>
+    private static IEnumerable<string> Directories()
+    {
+        if (Environment.GetEnvironmentVariable("MPV_HOME") is { Length: > 0 } home)
+        {
+            return [home];
+        }
+
+        if (Environment.GetEnvironmentVariable("XDG_CONFIG_HOME") is { Length: > 0 } xdg)
+        {
+            return [Path.Join(xdg, "mpv")];
+        }
+
+        return [Path.Join(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "mpv")];
+    }
+
+    /// <summary>Reads a <c>term-status-msg</c> assignment out of one configuration line.</summary>
+    /// <param name="line">One line of mpv.conf.</param>
+    /// <returns>The format, or <see langword="null"/> when the line is something else.</returns>
+    /// <remarks>
+    /// mpv's configuration allows the value to be quoted with either kind of quote, and requires
+    /// it whenever the value contains a <c>#</c> — which is why the comment is only stripped from
+    /// an unquoted value.
+    /// </remarks>
+    internal static string? Option(string line)
+    {
+        string text = line.Trim();
+
+        if (text.StartsWith('#') || !text.StartsWith("term-status-msg", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        int equals = text.IndexOf('=', StringComparison.Ordinal);
+
+        if (equals < 0 || text[..equals].Trim() != "term-status-msg")
+        {
+            return null;
+        }
+
+        string value = text[(equals + 1)..].Trim();
+
+        if (value.Length >= 2 && (value[0] is '"' or '\'') && value[^1] == value[0])
+        {
+            return value[1..^1];
+        }
+
+        int comment = value.IndexOf('#', StringComparison.Ordinal);
+
+        return comment >= 0 ? value[..comment].TrimEnd() : value;
+    }
 }
 
 /// <summary>Keeps the one playback slot, and hands it to the commands.</summary>

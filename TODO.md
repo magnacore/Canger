@@ -1,5 +1,39 @@
 # Canger — port status
 
+## The status line is mpv's own format, read from mpv's own configuration
+
+Asked for: "can it not just read the mpv setting itself rather than duplicating it in the plugin?"
+It can, and now does. The plugin passes `--term-status-msg` as
+`canger-mka:${=percent-pos}|` + whatever `term-status-msg` mpv's configuration names, so only the
+marker and the machine-readable percentage are Canger's; everything a person reads is the line the
+user already configured, down to the field order and the wording. Where mpv names no format, a
+plain one is used.
+
+`MPV_HOME` **replaces** the configuration directory rather than being searched before it, which is
+how mpv treats it. Falling through to `~/.config/mpv` afterwards was caught by the test for the
+plain fallback, which found the ambient configuration instead of the empty one it had just been
+given.
+
+**Two things broke when the format stopped being ours**, and both are the same mistake — a rule
+that quietly depended on the old format:
+
+- Completeness was judged by the line ending in `x`, because the old format ended in `${speed}x`.
+  The reporter's ends in `${?pause==yes:(Paused)}`, so every line mpv wrote while paused was
+  thrown away. A line is now judged complete by being terminated, which needs no knowledge of the
+  format at all — and needs nothing else, because the reading from just before a pause is exactly
+  what should be on screen while it is held.
+- The newest marker was searched for from the end of the output, which found the part-line still
+  being written and then gave up for want of a terminator, leaving the clock frozen on the reading
+  before. The search now starts at the last separator.
+
+Pause is still announced from this side, because a paused mpv writes nothing further and its own
+`${?pause==yes:…}` therefore arrives late or not at all. It is left off when the line already says
+it, so a format carrying its own marker does not say it twice — verified: the bar reads
+`(paused) 00:04:56 …` at once, and becomes `00:04:56 … (Paused)` if mpv's own line does turn up.
+
+**Controls:** the format imposed rather than read fails 1; `MPV_HOME` falling through fails 1; the
+prefix added unconditionally fails 1; the marker searched from the end fails 1.
+
 ## Background audio: every key that opens a file has to be rebound, not just Enter
 
 Reported as "it still plays in the terminal", twice, and I twice explained it away as a session

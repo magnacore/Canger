@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Reflection;
 using Canger.Core.Commands;
 using Canger.Core.Processes;
 using Canger.Core.Tasks;
@@ -116,9 +117,142 @@ public sealed class ShippedMkaTests : IDisposable
 
         string command = CommandFor(manager);
 
+        // Only the two fields Canger owns are asserted. What follows the bar is whatever format
+        // mpv's own configuration names, so asserting a particular field here would make the test
+        // depend on the mpv.conf of whoever runs it.
         Assert.Contains("--term-status-msg=", command, StringComparison.Ordinal);
-        Assert.Contains("canger-mka:", command, StringComparison.Ordinal);
-        Assert.Contains("${time-pos}", command, StringComparison.Ordinal);
+        Assert.Contains("canger-mka:${=percent-pos}|", command, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheReadableHalfComesFromMpvsOwnConfiguration()
+    {
+        // The parser being right is not the same as the command line using it. MPV_HOME is how
+        // mpv itself is pointed at a configuration directory, so it is how this points the plugin
+        // at a known one — otherwise the test would assert whatever format the machine running it
+        // happens to have. Restored afterwards; no other test reads it.
+        const string Distinctive = "canger-test ${time-pos} of ${duration}";
+
+        string home = Path.Join(_root, "mpv");
+        Directory.CreateDirectory(home);
+        File.WriteAllText(Path.Join(home, "mpv.conf"),
+                          $"speed=2.0\nterm-status-msg=\"{Distinctive}\"\n");
+
+        string? previous = Environment.GetEnvironmentVariable("MPV_HOME");
+        Environment.SetEnvironmentVariable("MPV_HOME", home);
+
+        try
+        {
+            FakeFileManager manager = Build();
+            manager.Execute("mka_open");
+
+            Assert.Contains(Distinctive, CommandFor(manager), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("MPV_HOME", previous);
+        }
+    }
+
+    [Fact]
+    public void ItFallsBackToAPlainFormatWhereMpvNamesNone()
+    {
+        string home = Path.Join(_root, "empty-mpv");
+        Directory.CreateDirectory(home);
+        File.WriteAllText(Path.Join(home, "mpv.conf"), "speed=2.0\n");
+
+        string? previous = Environment.GetEnvironmentVariable("MPV_HOME");
+        Environment.SetEnvironmentVariable("MPV_HOME", home);
+
+        try
+        {
+            FakeFileManager manager = Build();
+            manager.Execute("mka_open");
+
+            Assert.Contains("${time-pos}", CommandFor(manager), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("MPV_HOME", previous);
+        }
+    }
+
+    [Fact]
+    public void ItDoesNotSayPausedTwiceWhenTheFormatAlreadySaysIt()
+    {
+        // A format carrying its own ${?pause==yes:(Paused)} — as the reporter's does — says it on
+        // the one line mpv manages to write after pausing. Canger's own prefix is there because
+        // that line usually never arrives; on the occasions it does, one mention is enough.
+        FakeFileManager manager = Build();
+        FakeFileManager.RecordingProcessRunner runner =
+            (FakeFileManager.RecordingProcessRunner)manager.Runner;
+
+        runner.BackgroundResults["mpv"] = new FakeFileManager.FakeBackgroundProcess
+        {
+            StepsBeforeExit = 10_000,
+            StandardOutput = "canger-mka:2|00:04:56 / 00:07:36 (2%) 1.5x (Paused)\r",
+        };
+
+        manager.Execute("mka_open");
+
+        IBackgroundActivity activity = manager.BackgroundActivity!;
+
+        // Held, without going through the socket a fake mpv does not have.
+        activity.GetType()
+                .GetField("_paused", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(activity, true);
+
+        string line = activity.Describe()!;
+
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(
+                            line, "paused",
+                            System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+    }
+
+    /// <summary>Reads a term-status-msg line the way the plugin does.</summary>
+    private static string? ParseOption(string line)
+    {
+        string plugins = PluginDirectory();
+        Assert.SkipWhen(plugins.Length == 0, "the repository layout was not found");
+
+        CompilationResult compiled =
+            new ScriptCompiler().Compile("mka", [Path.Join(plugins, "mka.cs")]);
+
+        Assert.True(compiled.Succeeded, string.Join("; ", compiled.Diagnostics));
+
+        Type configuration = compiled.Assembly!.GetType("MpvConfiguration")!;
+        MethodInfo option = configuration.GetMethod(
+            "Option", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!;
+
+        return (string?)option.Invoke(null, [line]);
+    }
+
+    [Theory]
+    // The reporter's own line, quoted because it contains spaces.
+    [InlineData(
+        """term-status-msg="${playtime-remaining} / ${duration} (${percent-pos}%) ${speed}x" """,
+        "${playtime-remaining} / ${duration} (${percent-pos}%) ${speed}x")]
+    [InlineData("term-status-msg='${time-pos}'", "${time-pos}")]
+    [InlineData("term-status-msg=${time-pos}", "${time-pos}")]
+    [InlineData("  term-status-msg = ${time-pos}  ", "${time-pos}")]
+    public void ItReadsTheFormatMpvsOwnConfigurationNames(string line, string expected) =>
+        Assert.Equal(expected, ParseOption(line));
+
+    [Theory]
+    [InlineData("# term-status-msg=${time-pos}")]              // commented out
+    [InlineData("term-status-msg-foo=${time-pos}")]            // a different option
+    [InlineData("speed=1.5")]                                  // something else entirely
+    [InlineData("term-status-msg")]                            // no value at all
+    public void ItPassesOverALineThatIsNotThatOption(string line) =>
+        Assert.Null(ParseOption(line));
+
+    [Fact]
+    public void ItStripsATrailingCommentOnlyFromAnUnquotedValue()
+    {
+        // mpv requires quoting when a value contains a #, so a # inside quotes is part of the
+        // format and a # outside them starts a comment.
+        Assert.Equal("${time-pos}", ParseOption("term-status-msg=${time-pos}  # the clock"));
+        Assert.Equal("a # b", ParseOption("""term-status-msg="a # b" """));
     }
 
     [Fact]
@@ -215,9 +349,9 @@ public sealed class ShippedMkaTests : IDisposable
     [Fact]
     public void ItReadsTheLastReadingMpvWroteAndTheProgressWithIt()
     {
-        // mpv rewrites the line about eight times a second, separated by carriage returns, and
-        // the newest has no terminator until the one after it arrives. The newest is the one
-        // that must be shown.
+        // mpv rewrites the line about eight times a second, separated by carriage returns. The
+        // newest *terminated* one is what is shown; a trailing part-line is left for the next
+        // frame, which is at most an eighth of a second behind and never half a clock.
         FakeFileManager manager = Build();
         FakeFileManager.RecordingProcessRunner runner =
             (FakeFileManager.RecordingProcessRunner)manager.Runner;
@@ -227,7 +361,8 @@ public sealed class ShippedMkaTests : IDisposable
             StepsBeforeExit = 10_000,
             StandardOutput =
                 "canger-mka:1.5|00:00:09 / 00:10:00 (2%) 1.5x\r" +
-                "canger-mka:33.3333|00:03:20 / 00:10:00 (33%) 1.5x",
+                "canger-mka:33.3333|00:03:20 / 00:10:00 (33%) 1.5x\r" +
+                "canger-mka:33.4|00:03:21 / 00:10",
         };
 
         manager.Execute("mka_open");
