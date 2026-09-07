@@ -2333,31 +2333,16 @@ public sealed class Browser : IFileManager, IDisposable
         ColorNames.TryParse(setting, out Color color) ? color : null;
 
     private void ApplySettingsToDirectory() =>
-        ApplySettings(
-            CurrentTab,
-            Tabs,
-            Settings.Viewmode,
-            new SortOrder(
-                SortOrder.ParseKey(Settings.Sort),
-                Settings.SortReverse,
-                Settings.SortDirectoriesFirst,
-                Settings.SortCaseInsensitive,
-                Settings.SortUnicode),
-            Settings.ShowHidden,
-            Settings.HiddenFilter,
-            Settings.AutoupdateCumulativeSize);
+        ApplySettings(CurrentTab, Tabs, Settings.Viewmode, Settings.DirectorySettingsFor);
 
     /// <summary>Gives each directory the settings that decide what it lists and in what order.</summary>
     /// <param name="current">The tab in front of the user.</param>
     /// <param name="tabs">Every open tab, for the view mode that shows them all at once.</param>
     /// <param name="viewmode">The <c>viewmode</c> setting.</param>
-    /// <param name="order">The <c>sort</c> family, already resolved.</param>
-    /// <param name="showHidden">The <c>show_hidden</c> setting.</param>
-    /// <param name="hiddenPattern">The <c>hidden_filter</c> setting.</param>
-    /// <param name="autoupdate">The <c>autoupdate_cumulative_size</c> setting.</param>
+    /// <param name="resolve">What a directory's settings are, given its path.</param>
     /// <remarks>
     /// <para>
-    /// Every setter here re-derives the listing on a change and returns immediately on a
+    /// Every setter re-derives the listing on a change and returns immediately on a
     /// non-change, so this is cheap to call each frame and there is nothing to remember to
     /// invalidate.
     /// </para>
@@ -2368,6 +2353,13 @@ public sealed class Browser : IFileManager, IDisposable
     /// had — and so did a change of sort order. Ranger has no such gap because every directory
     /// binds itself to these settings when it is created
     /// (<c>container/directory.py:140-148</c>), so all of them refilter at once.
+    /// </para>
+    /// <para>
+    /// Resolved per directory rather than once for the current one, because <c>setlocal</c> and
+    /// <c>setinregex</c> scope a setting to a path. Pushing the current directory's answer onto
+    /// its neighbours listed a folder with a rule of its own by the wrong key for its first load —
+    /// which is when its cursor is placed — and the cursor then stayed on that entry as the right
+    /// order moved it down the list.
     /// </para>
     /// <para>
     /// The set is chosen <em>here</em>, from the tab, rather than passed in. Taking a ready-made
@@ -2381,19 +2373,21 @@ public sealed class Browser : IFileManager, IDisposable
     /// </para>
     /// </remarks>
     internal static void ApplySettings(Tab current, IReadOnlyDictionary<int, Tab> tabs,
-                                       string? viewmode, SortOrder order, bool showHidden,
-                                       string hiddenPattern, bool autoupdate)
+                                       string? viewmode,
+                                       Func<string, DirectorySettings> resolve)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(tabs);
-        ArgumentNullException.ThrowIfNull(hiddenPattern);
+        ArgumentNullException.ThrowIfNull(resolve);
+
+        // The directories that exist, and then the ones that do not yet. A directory opened later
+        // is configured on its way out of the cache, before its first load, because that load is
+        // when its cursor is placed.
+        current.Directories.Settings = resolve;
 
         foreach (DirectoryNode directory in VisibleDirectories(current, tabs, viewmode))
         {
-            directory.ShowHidden = showHidden;
-            directory.HiddenPattern = hiddenPattern;
-            directory.SortOrder = order;
-            directory.AutoupdateCumulativeSize = autoupdate;
+            resolve(directory.Path).ApplyTo(directory);
         }
     }
 

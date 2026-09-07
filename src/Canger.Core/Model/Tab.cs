@@ -20,6 +20,13 @@ namespace Canger.Core.Model;
 public sealed class Tab
 {
     private readonly DirectoryCache _cache;
+
+    /// <summary>The shared cache this tab reads its directories from.</summary>
+    /// <remarks>
+    /// Exposed so that whatever configures the directories on screen can configure the ones not
+    /// made yet, in the same breath and from the same place.
+    /// </remarks>
+    public DirectoryCache Directories => _cache;
     private readonly Cursor _cursor = new();
 
     /// <summary>Creates a tab positioned at a directory.</summary>

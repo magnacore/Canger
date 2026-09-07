@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.Configuration;
 using Canger.Core.Model;
 using Canger.Core.Settings;
 
@@ -100,16 +101,109 @@ internal static class Quitting
     }
 }
 
-/// <summary>Changes a setting for one directory only.</summary>
+/// <summary>
+/// A setting changed for some directories rather than all of them.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Four spellings of one thing, as ranger has them: <c>setlocal</c> and <c>setinpath</c> take a
+/// literal path, <c>setinregex</c> takes an expression, and <c>setintag</c> scopes by tag. Naming
+/// no scope at all means the directory the user is standing in, which is what makes
+/// <c>:setlocal sort natural</c> useful at the console.
+/// </para>
+/// <para>
+/// The line is handed to the same <see cref="SetDirective"/> the configuration reader uses, so the
+/// quoting rules, the <c>~</c> expansion, the <c>option!</c> toggle and the way a path becomes a
+/// pattern cannot drift apart between a file and a keystroke. This used to answer "setlocal is
+/// only available in the configuration file so far", which left a directory held at a sort by
+/// <c>setinregex</c> with no way to be re-sorted at all: a path-scoped setting outranks the global
+/// one that <c>on</c> and <c>om</c> write, in Canger as in ranger.
+/// </para>
+/// </remarks>
+public abstract class ScopedSettingCommand : CangerCommand
+{
+    /// <summary>The directive name to parse this line as.</summary>
+    protected abstract string Directive { get; }
+
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        string text = Rest(1).Trim();
+
+        if (text.Length == 0)
+        {
+            FileManager.Notify($"{Directive}: which setting?", isError: true);
+            return;
+        }
+
+        try
+        {
+            SetDirective directive =
+                new(FileManager.Settings.Raw, () => FileManager.CurrentDirectory.Path);
+
+            directive.Execute(Directive, text);
+        }
+        catch (SettingValueException e)
+        {
+            FileManager.Notify(e.Message, isError: true);
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The setting names only, and only where no scope has been typed yet. Once the line carries a
+    /// <c>path=</c> there is a filename in it, and offering setting names in the middle of one
+    /// would be worse than offering nothing.
+    /// </remarks>
+    public override IReadOnlyList<string> Complete(int direction)
+    {
+        string typed = Rest(1);
+
+        if (typed.Contains('=', StringComparison.Ordinal) ||
+            typed.Contains(' ', StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        return
+        [
+            .. SettingsCatalog.Names
+                .Where(name => name.StartsWith(typed, StringComparison.Ordinal))
+                .Select(name => $"{Line.Word(0)} {name}"),
+        ];
+    }
+}
+
+/// <summary>Changes a setting for one directory, named literally.</summary>
 [Command("setlocal", Summary = "Change a setting for a particular directory.")]
-public sealed class SetLocalCommand : CangerCommand
+public sealed class SetLocalCommand : ScopedSettingCommand
 {
     /// <inheritdoc />
-    public override void Execute() =>
-        // Scoped settings are stored per path pattern, and applying one at run time needs the
-        // same parsing the configuration reader does. Until that is shared, say so plainly.
-        FileManager.Notify("setlocal is only available in the configuration file so far",
-                           isError: true);
+    protected override string Directive => "setlocal";
+}
+
+/// <summary>Ranger's newer spelling of <c>setlocal</c>.</summary>
+[Command("setinpath", Summary = "Change a setting for directories matching a path.")]
+public sealed class SetInPathCommand : ScopedSettingCommand
+{
+    /// <inheritdoc />
+    protected override string Directive => "setinpath";
+}
+
+/// <summary>Changes a setting for the directories a regular expression matches.</summary>
+[Command("setinregex", Summary = "Change a setting for directories matching an expression.")]
+public sealed class SetInRegexCommand : ScopedSettingCommand
+{
+    /// <inheritdoc />
+    protected override string Directive => "setinregex";
+}
+
+/// <summary>Changes a setting for the directories carrying a tag.</summary>
+[Command("setintag", Summary = "Change a setting for directories with a given tag.")]
+public sealed class SetInTagCommand : ScopedSettingCommand
+{
+    /// <inheritdoc />
+    protected override string Directive => "setintag";
 }
 
 /// <summary>Shows a message in the status bar.</summary>

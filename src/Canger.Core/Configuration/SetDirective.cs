@@ -24,7 +24,15 @@ namespace Canger.Core.Configuration;
 /// </list>
 /// </remarks>
 /// <param name="settings">The store to assign into.</param>
-public sealed class SetDirective(ISettings settings) : IConfigurationDirective
+/// <param name="currentDirectory">
+/// Where a scoped assignment applies when the line names no path of its own. Supplied when the
+/// directive is typed at the console, where <c>:setlocal sort natural</c> means "this directory";
+/// left out when a configuration file is being read, since there is no directory to be in yet.
+/// Ranger draws the same distinction — its <c>setlocal_</c> falls back to <c>fm.thisdir.path</c>
+/// (<c>config/commands.py:547-548</c>), which is <see langword="None"/> during start-up.
+/// </param>
+public sealed class SetDirective(ISettings settings, Func<string?>? currentDirectory = null)
+    : IConfigurationDirective
 {
     /// <inheritdoc />
     public IReadOnlyList<string> Names { get; } =
@@ -103,21 +111,37 @@ public sealed class SetDirective(ISettings settings) : IConfigurationDirective
     /// leading <c>~</c> first.
     /// </para>
     /// </remarks>
-    private static (SettingScope Scope, string Remainder) ParsePathScope(string arguments, bool isRegex)
+    private (SettingScope Scope, string Remainder) ParsePathScope(string arguments, bool isRegex)
     {
-        Match match = ScopeOperand.Match(arguments.TrimStart());
-        if (!match.Success)
-        {
-            throw new SettingValueException(
-                $"Expected '{(isRegex ? "re" : "path")}=...' before the option name.");
-        }
-
-        string key = match.Groups["key"].Value;
+        string trimmed = arguments.TrimStart();
+        Match match = ScopeOperand.Match(trimmed);
         string[] accepted = isRegex ? ["re", "regex", "pattern"] : ["path", "pattern"];
-        if (!accepted.Contains(key, StringComparer.Ordinal))
+
+        // `setlocal sort natural` names no path, and neither does `setlocal sort=natural` — the
+        // operand pattern matches the latter, but `sort=` is not one of the words that introduce
+        // a scope. Both mean the directory the user is in.
+        if (!match.Success ||
+            !accepted.Contains(match.Groups["key"].Value, StringComparer.Ordinal))
         {
+            if (currentDirectory?.Invoke() is { Length: > 0 } here)
+            {
+                // Escaped and anchored even for the regular-expression spelling. The user typed no
+                // pattern, so what they mean is this directory and not any path containing its
+                // name; ranger uses the path as a raw expression there
+                // (<c>config/commands.py:547</c>), which quietly turns a `+` or a `(` in a folder
+                // name into syntax.
+                return (SettingScope.ForPathPattern(Regex.Escape(here) + "$"), trimmed);
+            }
+
+            if (!match.Success)
+            {
+                throw new SettingValueException(
+                    $"Expected '{(isRegex ? "re" : "path")}=...' before the option name.");
+            }
+
             throw new SettingValueException(
-                $"'{key}=' is not valid here; expected one of {string.Join(", ", accepted)}.");
+                $"'{match.Groups["key"].Value}=' is not valid here; " +
+                $"expected one of {string.Join(", ", accepted)}.");
         }
 
         string operand = ExpandHome(Unescape(FirstNonEmpty(match)));

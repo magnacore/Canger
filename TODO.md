@@ -1,5 +1,133 @@
 # Canger — port status
 
+## `setlocal` works at the console
+
+It used to answer "setlocal is only available in the configuration file so far", which left a
+directory held at a sort by `setinregex` with no way to be re-sorted at all: a path-scoped setting
+outranks the global one `on` and `om` write, in Canger as in ranger. Ranger has `setlocal` as an
+ordinary command, so this was a gap rather than a decision.
+
+**All four spellings** are now commands — `setlocal`, `setinpath`, `setinregex`, `setintag` — and
+they hand the line to the same `SetDirective` the configuration reader uses, so the quoting rules,
+the `~` expansion, the `option!` toggle and the way a path becomes a pattern cannot drift apart
+between a file and a keystroke.
+
+**Naming no scope means the directory you are in.** Ranger does the same
+(`config/commands.py:547-548`, falling back to `fm.thisdir.path`), and its fallback is
+`None` while a configuration file is being read — so reading a file still refuses rather than
+guessing. `setlocal sort=natural` counts as naming no scope: the operand pattern matches it, but
+`sort=` is not one of the words that introduce one.
+
+**A deliberate divergence.** The implicit scope is escaped and anchored even for the
+regular-expression spelling. Ranger uses the path as a raw expression there, which turns a `+`, a
+`(` or a `#` in a folder name into syntax — and the reporter has a folder called `C#`.
+
+**Controls:** the parser's fallback removed fails 13; the command passing no current directory
+fails 5.
+
+**Verified in the reporter's own folder**, which is held at `sort mtime` with `sort_reverse true`
+by `setinregex`:
+
+```
+on arrival                      he-chose-this-over-3-crore-salary...   (oldest first)
+after `on`                      unchanged, as ranger behaves
+:setlocal sort natural + gg     5-signs-youre-about-to-become...       (natural: 5 before 15)
+:setlocal sort_reverse false    unchanged order, now ascending
+:setlocal sort mtime + gg       decans-market-cycles-wheels...         (the newest file)
+:setlocal nonsense_setting 1    No such setting: 'nonsense_setting'.
+```
+
+The rule survives leaving the directory and coming back, and the cursor follows the file it was on
+across a re-sort, which is what ranger's `refilter` does too.
+
+## A directory resolves its settings for its own path
+
+The first fix was not enough, and the report said so. It resolved one set of settings from the
+directory the user was standing in and stamped that on every directory the cache handed out. But
+`setinregex` and `setlocal` scope a setting to a path, and the folders in question are held at
+`sort mtime` with `sort_reverse true` by regex — so opening one from elsewhere still listed it by
+name for its first load, which is when the cursor is placed.
+
+Settings are now resolved **per directory path**, through
+`CangerSettings.DirectorySettingsFor(path)`, and the cache holds a function rather than a value.
+That is ranger's arrangement: a directory owns a settings object bound to its own path and every
+lookup goes through it (`container/settings.py:338`).
+
+**Verified on the reporter's own folders**, not a fixture. `STUDY PASSIVE TRADING` now matches
+`ls -tr` exactly — oldest first, which is what `sort mtime` plus `sort_reverse true` asks for — with
+the cursor on row 0. `04 RA RP SP` now opens with `JOY`, a symlink, on row 0 and selected; it used
+to select `AUDIO SPLIT`.
+
+**Control:** resolving once from the current directory instead of per directory fails
+`AFolderWithASortRuleOfItsOwnOpensOnItsFirstRow`.
+
+## `on` and `oM` in a folder held by `setinregex` — not a defect
+
+Reported as a second problem: pressing `on` in a folder configured by `setinregex` does nothing.
+Ranger's own settings container, run directly, gives the answer:
+
+```
+path-scoped sort=mtime, global sort=natural:
+  global             -> natural
+  for /home/me/Study -> mtime
+after a further global set, which is what `on` does:
+  global             -> basename
+  for /home/me/Study -> mtime        (unchanged)
+```
+
+A path-scoped setting wins over the global and a later global `set` does not disturb it. `on` is
+`set sort=natural`, a global set, so the folder keeps its own rule. Canger matches.
+
+**A real gap alongside it:** ranger's `setlocal` is an ordinary command and can be typed at the
+console to override a path-scoped setting for the session. Canger answers "setlocal is only
+available in the configuration file so far", so there is no runtime override at all. Not fixed
+here; worth doing if the interactive override is wanted.
+
+## Opening a folder puts the cursor on its first row
+
+Reported twice over: under `sort=mtime` the highlighted entry was the first *alphabetical* name,
+halfway down the list; and where the first row was a symlink, the cursor sat on the first non-link
+folder instead. **One cause.**
+
+**The defect.** A directory learned its sort order a frame after it was loaded, when the render
+path walked the visible columns. The first load is when the cursor is placed, so it was placed on
+row 0 of a listing ordered by *name*; when the real order arrived, `Refilter` kept the cursor on
+that same entry and carried it down the list. With the default `sort natural` the two orders agree,
+which is why only a non-default sort showed it.
+
+**The fix.** The listing settings are now a `DirectorySettings` value the cache holds and stamps on
+every directory it hands out — ranger's rule, where a directory binds itself to them in its
+constructor (`container/directory.py:140-148`).
+
+Stamping at *creation* alone fixed nothing, and the pty run proved it: a subdirectory's node is
+made while its **parent** is listed, long before the user changes the sort, so by the time the
+folder is opened the node already exists and was skipped. They are applied on the way past instead,
+which costs nothing because every setter returns at once on a non-change.
+
+**Parity, by running ranger's own `Directory` over the same fixture** rather than reading it. For a
+tree holding a directory, a symlink to a directory, its target and a file, `sort=mtime`,
+directories first:
+
+```
+bbb-dir      mtime=1577817000     ranger's pointer: index 0
+zzz-link     mtime=1546281000     <- the target's mtime, not the link's own 2026
+real-target  mtime=1546281000
+ccc-file.txt mtime=1609439400
+```
+
+So ranger sorts a symlink by its **target's** mtime, groups a link to a directory with the
+directories, and points at index 0. Canger now agrees on all three. The only difference left is the
+order of two entries whose mtimes are identical, which is arbitrary in both.
+
+**Controls**, each with the mutation confirmed to compile: configuring only newly created nodes
+fails 2; configuring nothing on creation fails 1; not telling the cache at all fails 5.
+
+**The tests failed all three controls at 0 on their first draft.** The directory they opened was
+also the *previewed* one, so the walk over the visible columns configured it directly and the cache
+path was never exercised. They now park the cursor on a file — through the **tab's** cursor, not
+the directory's, since the preview column follows the tab — and assert the preview is empty before
+measuring anything.
+
 ## The launcher's PATH covers three directories
 
 `canger.sh` prepended `~/.local/bin` when it was missing; `/usr/local/bin` and `/sbin` now go
