@@ -137,6 +137,86 @@ public class PagerTests
     }
 
     [Fact]
+    public void Wrap_BreaksBetweenWordsRatherThanAtTheColumn()
+    {
+        // Ranger cuts the line at whatever character the width lands on, which reads as text that
+        // was not wrapped at all. A deliberate divergence, recorded on Pager.Wrap.
+        // Twelve, so the edge of the pane falls inside "brown" rather than on a space, where
+        // breaking by word and breaking by column cannot be told apart.
+        Pager pager = new(new DefaultColorScheme()) { WrapLines = true };
+        pager.Layout(new Rect(0, 0, 12, 4));
+        pager.SetText("the quick brown fox");
+        ScreenBuffer screen = new(12, 4);
+
+        pager.Render(screen);
+
+        Assert.Equal("the quick   ", screen.TextAt(0));
+        Assert.Equal("brown fox   ", screen.TextAt(1));
+    }
+
+    [Fact]
+    public void Wrap_KeepsTheColoursAcrossABreak()
+    {
+        // The break is worked out on the visible text but drawn from the original, so a run of
+        // colour that spans it stays coloured on the row after.
+        Pager pager = new(new DefaultColorScheme()) { WrapLines = true };
+        pager.Layout(new Rect(0, 0, 6, 4));
+        pager.SetText("\e[31malpha beta\e[0m");
+        ScreenBuffer screen = new(6, 4);
+
+        pager.Render(screen);
+
+        Assert.Equal("beta  ", screen.TextAt(1));
+        Assert.Equal(Color.Red, screen[0, 1].Style.Foreground);
+    }
+
+    [Fact]
+    public void Wrap_BreaksAWordThatIsWiderThanThePane()
+    {
+        // Not breaking it would mean not showing it.
+        Pager pager = new(new DefaultColorScheme()) { WrapLines = true };
+        pager.Layout(new Rect(0, 0, 6, 4));
+        pager.SetText("hi abcdefghijk");
+        ScreenBuffer screen = new(6, 4);
+
+        pager.Render(screen);
+
+        Assert.Equal("hi    ", screen.TextAt(0));
+        Assert.Equal("abcdef", screen.TextAt(1));
+        Assert.Equal("ghijk ", screen.TextAt(2));
+    }
+
+    [Fact]
+    public void Wrap_ReportsOneSegmentForALineThatFits()
+    {
+        Assert.Equal([(0, 9)], Pager.Wrap("the quick", 10));
+    }
+
+    [Fact]
+    public void Wrap_MeasuresInCellsSoWideCharactersBreakWhereTheyLook()
+    {
+        // Six characters, twelve cells. Counting characters would fit five of them on a row this
+        // wide and draw over the pane's edge.
+        Assert.Equal([(0, 4), (4, 4), (8, 4)], Pager.Wrap("\u4e00\u4e8c\u4e09\u56db\u4e94\u516d", 5));
+    }
+
+    [Fact]
+    public void Wrap_KeepsTheIndentationOfTheFirstRow()
+    {
+        // Indentation is what makes a nested list or a block of code readable, so the line's own
+        // is kept — and never broken on, which would put out a row holding nothing but it.
+        Assert.Equal([(0, 7), (7, 8)], Pager.Wrap("    ab cd  efgh", 8));
+        Assert.Equal([(0, 10), (10, 5)], Pager.Wrap("    unbreakable", 10));
+    }
+
+    [Fact]
+    public void Wrap_DropsTheSpacesABreakLandsOn()
+    {
+        // Carrying them over would start the continuation adrift of the rows around it.
+        Assert.Equal([(0, 6), (9, 2)], Pager.Wrap("abcdef   gh", 6));
+    }
+
+    [Fact]
     public void Wrap_ContinuesALongLineOnTheNextRow()
     {
         Pager pager = new(new DefaultColorScheme()) { WrapLines = true };

@@ -35,7 +35,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
 | Tests | 1947 |
 
-Ten things go deliberately beyond ranger:
+Eleven things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -105,6 +105,13 @@ Ten things go deliberately beyond ranger:
   and a line is run directly when it safely can be, rather than always through `sh -c`, so passing
   two and a half thousand filenames to a program does not fail on Linux's 131 072-byte limit for a
   single argument.
+- **Previews wrap between words.** With `wrap_plaintext_previews` on, ranger cuts each line at
+  whatever character the pane's width lands on, so a wrapped paragraph comes out split through
+  the middle of words — unrecognisable enough that the setting reads as not working. Canger
+  breaks at a space, keeps a line's own indentation while dropping the spaces a break lands on,
+  measures in cells so CJK breaks where it looks like it should, and keeps the colours a
+  highlighter put there across the break. A word wider than the pane is still broken where the
+  pane ends.
 
 Releases carry a `.deb`, an AppImage and two tarballs:
 <https://github.com/magnacore/Canger/releases>. There is no apt repository, so the `.deb` is
