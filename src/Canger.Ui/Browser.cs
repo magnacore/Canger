@@ -2408,6 +2408,54 @@ public sealed class Browser : IFileManager, IDisposable
         }
     }
 
+    /// <summary>
+    /// What the status bar is told about a background activity.
+    /// </summary>
+    /// <param name="activity">The activity, or <see langword="null"/> when there is none.</param>
+    /// <param name="headlineTaken">
+    /// Whether a message or a queued task has taken the whole bar.
+    /// </param>
+    /// <returns>The badge, the line and the progress to show; any of them may be null.</returns>
+    /// <remarks>
+    /// <para>
+    /// A static rule because a <see cref="Browser"/> cannot be built without a terminal, so this
+    /// is the only way the decision can be tested — and it is a decision worth testing three
+    /// times over.
+    /// </para>
+    /// <para>
+    /// <see cref="IBackgroundActivity.Describe"/> is asked on every frame whatever else the
+    /// bar is showing, because it is the only heartbeat a plugin gets and it is where the end of
+    /// the thing being watched is noticed. Asking only while the queue was quiet left mpv's
+    /// output undrained for the length of a copy, and its keyboard grab pointed at a process that
+    /// had already exited.
+    /// </para>
+    /// <para>
+    /// The badge is passed on whatever the line says, because it names a state rather than
+    /// describing one: mpv not having spoken yet is no reason to stop saying the keyboard is
+    /// handed over. Where it is drawn, and whether a headline has taken the bar out from under
+    /// it, is the bar's own business.
+    /// </para>
+    /// <para>
+    /// With no activity at all — no plugin, or one that has been removed — every part of this is
+    /// null and the bar is exactly what it was before any of it existed. That is the whole of
+    /// what removing the plugin has to do: nothing here holds state of its own between frames.
+    /// </para>
+    /// </remarks>
+    internal static (string? Badge, string? Line, double? Progress) ActivityFor(
+        IBackgroundActivity? activity, bool headlineTaken)
+    {
+        if (activity is null)
+        {
+            return (null, null, null);
+        }
+
+        string? line = activity.Describe();
+
+        return headlineTaken
+            ? (activity.Badge, null, null)
+            : (activity.Badge, line, activity.Progress);
+    }
+
     /// <summary>How long the loop may sleep before it looks at the screen again.</summary>
     /// <param name="pendingInput">Whether an escape sequence may still be in flight.</param>
     /// <param name="needsRedraw">Whether something answered from another thread.</param>
@@ -2858,15 +2906,15 @@ public sealed class Browser : IFileManager, IDisposable
             _statusBar.ActivityDescription = null;
             _statusBar.ActivityBadge = null;
 
-            if (_statusBar.TaskDescription is null && BackgroundActivity is { } activity)
-            {
-                _statusBar.ActivityDescription = activity.Describe();
-                _statusBar.ActivityBadge = activity.Badge;
+            (string? badge, string? line, double? activityProgress) =
+                ActivityFor(BackgroundActivity, _statusBar.TaskDescription is not null);
 
-                if (_statusBar.ActivityDescription is not null)
-                {
-                    _statusBar.Progress = activity.Progress;
-                }
+            _statusBar.ActivityBadge = badge;
+            _statusBar.ActivityDescription = line;
+
+            if (line is not null)
+            {
+                _statusBar.Progress = activityProgress;
             }
             _statusBar.FreeBytes = FreeSpace();
             _statusBar.Render(_screen);
