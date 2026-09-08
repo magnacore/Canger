@@ -456,10 +456,16 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// <param name="handsOver">Whether the keyboard belongs to mpv.</param>
     /// <returns>What mpv should be told to print.</returns>
     /// <remarks>
-    /// Volume is added while the mode is on and taken away afterwards, because the mode exists to
-    /// change it and the user's own format has no reason to carry it the rest of the time. Speed
-    /// is added only where the format does not already show it, so a format saying <c>${speed}x</c>
-    /// is not made to say it twice.
+    /// <para>
+    /// Volume and speed are what the mode exists to change, so they are added while it is on and
+    /// taken away afterwards — the user's own format has no reason to carry them the rest of the
+    /// time, when the keys that change them are not even forwarded.
+    /// </para>
+    /// <para>
+    /// Neither is added where the format already shows it. Someone who wants the volume on the
+    /// line at all times puts it in their own <c>term-status-msg</c>, which is the right place for
+    /// it and makes mpv show it in a terminal too; this must not then say it twice.
+    /// </para>
     /// </remarks>
     internal static string DisplayFor(string display, bool handsOver)
     {
@@ -468,9 +474,19 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             return display;
         }
 
-        return display.Contains("speed", StringComparison.OrdinalIgnoreCase)
-            ? display + "  vol ${volume}%"
-            : display + "  vol ${volume}%  x${speed}";
+        string line = display;
+
+        if (!line.Contains("volume", StringComparison.OrdinalIgnoreCase))
+        {
+            line += "  vol ${volume}%";
+        }
+
+        if (!line.Contains("speed", StringComparison.OrdinalIgnoreCase))
+        {
+            line += "  x${speed}";
+        }
+
+        return line;
     }
 
     /// <summary>Escapes a string for the JSON the IPC socket speaks.</summary>

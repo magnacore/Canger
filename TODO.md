@@ -1,5 +1,21 @@
 # Canger — port status
 
+## Whether to show the volume outside the mode — no, and why
+
+Asked: should the volume show in normal mode too? No. The status line is deliberately the user's
+own `term-status-msg`, and anyone wanting the volume there always can add it to `mpv.conf` in one
+word — where it also shows when they run mpv in a terminal, which a format invented here never
+would. Hard-coding it would take back the choice that was handed over two changes ago.
+
+Three practical reasons alongside that: the volume cannot be changed outside the mode, since the
+keys are not forwarded, so the figure would never move; the activity line competes for room with
+the file details and the free space and is dropped entirely when the gap is too small; and the line
+looking different is itself the signal that the mode is on.
+
+**The question did expose a real gap.** Adding volume to one's own format would have made the mode
+show it twice. `DisplayFor` now leaves out anything the format already carries — volume as well as
+speed — so that route works cleanly. Control: the volume check removed fails 1.
+
 ## The volume shows on the status line while the mode is on
 
 Reported: pressing the volume keys changed it with nothing on screen to say so, where mpv in a

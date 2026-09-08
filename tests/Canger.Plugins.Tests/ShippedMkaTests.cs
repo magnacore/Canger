@@ -350,6 +350,16 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
+    public void VolumeIsNotAddedToAFormatThatAlreadyShowsIt()
+    {
+        // Someone who wants the volume on the line at all times puts it in their own
+        // term-status-msg, which is the right place for it — and the mode must not then repeat it.
+        string mode = DisplayFor("${time-pos}  vol ${volume}%", handsOver: true);
+
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(mode, @"\$\{volume\}"));
+    }
+
+    [Fact]
     public void SpeedIsAddedToAFormatThatDoesNot()
     {
         string mode = DisplayFor("${time-pos} / ${duration}", handsOver: true);
