@@ -44,3 +44,40 @@ public class BindingCheckTests
         Assert.Contains("could not be checked", summary, StringComparison.Ordinal);
     }
 }
+
+/// <summary>
+/// The warning a session shows when a key points at a command that is not there.
+/// </summary>
+/// <remarks>
+/// Shown after the plugin hooks have run, which is the only moment it can be trusted: a plugin's
+/// <c>OnInit</c> adds commands and aliases, so the same check made earlier calls every one of them
+/// missing. It exists because removing a plugin is otherwise silent — the first anyone knows is
+/// pressing a key and being told "unknown command", with nothing to connect that to the file they
+/// deleted.
+/// </remarks>
+public class DeadBindingMessageTests
+{
+    [Fact]
+    public void OneBindingReadsAsOne()
+    {
+        string message = Program.DeadBindingMessage(1);
+
+        Assert.Contains("1 key binding names", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("bindings", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SeveralReadAsSeveral()
+    {
+        string message = Program.DeadBindingMessage(3);
+
+        Assert.Contains("3 key bindings name ", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ItSaysWhereToLookForTheNames()
+    {
+        // The status bar holds one line; the names belong in the report that has room for them.
+        Assert.Contains("canger --config", Program.DeadBindingMessage(2), StringComparison.Ordinal);
+    }
+}

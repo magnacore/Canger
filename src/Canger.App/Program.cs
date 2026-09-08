@@ -305,6 +305,13 @@ internal static class Program
                 }
 
                 pluginHost.NotifyReady(browser);
+
+                // After the hooks, which is the only moment the answer can be trusted: a plugin's
+                // OnInit adds commands and aliases, so a check made earlier calls every one of
+                // them missing. Reported here because the alternative is silence — removing a
+                // plugin leaves every key that pointed at it doing nothing, and the first anyone
+                // knows is pressing one and getting "unknown command".
+                WarnAboutDeadBindings(browser, keyMaps, commands);
             };
 
             int exitCode = browser.Run();
@@ -583,6 +590,39 @@ internal static class Program
         bookmarks.Save();
     }
 
+    /// <summary>How the warning reads for a given number of dead bindings.</summary>
+    /// <param name="dead">How many bindings name a command that is not there.</param>
+    /// <returns>The message.</returns>
+    /// <remarks>
+    /// Both halves agree with the count: "1 key binding names" and "3 key bindings name". The
+    /// noun was pluralised and the verb was not, which is the sort of thing that reads as
+    /// carelessness in the one message whose job is to be believed.
+    /// </remarks>
+    internal static string DeadBindingMessage(int dead) =>
+        dead == 1
+            ? "1 key binding names a command that does not exist — run: canger --config"
+            : $"{dead} key bindings name a command that does not exist — run: canger --config";
+
+    /// <summary>Says once, at start-up, if any key points at a command that is not there.</summary>
+    /// <param name="fileManager">What to say it through.</param>
+    /// <param name="keyMaps">The bindings to check.</param>
+    /// <param name="commands">The registry to resolve against.</param>
+    /// <remarks>
+    /// Nothing is said when everything resolves, which is the ordinary case; a notice that appears
+    /// every time is one nobody reads. The names are left to <c>--config</c> rather than crammed
+    /// into a status bar that holds one line.
+    /// </remarks>
+    internal static void WarnAboutDeadBindings(IFileManager fileManager, KeyMaps keyMaps,
+                                               CommandRegistry commands)
+    {
+        int dead = Canger.Core.Input.BindingCheck.Find(keyMaps, commands).Count;
+
+        if (dead > 0)
+        {
+            fileManager.Notify(DeadBindingMessage(dead), isError: true);
+        }
+    }
+
     /// <summary>The headline for the binding check.</summary>
     /// <param name="unresolved">How many bound commands the registry could not find.</param>
     /// <param name="hooksPending">Whether any plugin's <c>OnInit</c> is still to run.</param>
@@ -654,54 +694,12 @@ internal static class Program
     private static void ReportUnresolvableBindings(KeyMaps keyMaps, CommandRegistry commands,
                                                   PluginHost plugins)
     {
-        List<(string Keys, string Command)> broken = [];
+        IReadOnlyList<Canger.Core.Input.DeadBinding> found =
+            Canger.Core.Input.BindingCheck.Find(keyMaps, commands);
 
-        // Only the browser context. The console, pager and taskview maps name actions their own
-        // widgets handle — `console_close`, `pager_move`, `task_remove` — which never reach the
-        // registry at all, so resolving them against it would report every one of them as
-        // missing.
-        {
-            foreach ((IReadOnlyList<int> keys, string line) in keyMaps.Browser.Enumerate())
-            {
-                // Split on any whitespace, not just a space: a `map` line may separate the
-                // command from a trailing comment with tabs, and taking "cmd\t\t#" as the name
-                // reported a great many perfectly good bindings as broken.
-                string name = line.Split(
-                    (char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries) is [string first, ..]
-                    ? first
-                    : string.Empty;
+        List<(string Keys, string Command)> broken =
+            [.. found.Select(d => (d.Keys, d.Line))];
 
-                if (name.Length == 0)
-                {
-                    continue;
-                }
-
-                bool known;
-
-                try
-                {
-                    known = commands.Find(name) is not null;
-                }
-                catch (CommandException)
-                {
-                    // Ambiguous rather than missing: the name does resolve to something, and the
-                    // dispatcher reports the ambiguity itself when the key is pressed.
-                    known = true;
-                }
-
-                if (!known)
-                {
-                    broken.Add((string.Concat(keys.Select(KeyCodes.ToDisplayString)), line));
-                }
-            }
-        }
-
-        // A plugin's `OnInit` runs once the interface exists, which is after this report, so any
-        // alias it adds there is absent here and present in a real session. Whether an unresolved
-        // name is broken is therefore not knowable from here — and saying "does not exist" anyway
-        // was a false accusation against every such binding. A check that cries wolf is a check
-        // people learn to skip, which is how thirty-six genuinely dead bindings once went unseen
-        // behind a different fault in this same report.
         bool hooksPending = plugins.Plugins.Count > 0;
 
         Console.WriteLine(BindingSummary(broken.Count, hooksPending));

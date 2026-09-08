@@ -1,5 +1,44 @@
 # Canger — port status
 
+## Removing a plugin: Canger survives it, and now says what went quiet
+
+Asked after removing `devicons.cs` and finding the icons still there, with the worry that Canger
+might break without a plugin.
+
+**Every plugin was removed in turn and driven.** `archives.cs`, `devicons.cs`, `zoxide.cs`,
+`mka.cs`: in all four Canger started, listed, and navigated. Nothing crashes. The earlier mka
+breakage was not a plugin failing but a *key binding* naming a plugin's command — `<CR>` and
+`<RIGHT>` pointed at `mka_open`, so removing the plugin took navigation with it. That is fixed
+already: a plugin claims a file type through `FileOpeners` and takes no binding.
+
+**Why the icons stayed.** Canger loads plugins from **two** directories — the install directory's
+`config/plugins/` and `~/.config/canger/plugins/` — and `devicons.cs` ships in the first. Removing
+the user's copy leaves the shipped one, which is what kept drawing the icons. Not a defect: it is
+what makes `default_linemode devicons` work out of the box. The user's copy is a duplicate and can
+be deleted.
+
+**What was missing was the telling.** A binding is stored as text and resolved only when the key is
+pressed, so removing a plugin leaves every key that pointed at it silently doing nothing until
+somebody presses one and gets "unknown command", with nothing to connect that to the file they
+deleted. `--config` already found these, but only there, and with the caveat that it runs *before*
+plugin hooks — so a command a plugin adds in `OnInit` looked dead when it was not.
+
+The check now lives in `Canger.Core.Input.BindingCheck` and runs again in a real session **after
+`NotifyReady`**, which is the only moment the answer is trustworthy. It says nothing when everything
+resolves, and otherwise one line naming the count and where to see the names:
+
+```
+all present            (nothing said)
+without archives.cs    1 key binding names a command that does not exist — run: canger --config
+without zoxide.cs      1 key binding names a command that does not exist — run: canger --config
+without mka.cs         3 key bindings name a command that does not exist — run: canger --config
+without devicons.cs    (nothing said — it binds no commands)
+```
+
+**Controls:** a dead binding no longer reported fails 2; the trailing comment taken as part of the
+command name fails 5 — that last one guards a fault this check has had before, where good bindings
+were called dead and the report stopped being believed.
+
 ## Whether to show the volume outside the mode — no, and why
 
 Asked: should the volume show in normal mode too? No. The status line is deliberately the user's
