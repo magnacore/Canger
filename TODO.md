@@ -1,25 +1,5 @@
 # Canger — port status
 
-## The status bar lines up with the framed listing
-
-Reported: the bar does not line up with the browser's vertical rule. With `draw_borders` drawing an
-outline the frame takes column 0 and the listing starts at column 1, while the status bar started at
-column 0 — a column to the left of everything it describes, and its progress tint overhung the
-frame at both ends. Ranger has the same offset; **a deliberate divergence**, because it is a small
-thing to look at all day.
-
-The bar is now laid out inset by the frame: measured on screen, frame at column 0, listing content
-and status text both at column 1.
-
-**Controls, and the seam between them.** The rule — which border settings mean a frame — failed 6
-when broken, and the multipane fallback failed 1. But **removing the inset from the layout
-altogether broke nothing**, because every test asked the rule rather than the result. The inset and
-the arithmetic that applies it now live in one method, `Browser.StatusBarBounds`, and that mutation
-fails 3.
-
-Left over and pre-existing: the right-hand block's text ends one column inside its bounds, so the
-right edge has a column of air where the left has none.
-
 ## No preview for a `.mka`, and it was not Canger
 
 Reported: an `.mp3` shows information in the preview pane and an `.mka` shows nothing.
