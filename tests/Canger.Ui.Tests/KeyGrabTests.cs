@@ -69,6 +69,26 @@ public class ActivityBadgeTests
     }
 
     [Fact]
+    public void ItIsSetOffFromTheLineByASpaceOfItsOwn()
+    {
+        // The spaces the badge pads itself with are inside its highlighted block, so they read as
+        // part of the block and the line starts flush against it. The gap has to be outside.
+        (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.ActivityDescription = "00:04:21 / 00:06:44";
+        bar.ActivityBadge = "MPV";
+
+        bar.Render(screen);
+
+        string line = screen.TextAt(0);
+        int badge = line.IndexOf("MPV", StringComparison.Ordinal);
+        int clock = line.IndexOf("00:04:21", StringComparison.Ordinal);
+
+        Assert.Equal(' ', line[clock - 1]);
+        Assert.Equal(screen[clock, 0].Style, screen[clock - 1, 0].Style);
+        Assert.NotEqual(screen[badge, 0].Style, screen[clock - 1, 0].Style);
+    }
+
+    [Fact]
     public void NoBadgeLeavesTheLineAsItWas()
     {
         (StatusBar bar, ScreenBuffer screen) = Build();

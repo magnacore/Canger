@@ -179,9 +179,13 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
 
         string badge = ActivityBadge is { Length: > 0 } word ? $" {word} " : string.Empty;
 
+        // The badge's own spaces are inside the block it is picked out with, so they read as part
+        // of it rather than as a gap. This one is not, and is what keeps the line off the block.
+        string gap = badge.Length > 0 ? " " : string.Empty;
+
         // Measured as it will be drawn, not by character count: a CJK title is twice as wide as
         // its length suggests, and the left block would be overwritten by the difference.
-        int width = new WideString(badge + text).Width + 2;
+        int width = new WideString(badge + gap + text).Width + 2;
 
         // Left out rather than truncated, and left out rather than written over the file under
         // the cursor: on a narrow terminal what is under the cursor is worth more than what is
@@ -198,6 +202,7 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             x += screen.Write(x, Bounds.Y, badge,
                               colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
                                                                   ContextKey.Marked)));
+            x += screen.Write(x, Bounds.Y, gap, baseStyle);
         }
 
         screen.Write(x, Bounds.Y, text, baseStyle);
