@@ -44,9 +44,11 @@ public sealed class ScoutCommand : CangerCommand
         // so marking left the cursor where it was and the search appeared to have missed.
         bool found = MoveToFirstMatch(pattern, flags);
 
-        // Remembered so `n` can repeat it. Ranger does the same at this point
-        // (config/commands.py:1607-1608), which is what connects `/` to `search_next`.
-        FileManager.CurrentTab.LastSearch = pattern;
+        // Remembered so `n` can repeat it — the matcher itself, so `n` repeats the search that
+        // was actually made rather than one built from the pattern by different rules. Ranger
+        // does the same at this point (config/commands.py:1607-1608), which is what connects
+        // `/` to `search_next`.
+        FileManager.CurrentTab.LastSearch = BuildFilter(pattern, flags);
         FileManager.SearchMethod = "search";
 
         // 'p' keeps the filter after the prompt closes; without it the narrowing is only a

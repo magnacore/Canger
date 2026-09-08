@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.Model.Filters;
+
 namespace Canger.Core.Model;
 
 /// <summary>
@@ -156,10 +158,22 @@ public sealed class Tab
     /// What was last searched for here, so <c>n</c> can repeat it.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Per tab, as in ranger (<c>core/tab.py:21</c>): each tab is a separate place to be looking
     /// at something, and repeating a search should repeat the one made here.
+    /// </para>
+    /// <para>
+    /// The matcher rather than the pattern, because the pattern alone does not say how it was
+    /// meant to be read. Scout's flags decide that — <c>r</c> hands the text over as a regular
+    /// expression, <c>g</c> reads it as a glob, <c>l</c> lets characters fall between the ones
+    /// typed, <c>i</c> and <c>s</c> settle the case, <c>v</c> inverts the whole thing, and a
+    /// leading <c>^</c> anchors it whichever of those applies. Keeping the text meant <c>n</c>
+    /// had to guess, and guessed "plain substring", so <c>scout -m ^prefix</c> marked its files
+    /// and then <c>n</c> looked for a literal caret and found nothing. Ranger keeps the compiled
+    /// regex here for the same reason (<c>config/commands.py:1608</c>).
+    /// </para>
     /// </remarks>
-    public string? LastSearch { get; set; }
+    public IFileFilter? LastSearch { get; set; }
 
     /// <summary>Raised with the directory being left, whenever the tab moves.</summary>
     public event EventHandler<string>? Left;
