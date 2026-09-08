@@ -58,14 +58,28 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     public string? ActivityDescription { get; set; }
 
     /// <summary>
-    /// A word shown before <see cref="ActivityDescription"/> and picked out, or
-    /// <see langword="null"/>.
+    /// A word picked out among the right-hand flags, or <see langword="null"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Drawn reversed, which is what the colourscheme already uses to mean "notice this" and
     /// which therefore reads the same in every scheme without any of them having to be taught a
     /// new context. It is for a state, not a figure: while the keyboard belongs to something else,
     /// every key does something different, and the bar has to say so at a glance.
+    /// </para>
+    /// <para>
+    /// With <c>Mrk</c>, <c>VIS</c> and <c>FROZEN</c> at the right-hand end, because that is where
+    /// this bar says what state you are in and the eye already goes there for it. It sat in front
+    /// of <see cref="ActivityDescription"/> at first, which put one flag somewhere no other flag
+    /// appears.
+    /// </para>
+    /// <para>
+    /// Independent of <see cref="ActivityDescription"/>, as the flags beside it are. A mode
+    /// indicator drawn only when something else has text to show is one that goes out while the
+    /// mode is still on — which it did, before mpv had said anything, with the keyboard handed
+    /// over the whole time. A message or a queued task still takes the whole bar and every flag
+    /// on it, this one included.
+    /// </para>
     /// </remarks>
     public string? ActivityBadge { get; set; }
 
@@ -177,15 +191,9 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             return;
         }
 
-        string badge = ActivityBadge is { Length: > 0 } word ? $" {word} " : string.Empty;
-
-        // The badge's own spaces are inside the block it is picked out with, so they read as part
-        // of it rather than as a gap. This one is not, and is what keeps the line off the block.
-        string gap = badge.Length > 0 ? " " : string.Empty;
-
         // Measured as it will be drawn, not by character count: a CJK title is twice as wide as
         // its length suggests, and the left block would be overwritten by the difference.
-        int width = new WideString(badge + gap + text).Width + 2;
+        int width = new WideString(text).Width + 2;
 
         // Left out rather than truncated, and left out rather than written over the file under
         // the cursor: on a narrow terminal what is under the cursor is worth more than what is
@@ -195,17 +203,7 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             return;
         }
 
-        int x = limit - width;
-
-        if (badge.Length > 0)
-        {
-            x += screen.Write(x, Bounds.Y, badge,
-                              colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
-                                                                  ContextKey.Marked)));
-            x += screen.Write(x, Bounds.Y, gap, baseStyle);
-        }
-
-        screen.Write(x, Bounds.Y, text, baseStyle);
+        screen.Write(limit - width, Bounds.Y, text, baseStyle);
     }
 
     /// <summary>Draws permissions, ownership, size and time for the file under the cursor.</summary>
@@ -451,6 +449,14 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
         if (Frozen)
         {
             parts.Add(("FROZEN", scroll.With(ContextKey.Frozen)));
+        }
+
+        // Last, so it sits at the end of the row of flags where the eye lands. No padding of its
+        // own: the separator between the parts is what spaces them, and a badge that padded
+        // itself would be two columns wider than `Mrk` and `VIS` for the same word.
+        if (ActivityBadge is { Length: > 0 } badge)
+        {
+            parts.Add((badge, scroll.With(ContextKey.Marked)));
         }
 
         // Measured before anything is drawn: a right-aligned line has to know its full width to

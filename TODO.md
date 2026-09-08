@@ -1,5 +1,46 @@
 # Canger — port status
 
+## The activity badge moves in with the other flags
+
+Reported that badges belong at the right-hand end of the status bar, where `Mrk` and `VIS` are,
+while the `MPV` badge sat in front of the activity line — the one flag in a place no other flag
+appears. With an instruction to pay attention to the spacing.
+
+It is now the last of the parts `DrawRight` builds, so the two-column separator between the flags
+and the one-column margin off the right edge apply to it as they do to the rest, and it lines up
+with them. **Its own padding is gone**: `" MPV "` was two columns wider than `VIS` for a word of
+the same length, and the separator is what spaces these.
+
+**It no longer depends on there being a line.** A badge names a state, and `Describe()` returns
+null before mpv has said anything — so the flag was missing for the first second or two of the
+mode, with the keyboard handed over the whole time. A flag that goes out while the state it names
+is still true is worse than no flag. A message or a queued task still takes the whole bar and
+every flag on it, this one included, exactly as it does for `Mrk` and `VIS`.
+
+**`Describe()` is now asked on every frame**, whatever else the bar is showing. It is the only
+heartbeat a plugin gets, and it is where mpv's output is drained and its exit noticed — the exit
+being what hands the keyboard back. Asking only while the queue was quiet meant a copy running for
+a minute left the pipe filling and, if mpv ended in that minute, a keyboard grab pointed at a
+process that no longer existed.
+
+The decision now lives in `Browser.ActivityFor`, a static rule, because a `Browser` cannot be
+built without a terminal and this is the only way it can be tested. Six controls, three on the bar
+and three on the rule: the badge not among the flags fails 3; the badge requiring a line fails 2;
+the badge padding itself fails 1; the badge dropped under a headline fails 1; no heartbeat under a
+headline fails 1; the badge requiring a line in the rule fails 1. All compiled.
+
+**Removing the plugin.** Asked for, and checked with the plugin actually moved aside and Canger
+driven: it starts, lists and navigates; the status bar reads exactly as it did before any of this
+existed — nothing feeds `ActivityBadge`, so `DrawRight` adds no part and the flags are unchanged;
+`pam` answers `unknown command: mka_mode`; and startup says `3 key bindings name a command that
+does not exist — run: canger --config`. `ActivityFor(null, …)` is `(null, null, null)` and holds
+no state between frames, which is the whole of what removal has to do. The live plugin was
+restored byte-identically (same SHA-256).
+
+Not driven through mpv itself: seeing the badge in place means playing audio out loud on the
+user's machine. The placement, spacing and styles are asserted by column and by cell style in
+`ActivityBadgeTests`.
+
 ## Starting on a file selects it, and the rule was already there
 
 `canger notes.txt` refused with `not a directory`, where ranger opens the directory holding the
