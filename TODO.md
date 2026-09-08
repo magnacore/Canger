@@ -1,5 +1,38 @@
 # Canger — port status
 
+## The volume shows on the status line while the mode is on
+
+Reported: pressing the volume keys changed it with nothing on screen to say so, where mpv in a
+terminal announces it.
+
+mpv **does** write its OSD to standard output through a pipe — `Volume: 98%`, `Speed: 1.65` were
+measured — but picking those out means telling them from its start-up chatter by their shape, which
+is a parser waiting to be wrong. `term-status-msg` can instead be **set while mpv is running**, so
+the line itself is extended for as long as the mode lasts and put back when it ends. The figure is
+then always there rather than flashing past, which suits a mode whose only purpose is adjusting it.
+
+Speed is added only where the user's own format does not already show it, so a format ending
+`${speed}x` is not made to say it twice.
+
+**The first pair of controls came back empty** — the pty run proved the behaviour and no test
+pinned it, because the only observable was a socket write to an mpv that tests do not have. The
+choice of format moved into `Playback.DisplayFor(display, handsOver)`, a pure function the tests
+reach; the mutations now fail 2 and 1.
+
+pty, with the reporter's own format:
+
+```
+playing              00:00:36 / 00:01:00 (8%) 1.5x
+after pam            MPV  00:00:34 / 00:01:00 (13%) 1.5x   vol 100%
+after 9 9  (down)    vol 96%
+after 0 0 0 (up)     vol 102%
+after Escape         00:00:29 / 00:01:00 (27%) 1.5x        the volume is gone again
+```
+
+**Worth telling the user:** mpv's own defaults are `9` down and **`0` up**, not `8` — they have no
+`input.conf`, so `8` is bound to nothing and does nothing. The plugin forwards the key faithfully;
+there is nothing to fix on this side.
+
 ## An mpv mode: `pam` hands the keyboard over, Escape takes it back
 
 Asked for: a mode where mpv's own keys work rather than Canger's, so speed (`[` `]`) and volume

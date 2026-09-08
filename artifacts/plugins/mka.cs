@@ -120,6 +120,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     private double? _progress;
     private bool _paused;
     private bool _handsOver;
+    private string _display = DefaultStatusFormat;
 
     /// <summary>The format used where mpv's configuration names none.</summary>
     internal static string PlainStatusFormat => DefaultStatusFormat;
@@ -190,6 +191,8 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
 
         _handsOver = !_handsOver;
         _fileManager.KeyGrab = _handsOver ? this : null;
+
+        ShowWhatTheModeIsFor();
         _fileManager.Redraw();
     }
 
@@ -221,6 +224,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         {
             _handsOver = false;
             _fileManager.KeyGrab = null;
+            ShowWhatTheModeIsFor();
 
             return key == KeyCodes.Escape;
         }
@@ -267,10 +271,12 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         // `--msg-level=all=…` value tried — no, error, warn — gave nothing, because the status
         // message rides that same log level. What is left is three lines of start-up chatter on
         // standard output, which nothing looks at.
+        _display = MpvConfiguration.StatusFormat();
+
         string command =
             $"mpv --no-video --idle=no --input-terminal=no " +
             $"--input-ipc-server={Quote(_socket)} " +
-            $"--term-status-msg={Quote(StatusFormat(MpvConfiguration.StatusFormat()))} " +
+            $"--term-status-msg={Quote(StatusFormat(_display))} " +
             $"{Quote(path)}";
 
         _process = _fileManager.Runner.StartInBackground(new ProcessRequest(command));
@@ -416,6 +422,67 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
                 ? Math.Clamp(percent / 100, 0, 1)
                 : null;
     }
+
+    /// <summary>
+    /// Puts the volume on the status line while the keyboard belongs to mpv, and takes it off
+    /// again afterwards.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Reported: pressing <c>8</c> and <c>9</c> changed the volume with nothing on screen to show
+    /// it, where mpv in a terminal says so. mpv does write <c>Volume: 98%</c> to standard output
+    /// even through a pipe, but picking those lines out means telling them apart from its start-up
+    /// chatter by their shape, which is a parser waiting to be wrong.
+    /// </para>
+    /// <para>
+    /// <c>term-status-msg</c> can be set while mpv is running, so the line itself is extended for
+    /// as long as the mode lasts and put back when it ends. The figure is then always there rather
+    /// than flashing past, which suits a mode whose whole purpose is adjusting it.
+    /// </para>
+    /// <para>
+    /// Speed is appended only where the user's own format does not already show it, so a format
+    /// that says <c>${speed}x</c> — as the reporter's does — is not made to say it twice.
+    /// </para>
+    /// </remarks>
+    private void ShowWhatTheModeIsFor()
+    {
+        string display = DisplayFor(_display, _handsOver);
+
+        Send($$"""{"command":["set_property","term-status-msg","{{Escape(StatusFormat(display))}}"]}""");
+    }
+
+    /// <summary>The status format for a given state of the mode.</summary>
+    /// <param name="display">The user's own format.</param>
+    /// <param name="handsOver">Whether the keyboard belongs to mpv.</param>
+    /// <returns>What mpv should be told to print.</returns>
+    /// <remarks>
+    /// Volume is added while the mode is on and taken away afterwards, because the mode exists to
+    /// change it and the user's own format has no reason to carry it the rest of the time. Speed
+    /// is added only where the format does not already show it, so a format saying <c>${speed}x</c>
+    /// is not made to say it twice.
+    /// </remarks>
+    internal static string DisplayFor(string display, bool handsOver)
+    {
+        if (!handsOver)
+        {
+            return display;
+        }
+
+        return display.Contains("speed", StringComparison.OrdinalIgnoreCase)
+            ? display + "  vol ${volume}%"
+            : display + "  vol ${volume}%  x${speed}";
+    }
+
+    /// <summary>Escapes a string for the JSON the IPC socket speaks.</summary>
+    /// <param name="text">The text to embed.</param>
+    /// <returns>The text, safe between quotation marks.</returns>
+    /// <remarks>
+    /// A format is the user's own text and may hold a quotation mark or a backslash; either would
+    /// end the command early and leave mpv with a status line nobody asked for.
+    /// </remarks>
+    private static string Escape(string text) =>
+        text.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
 
     /// <summary>Sends one command to mpv over its IPC socket.</summary>
     /// <param name="json">The command, as mpv's JSON IPC expects it.</param>

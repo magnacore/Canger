@@ -304,6 +304,59 @@ public sealed class ShippedMkaTests : IDisposable
         Assert.Null(manager.KeyGrab);
     }
 
+    /// <summary>Asks the compiled plugin what it would tell mpv to print.</summary>
+    private static string DisplayFor(string display, bool handsOver)
+    {
+        string plugins = PluginDirectory();
+        Assert.SkipWhen(plugins.Length == 0, "the repository layout was not found");
+
+        CompilationResult compiled =
+            new ScriptCompiler().Compile("mka", [Path.Join(plugins, "mka.cs")]);
+
+        Assert.True(compiled.Succeeded, string.Join("; ", compiled.Diagnostics));
+
+        MethodInfo method = compiled.Assembly!.GetType("Playback")!.GetMethod(
+            "DisplayFor", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!;
+
+        return (string)method.Invoke(null, [display, handsOver])!;
+    }
+
+    [Fact]
+    public void TheModeAddsTheVolumeToTheLine()
+    {
+        // Reported: pressing the volume keys changed it with nothing on screen to show it.
+        Assert.Contains("${volume}", DisplayFor("${time-pos} / ${duration}", handsOver: true),
+                        StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LeavingTheModeTakesItOffAgain()
+    {
+        // The user's own format has no reason to carry the volume the rest of the time.
+        const string Theirs = "${playtime-remaining} / ${duration} (${percent-pos}%) ${speed}x";
+
+        Assert.Equal(Theirs, DisplayFor(Theirs, handsOver: false));
+    }
+
+    [Fact]
+    public void SpeedIsNotAddedToAFormatThatAlreadyShowsIt()
+    {
+        // The reporter's format ends in ${speed}x; saying it twice would be worse than not at all.
+        const string Theirs = "${playtime-remaining} / ${duration} (${percent-pos}%) ${speed}x";
+
+        string mode = DisplayFor(Theirs, handsOver: true);
+
+        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(mode, @"\$\{speed\}"));
+    }
+
+    [Fact]
+    public void SpeedIsAddedToAFormatThatDoesNot()
+    {
+        string mode = DisplayFor("${time-pos} / ${duration}", handsOver: true);
+
+        Assert.Contains("${speed}", mode, StringComparison.Ordinal);
+    }
+
     /// <summary>Reads a term-status-msg line the way the plugin does.</summary>
     private static string? ParseOption(string line)
     {
