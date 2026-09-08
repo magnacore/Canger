@@ -1,5 +1,28 @@
 # Canger — port status
 
+## No preview for a `.mka`, and it was not Canger
+
+Reported: an `.mp3` shows information in the preview pane and an `.mka` shows nothing.
+
+`file(1)` types an audio-only Matroska as **`video/x-matroska`**, not audio. The user's `scope.sh`
+handles `video/*` in `handle_image` by running `ffmpegthumbnailer` and then `exit 1` — and a file
+with no video stream cannot be thumbnailed, so it ended there with no preview at all. An `.mp3` is
+`audio/mpeg`, misses that branch entirely, and reaches `mediainfo` further down.
+
+**Canger's own shipped `config/scope.sh` has that branch commented out**, so this was the user's
+configuration rather than a defect here. Fixed in their copy by dropping the `exit 1`, so anything
+that cannot be thumbnailed falls out of `handle_image` and reaches its metadata instead. Measured
+against the script's own exit codes:
+
+```
+                      old   new
+audio-only .mka        1     5     (1 = nothing, 5 = text preview)
+.mp3                   5     5
+a real .mkv            6     6     thumbnail still written
+```
+
+Their previous scope.sh is kept at `/tmp/scope.sh.backup`.
+
 ## A plugin claims a file type instead of taking a key binding
 
 Reported: "I removed the mka plugin to test whether Canger works without it, and now I cannot open
