@@ -279,3 +279,71 @@ public class PluginHostTests : IDisposable
         Assert.Empty(result.Diagnostics);
     }
 }
+
+/// <summary>
+/// What a plugin is allowed to reference.
+/// </summary>
+/// <remarks>
+/// The reference set was everything Canger had <em>loaded</em>, which is not the same as
+/// everything it can use: the runtime loads an assembly when something first needs it, so a
+/// plugin asking for <c>System.Net.Sockets</c> was told the namespace does not exist merely
+/// because Canger had never opened a socket. A plugin's reach depended on what the program
+/// happened to have done first, which is not a rule anyone could work with.
+/// </remarks>
+public class PluginReferenceTests
+{
+    private static CompilationResult Compile(string source)
+    {
+        string directory = Path.Join(Path.GetTempPath(), "canger-refs-" + Path.GetRandomFileName());
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            string file = Path.Join(directory, "plugin.cs");
+            File.WriteAllText(file, source);
+
+            return new ScriptCompiler().Compile("refs", [file]);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    // `System.Net.Sockets` is the one that prompted this — an mpv control socket — but it is not
+    // listed, because the test host loads it for its own reasons and the case would pass with the
+    // fix removed. These two do not resolve without it.
+    [Theory]
+    [InlineData("System.Net.Http", "HttpClient")]
+    [InlineData("System.Text.Json", "JsonSerializerOptions")]
+    public void APluginMayNameAFrameworkTypeCangerHasNeverTouched(string space, string type)
+    {
+        // Named types rather than a namespace check, because it is the type that has to resolve.
+        CompilationResult result = Compile($$"""
+            using {{space}};
+
+            internal static class Probe
+            {
+                internal static string Name => typeof({{type}}).Name;
+            }
+            """);
+
+        Assert.True(result.Succeeded,
+                    $"{space}.{type} did not resolve: {string.Join("; ", result.Diagnostics)}");
+    }
+
+    [Fact]
+    public void APluginStillCannotNameSomethingThatDoesNotExist()
+    {
+        // The other half: a wider reference set must not have become a compiler that accepts
+        // anything, or the test above would pass for the wrong reason.
+        CompilationResult result = Compile("""
+            internal static class Probe
+            {
+                internal static string Name => typeof(System.Net.NoSuchTypeAtAll).Name;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+    }
+}

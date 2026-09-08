@@ -168,11 +168,21 @@ public sealed class ScriptCompiler(string? cacheDirectory = null)
     }
 
     /// <summary>
-    /// What a script may reference: everything Canger itself has loaded.
+    /// What a script may reference: the whole framework, plus everything Canger has loaded.
     /// </summary>
     /// <remarks>
-    /// Handing over the whole loaded set rather than a curated list means a plugin can use
-    /// anything Canger can, which is the point of writing plugins in the same language.
+    /// <para>
+    /// Handing over the whole set rather than a curated list means a plugin can use anything
+    /// Canger can, which is the point of writing plugins in the same language.
+    /// </para>
+    /// <para>
+    /// The <em>loaded</em> set is not that. The runtime loads an assembly when something first
+    /// needs it, so a plugin wanting <c>System.Net.Sockets</c> was told the namespace does not
+    /// exist merely because Canger had never opened a socket — a plugin's reach depended on what
+    /// the program happened to have done first. The trusted platform assemblies are what the
+    /// application was built against, loaded or not, which is the set a plugin author would
+    /// expect.
+    /// </para>
     /// </remarks>
     private List<MetadataReference> References()
     {
@@ -183,6 +193,26 @@ public sealed class ScriptCompiler(string? cacheDirectory = null)
 
         List<MetadataReference> references = [];
         HashSet<string> seen = new(StringComparer.Ordinal);
+
+        // The framework as shipped, whether or not any of it has been touched yet.
+        if (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") is string trusted)
+        {
+            foreach (string path in trusted.Split(Path.PathSeparator))
+            {
+                if (path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && seen.Add(path))
+                {
+                    try
+                    {
+                        references.Add(MetadataReference.CreateFromFile(path));
+                    }
+                    catch (Exception e) when (e is IOException or BadImageFormatException)
+                    {
+                        // Listed but unreadable. One missing reference is a compile error the
+                        // plugin author can see; refusing to compile anything at all is not.
+                    }
+                }
+            }
+        }
 
         IEnumerable<Assembly> candidates = AppDomain.CurrentDomain.GetAssemblies()
             .Concat(AdditionalReferences);

@@ -41,6 +41,19 @@ public sealed class OpenCommand : CangerCommand
             return;
         }
 
+        // Offered to whatever has claimed this kind of file, but only for a plain open: a named
+        // or numbered alternative is a deliberate choice of program.
+        if (number == 0 && label is null && flags.Length == 0)
+        {
+            foreach (Func<IReadOnlyList<string>, bool> opener in fileManager.FileOpeners)
+            {
+                if (opener(paths))
+                {
+                    return;
+                }
+            }
+        }
+
         OpenResult result = fileManager.Opener.Open(paths, number, label, flags);
 
         if (result.NeedsUserChoice)
