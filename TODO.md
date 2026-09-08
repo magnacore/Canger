@@ -1,5 +1,43 @@
 # Canger — port status
 
+## An mpv mode: `pam` hands the keyboard over, Escape takes it back
+
+Asked for: a mode where mpv's own keys work rather than Canger's, so speed (`[` `]`) and volume
+(`8` `9`) can be changed without every one of them meaning something else to the browser, with a
+coloured word in the status bar saying which mode you are in.
+
+**mpv accepts forwarded keys by name over its IPC socket**, which was measured before anything was
+built: two `]` took the speed from 1.5 to 1.815 and three `9` took the volume from 100 to 94 —
+mpv's own bindings and step sizes, so whatever the user has configured is what the key does. That
+is why keys are forwarded rather than translated into commands here.
+
+**Core.** `IKeyGrab` and `IFileManager.KeyGrab`: something holding the keyboard ahead of the
+browser's bindings. `IBackgroundActivity.Badge` puts a word in front of the activity line, drawn
+reversed — the colourscheme already uses that to mean "notice this", so it reads the same in every
+scheme without teaching any of them a new context.
+
+**Only ahead of the browser.** The console, the pager, the task view and the device list keep their
+keys: each is something the user opened and has to be able to close, and a grab that swallowed the
+key closing one would be a trap with no way out. Escape is never forwarded either, for the same
+reason.
+
+The keyboard is given back when playback ends, or the keys would point at a program that is no
+longer there.
+
+**Controls:** the grab asked while an overlay is up fails 1; Escape forwarded like any other key
+fails 1; the badge drawn in the ordinary style fails 1. The first draft of the grab test was
+vacuous — it asserted only that the property round-tripped — so the ordering rule moved into
+`Browser.GrabTakes`, which the tests actually exercise.
+
+pty, end to end:
+
+```
+playing             speed 1.5, cursor 1/2
+after pam           badge at column 82, style 0;1;7;93 against a plain bar
+after 9 ] j         speed 1.65, cursor 1/2  — j did not reach the browser
+after Escape and j  badge gone, cursor 2/2  — the keys are back
+```
+
 ## Status bar alignment: inset the bar, then put it back
 
 Reported as the status bar not lining up with the browser's vertical rule. I read that as "the text

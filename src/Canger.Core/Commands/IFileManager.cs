@@ -82,6 +82,16 @@ public interface IFileManager
     /// </remarks>
     IList<Func<IReadOnlyList<string>, bool>> FileOpeners { get; }
 
+    /// <summary>
+    /// Something holding the keyboard ahead of the browser's bindings, or <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// One at a time, and a plugin's to set and clear. Ahead of the browser only: the console, the
+    /// pager, the task view and the device list keep their keys, so whatever a grab does there is
+    /// always a way back out of it.
+    /// </remarks>
+    Input.IKeyGrab? KeyGrab { get; set; }
+
     /// <summary>The key bindings, so the map commands can change them at run time.</summary>
     KeyMaps KeyMaps { get; }
 

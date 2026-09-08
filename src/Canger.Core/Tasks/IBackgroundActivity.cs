@@ -36,4 +36,14 @@ public interface IBackgroundActivity
     /// How far through it is, from 0 to 1, or <see langword="null"/> for no bar.
     /// </summary>
     double? Progress { get; }
+
+    /// <summary>
+    /// A short word shown before the line and picked out, or <see langword="null"/> for none.
+    /// </summary>
+    /// <remarks>
+    /// For a state the user is in rather than a figure they are watching — that the keyboard has
+    /// been handed to something else, say, which is worth saying loudly because every key does
+    /// something different until it is handed back.
+    /// </remarks>
+    string? Badge => null;
 }

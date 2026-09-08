@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.Net.Sockets;
 using System.Text;
+using Canger.Core.Input;
 using Canger.Core.Processes;
 using Canger.Core.Tasks;
 
@@ -62,7 +63,7 @@ internal static class Playable
 /// what mpv has written; nothing is parsed twice, because only the last line matters.
 /// </para>
 /// </remarks>
-internal sealed class Playback : IBackgroundActivity
+internal sealed class Playback : IBackgroundActivity, IKeyGrab
 {
     /// <summary>What mpv is told to print, and what this looks for.</summary>
     private const string Marker = "canger-mka:";
@@ -118,6 +119,7 @@ internal sealed class Playback : IBackgroundActivity
     private string? _text;
     private double? _progress;
     private bool _paused;
+    private bool _handsOver;
 
     /// <summary>The format used where mpv's configuration names none.</summary>
     internal static string PlainStatusFormat => DefaultStatusFormat;
@@ -131,6 +133,16 @@ internal sealed class Playback : IBackgroundActivity
 
     /// <inheritdoc />
     public double? Progress => _progress;
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Only while the keyboard belongs to mpv, because that is the state worth announcing: every
+    /// key does something different until it is handed back, and the way back is Escape.
+    /// </remarks>
+    public string? Badge => _handsOver ? "MPV" : null;
+
+    /// <summary>Whether the keyboard has been handed to mpv.</summary>
+    internal bool HandsOver => _handsOver;
 
     /// <inheritdoc />
     public string? Describe()
@@ -158,6 +170,67 @@ internal sealed class Playback : IBackgroundActivity
         return _paused && !_text.Contains("paused", StringComparison.OrdinalIgnoreCase)
             ? PausedPrefix + _text
             : _text;
+    }
+
+    /// <summary>
+    /// Hands the keyboard to mpv, or takes it back.
+    /// </summary>
+    /// <remarks>
+    /// mpv's own keys are the point: <c>[</c> and <c>]</c> for speed, <c>8</c> and <c>9</c> for
+    /// volume, the arrows for seeking. Every one of them means something to the browser, so they
+    /// cannot simply be forwarded all the time — the user says when.
+    /// </remarks>
+    internal void ToggleKeyboard()
+    {
+        if (!IsActive)
+        {
+            _fileManager.Notify("mka: nothing is playing", isError: true);
+            return;
+        }
+
+        _handsOver = !_handsOver;
+        _fileManager.KeyGrab = _handsOver ? this : null;
+        _fileManager.Redraw();
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <para>
+    /// Escape is the way out and is never forwarded, so the keyboard cannot be lost: whatever mpv
+    /// would do with it matters less than always being able to take the keys back.
+    /// </para>
+    /// <para>
+    /// Everything else goes to mpv by name, through its <c>keypress</c> command, so what a key
+    /// does is whatever the user's own mpv configuration says it does — measured: two <c>]</c>
+    /// took the speed from 1.5 to 1.815, and three <c>9</c> took the volume from 100 to 94, which
+    /// are mpv's own bindings and step sizes rather than anything reimplemented here.
+    /// </para>
+    /// <para>
+    /// A key mpv has no name for is swallowed rather than passed to the browser. Handing half the
+    /// keyboard back while the bar still says MPV would be worse than doing nothing with it.
+    /// </para>
+    /// </remarks>
+    public bool Handle(int key)
+    {
+        if (!_handsOver)
+        {
+            return false;
+        }
+
+        if (key == KeyCodes.Escape || !IsActive)
+        {
+            _handsOver = false;
+            _fileManager.KeyGrab = null;
+
+            return key == KeyCodes.Escape;
+        }
+
+        if (MpvKeys.NameOf(key) is { } name)
+        {
+            Send($$"""{"command":["keypress","{{name}}"]}""");
+        }
+
+        return true;
     }
 
     /// <summary>Starts playing a file, replacing whatever was playing.</summary>
@@ -211,6 +284,14 @@ internal sealed class Playback : IBackgroundActivity
         _text = null;
         _progress = null;
         _paused = false;
+
+        // The keyboard goes back with the playback it belonged to. Without this, a file reaching
+        // its end would leave the keys pointed at a program that is no longer there.
+        if (_handsOver)
+        {
+            _handsOver = false;
+            _fileManager.KeyGrab = null;
+        }
 
         // Said with the status line rather than with a message. A message outranks the activity
         // it is announcing, so "playing OSHO.mka" sat over the very clock it was telling the user
@@ -375,6 +456,14 @@ internal sealed class Playback : IBackgroundActivity
         _text = null;
         _progress = null;
         _paused = false;
+
+        // The keyboard goes back with the playback it belonged to. Without this, a file reaching
+        // its end would leave the keys pointed at a program that is no longer there.
+        if (_handsOver)
+        {
+            _handsOver = false;
+            _fileManager.KeyGrab = null;
+        }
 
         if (ReferenceEquals(_fileManager.BackgroundActivity, this))
         {
@@ -550,6 +639,14 @@ public sealed class MkaPauseCommand : CangerCommand
     public override void Execute() => Current.For(FileManager).TogglePause();
 }
 
+/// <summary>Hands the keyboard to mpv, or takes it back.</summary>
+[Command("mka_mode", Summary = "Send keys to mpv until Escape.")]
+public sealed class MkaModeCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute() => Current.For(FileManager).ToggleKeyboard();
+}
+
 /// <summary>Stops what is playing.</summary>
 [Command("mka_stop", Summary = "Stop background playback.")]
 public sealed class MkaStopCommand : CangerCommand
@@ -568,6 +665,45 @@ public sealed class MkaStopCommand : CangerCommand
         // Nothing to say: the clock leaving the status bar is the message, and a message would
         // only cover the bar it just vacated.
         playback.Stop();
+    }
+}
+
+/// <summary>Names keys the way mpv names them.</summary>
+/// <remarks>
+/// mpv's <c>keypress</c> command takes a key by name, and the names are its own: a printable
+/// character is itself, and everything else has a word. Only the keys worth having while listening
+/// are translated — seeking, volume, speed and pause — because a key with no name is better
+/// swallowed than guessed at.
+/// </remarks>
+internal static class MpvKeys
+{
+    /// <summary>What mpv calls the keys that are not printable characters.</summary>
+    private static readonly Dictionary<int, string> Named = new()
+    {
+        [KeyCodes.Left] = "LEFT",
+        [KeyCodes.Right] = "RIGHT",
+        [KeyCodes.Up] = "UP",
+        [KeyCodes.Down] = "DOWN",
+        [KeyCodes.Space] = "SPACE",
+        [KeyCodes.Enter] = "ENTER",
+    };
+
+    /// <summary>mpv's name for a key, or <see langword="null"/> where it has none.</summary>
+    /// <param name="key">The key, as <see cref="KeyCodes"/> numbers them.</param>
+    /// <returns>The name to send, or <see langword="null"/>.</returns>
+    /// <remarks>
+    /// A printable character is sent as itself. The quotation mark and the backslash are left out
+    /// rather than escaped: they are not mpv bindings worth having, and the alternative is
+    /// building JSON by hand around a character that would break it.
+    /// </remarks>
+    internal static string? NameOf(int key)
+    {
+        if (Named.TryGetValue(key, out string? name))
+        {
+            return name;
+        }
+
+        return key is > 32 and < 127 and not '"' and not '\\' ? ((char)key).ToString() : null;
     }
 }
 

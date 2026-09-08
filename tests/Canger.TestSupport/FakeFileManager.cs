@@ -114,6 +114,9 @@ public sealed class FakeFileManager : IFileManager
     public IList<Func<IReadOnlyList<string>, bool>> FileOpeners { get; } = [];
 
     /// <inheritdoc />
+    public Canger.Core.Input.IKeyGrab? KeyGrab { get; set; }
+
+    /// <inheritdoc />
     public DirectoryCache Directories { get; }
 
     /// <inheritdoc />

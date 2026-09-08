@@ -57,6 +57,18 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
     /// </remarks>
     public string? ActivityDescription { get; set; }
 
+    /// <summary>
+    /// A word shown before <see cref="ActivityDescription"/> and picked out, or
+    /// <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// Drawn reversed, which is what the colourscheme already uses to mean "notice this" and
+    /// which therefore reads the same in every scheme without any of them having to be taught a
+    /// new context. It is for a state, not a figure: while the keyboard belongs to something else,
+    /// every key does something different, and the bar has to say so at a glance.
+    /// </remarks>
+    public string? ActivityBadge { get; set; }
+
     /// <summary>Progress of outstanding work, drawn as a tint across the bar.</summary>
     public double? Progress { get; set; }
 
@@ -165,9 +177,11 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             return;
         }
 
+        string badge = ActivityBadge is { Length: > 0 } word ? $" {word} " : string.Empty;
+
         // Measured as it will be drawn, not by character count: a CJK title is twice as wide as
         // its length suggests, and the left block would be overwritten by the difference.
-        int width = new WideString(text).Width + 2;
+        int width = new WideString(badge + text).Width + 2;
 
         // Left out rather than truncated, and left out rather than written over the file under
         // the cursor: on a narrow terminal what is under the cursor is worth more than what is
@@ -177,7 +191,16 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             return;
         }
 
-        screen.Write(limit - width, Bounds.Y, text, baseStyle);
+        int x = limit - width;
+
+        if (badge.Length > 0)
+        {
+            x += screen.Write(x, Bounds.Y, badge,
+                              colorScheme.Resolve(StyleContext.Of(ContextKey.InStatusbar,
+                                                                  ContextKey.Marked)));
+        }
+
+        screen.Write(x, Bounds.Y, text, baseStyle);
     }
 
     /// <summary>Draws permissions, ownership, size and time for the file under the cursor.</summary>

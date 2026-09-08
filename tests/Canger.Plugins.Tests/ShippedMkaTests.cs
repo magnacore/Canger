@@ -2,6 +2,7 @@
 using System.Reflection;
 using Canger.Core.Commands;
 using Canger.Core.Processes;
+using Canger.Core.Input;
 using Canger.Core.Tasks;
 using Canger.TestSupport;
 
@@ -210,6 +211,97 @@ public sealed class ShippedMkaTests : IDisposable
         Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(
                             line, "paused",
                             System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+    }
+
+    /// <summary>Starts playback against a fake mpv that never ends.</summary>
+    private static FakeFileManager Playing(FakeFileManager manager)
+    {
+        ((FakeFileManager.RecordingProcessRunner)manager.Runner).BackgroundResults["mpv"] =
+            new FakeFileManager.FakeBackgroundProcess { StepsBeforeExit = 10_000 };
+
+        manager.Execute("open");
+
+        return manager;
+    }
+
+    /// <summary>What the plugin sent to mpv's control socket, if anything reached it.</summary>
+    private static IKeyGrab Grab(FakeFileManager manager) =>
+        Assert.IsAssignableFrom<IKeyGrab>(manager.KeyGrab);
+
+    [Fact]
+    public void TheModeHandsTheKeyboardToMpvAndSaysSo()
+    {
+        FakeFileManager manager = Playing(Build());
+
+        Assert.Null(manager.KeyGrab);
+
+        manager.Execute("mka_mode");
+
+        Assert.NotNull(manager.KeyGrab);
+        Assert.Equal("MPV", manager.BackgroundActivity!.Badge);
+    }
+
+    [Fact]
+    public void EscapeTakesTheKeyboardBack()
+    {
+        // The way out, and it is never forwarded: whatever mpv would do with Escape matters less
+        // than always being able to take the keys back.
+        FakeFileManager manager = Playing(Build());
+        manager.Execute("mka_mode");
+
+        Assert.True(Grab(manager).Handle(KeyCodes.Escape));
+
+        Assert.Null(manager.KeyGrab);
+        Assert.Null(manager.BackgroundActivity!.Badge);
+    }
+
+    [Fact]
+    public void EveryOtherKeyIsSwallowedSoTheBrowserDoesNotAlsoAct()
+    {
+        // The whole point of the mode: `j` must not move the cursor while mpv has the keys.
+        FakeFileManager manager = Playing(Build());
+        manager.Execute("mka_mode");
+
+        IKeyGrab grab = Grab(manager);
+
+        Assert.True(grab.Handle('j'));
+        Assert.True(grab.Handle(']'));
+        Assert.True(grab.Handle(KeyCodes.Left));
+    }
+
+    [Fact]
+    public void TheModeIsOffAgainWhenNothingHoldsTheKeyboard()
+    {
+        FakeFileManager manager = Playing(Build());
+        manager.Execute("mka_mode");
+        manager.Execute("mka_mode");
+
+        Assert.Null(manager.KeyGrab);
+    }
+
+    [Fact]
+    public void TheModeCannotBeEnteredWithNothingPlaying()
+    {
+        FakeFileManager manager = Build();
+
+        manager.Execute("mka_mode");
+
+        Assert.Null(manager.KeyGrab);
+        Assert.Contains(manager.Messages, m => m.IsError);
+    }
+
+    [Fact]
+    public void StoppingGivesTheKeyboardBack()
+    {
+        // Otherwise a file reaching its end would leave the keys pointed at a program that is no
+        // longer there, and no key but Escape would do anything at all.
+        FakeFileManager manager = Playing(Build());
+        manager.Execute("mka_mode");
+        Assert.NotNull(manager.KeyGrab);
+
+        manager.Execute("mka_stop");
+
+        Assert.Null(manager.KeyGrab);
     }
 
     /// <summary>Reads a term-status-msg line the way the plugin does.</summary>

@@ -329,6 +329,9 @@ public sealed class Browser : IFileManager, IDisposable
     public IList<Func<IReadOnlyList<string>, bool>> FileOpeners { get; } = [];
 
     /// <inheritdoc />
+    public Core.Input.IKeyGrab? KeyGrab { get; set; }
+
+    /// <inheritdoc />
     public IFileSystem FileSystem { get; }
 
     /// <inheritdoc />
@@ -1591,8 +1594,18 @@ public sealed class Browser : IFileManager, IDisposable
             // branch to be correct, and the day one was left out every keystroke in the device
             // list ran twice: `q` closed the list and then quit Canger. Nothing failed, because
             // both halves did exactly what they were bound to do.
-            switch (FocusedOn(_console.IsOpen, _pager.IsVisible, _deviceView.IsVisible,
-                              _taskView.IsVisible))
+            KeyTarget target = FocusedOn(_console.IsOpen, _pager.IsVisible,
+                                         _deviceView.IsVisible, _taskView.IsVisible);
+
+            // Between the overlays and the bindings: something holding the keyboard takes the key
+            // instead of the browser, but never instead of the console or the pager, which the
+            // user opened and has to be able to close.
+            if (GrabTakes(target, KeyGrab, key.Key))
+            {
+                continue;
+            }
+
+            switch (target)
             {
                 case KeyTarget.Console:
                     HandleConsoleKey(key.Key);
@@ -2446,6 +2459,20 @@ public sealed class Browser : IFileManager, IDisposable
     /// <summary>How often the screen is looked at while something outside the queue reports.</summary>
     private const int ActivityDelayMilliseconds = 500;
 
+    /// <summary>Whether something holding the keyboard takes this key.</summary>
+    /// <param name="target">Whatever the key would otherwise go to.</param>
+    /// <param name="grab">What is holding the keyboard, if anything.</param>
+    /// <param name="key">The key.</param>
+    /// <returns><see langword="true"/> when the key was taken and nothing else should act on it.</returns>
+    /// <remarks>
+    /// Only where the key would have gone to the browser. The console, the pager, the task view
+    /// and the device list are things the user opened and has to be able to close, and a grab that
+    /// swallowed the key closing them would be a trap with no way out — so the grab is not even
+    /// asked while one of them is up.
+    /// </remarks>
+    internal static bool GrabTakes(KeyTarget target, Core.Input.IKeyGrab? grab, int key) =>
+        target == KeyTarget.Browser && grab is not null && grab.Handle(key);
+
     /// <summary>Draws the info lines over the bottom of the listing.</summary>
     /// <param name="lines">What to show, one per row.</param>
     /// <remarks>
@@ -2829,10 +2856,12 @@ public sealed class Browser : IFileManager, IDisposable
             // the heartbeat a plugin has no other way of getting. A copy therefore takes the bar
             // back for as long as it runs, and the quieter thing reappears when it is done.
             _statusBar.ActivityDescription = null;
+            _statusBar.ActivityBadge = null;
 
             if (_statusBar.TaskDescription is null && BackgroundActivity is { } activity)
             {
                 _statusBar.ActivityDescription = activity.Describe();
+                _statusBar.ActivityBadge = activity.Badge;
 
                 if (_statusBar.ActivityDescription is not null)
                 {
