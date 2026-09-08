@@ -2571,6 +2571,65 @@ public sealed class Browser : IFileManager, IDisposable
         new(0, Settings.StatusBarOnTop ? 2 : 1,
             _screen.Width, Math.Max(_screen.Height - (Settings.StatusBarOnTop ? 3 : 2), 0));
 
+    /// <summary>How far in the status bar starts, so it lines up with the listing.</summary>
+    /// <returns>One column where the view is framed, otherwise none.</returns>
+    /// <remarks>
+    /// The frame is the view's own and stops above the status row, so the inset is not to avoid
+    /// drawing over anything — it is so that the permissions on the left and the free space on the
+    /// right begin and end where the columns above them do.
+    /// </remarks>
+    /// <summary>Where the status bar goes.</summary>
+    /// <param name="bottom">The last row of the screen.</param>
+    /// <param name="statusOnTop">The <c>status_bar_on_top</c> setting.</param>
+    /// <param name="screenWidth">How wide the screen is.</param>
+    /// <param name="viewmode">The <c>viewmode</c> setting.</param>
+    /// <param name="drawBorders">The <c>draw_borders</c> setting.</param>
+    /// <param name="drawBordersMultipane">The <c>draw_borders_multipane</c> setting, or null.</param>
+    /// <returns>The row the bar occupies, inset to match the listing.</returns>
+    /// <remarks>
+    /// The inset and the arithmetic that applies it are in one place on purpose. Kept apart, the
+    /// rule was tested and the layout was not: removing the inset from the layout altogether broke
+    /// no test at all, because every test asked the rule rather than the result.
+    /// </remarks>
+    internal static Rect StatusBarBounds(Rect bottom, bool statusOnTop, int screenWidth,
+                                         string? viewmode, string? drawBorders,
+                                         string? drawBordersMultipane)
+    {
+        int inset = StatusBarInset(viewmode, drawBorders, drawBordersMultipane);
+
+        return statusOnTop
+            ? new Rect(inset, 1, Math.Max(screenWidth - (inset * 2), 0), 1)
+            : new Rect(bottom.X + inset, bottom.Y,
+                       Math.Max(bottom.Width - (inset * 2), 0), bottom.Height);
+    }
+
+    /// <param name="viewmode">The <c>viewmode</c> setting.</param>
+    /// <param name="drawBorders">The <c>draw_borders</c> setting.</param>
+    /// <param name="drawBordersMultipane">
+    /// The <c>draw_borders_multipane</c> setting, or <see langword="null"/> when unset — which
+    /// means "whatever draw_borders says" rather than "no borders".
+    /// </param>
+    /// <returns>One column where the view is framed, otherwise none.</returns>
+    /// <remarks>
+    /// Static, and given everything it needs, so the rule can be checked without standing up a
+    /// terminal — as <see cref="VisibleDirectories"/> and <see cref="IdleTimeout"/> are.
+    /// </remarks>
+    internal static int StatusBarInset(string? viewmode, string? drawBorders,
+                                       string? drawBordersMultipane)
+    {
+        string? setting = string.Equals(viewmode, "multipane", StringComparison.Ordinal)
+            ? drawBordersMultipane ?? drawBorders
+            : drawBorders;
+
+        return setting?.ToLowerInvariant() switch
+        {
+            // "true" is accepted for configurations written before the setting grew its other
+            // values, as the views themselves accept it.
+            "both" or "true" or "outline" => 1,
+            _ => 0,
+        };
+    }
+
     /// <summary>Passes the settings the two views share on to the multipane one.</summary>
     /// <remarks>
     /// <c>draw_borders_multipane</c> is deliberately nullable rather than defaulting to
@@ -2794,7 +2853,9 @@ public sealed class Browser : IFileManager, IDisposable
 
         if (!_console.IsOpen || statusOnTop)
         {
-            _statusBar.Layout(statusOnTop ? new Rect(0, 1, _screen.Width, 1) : bottom);
+            _statusBar.Layout(StatusBarBounds(bottom, statusOnTop, _screen.Width,
+                                              Settings.Viewmode, Settings.DrawBorders,
+                                              Settings.DrawBordersMultipane));
             _statusBar.Tab = CurrentTab;
             _statusBar.Message = _message;
             _statusBar.MessageIsError = _messageIsError;
