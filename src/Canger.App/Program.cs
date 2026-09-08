@@ -73,9 +73,15 @@ internal static class Program
 
         IFileSystem fileSystem = LocalFileSystem.Instance;
 
-        if (!fileSystem.DirectoryExists(path))
+        // A path that is not a directory is not a refusal. Ranger takes one as "go there and put
+        // the cursor on it" (`core/tab.py:151-153`), which is what makes `canger notes.txt` from
+        // a shell — or a file manager handing over a file — open the folder with that file under
+        // the cursor. Tab.Enter already does exactly that for every other caller; the startup
+        // check was asking a stricter question than ranger's, which is only whether the path is
+        // there at all (`os.access(path_abs, os.F_OK)`, `core/main.py:108`).
+        if (!fileSystem.Exists(path))
         {
-            Console.Error.WriteLine($"canger: not a directory: {path}");
+            Console.Error.WriteLine($"canger: no such file or directory: {path}");
             return 1;
         }
 
