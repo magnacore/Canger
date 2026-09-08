@@ -25,17 +25,17 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 
 | | |
 |---|---|
-| Settings | 85 — ranger's 83, plus `unlock_prompt` and `shared_copy_buffer` — with ranger's global / path-regex / tag scopes |
-| Commands | 115 built in, plus whatever `commands.cs` adds |
+| Settings | 87 — ranger's 83, plus `unlock_prompt`, `shared_copy_buffer`, `progress_bar_color` and `progress_bar_text_color` — with ranger's global / path-regex / tag scopes |
+| Commands | 118 built in, plus whatever `commands.cs` adds |
 | Key bindings | 295 in the browser, 36 console, 35 pager, 33 task view, 29 devices |
 | Colour contexts | 82, matching ranger's names exactly |
 | Colourschemes | `default`, `jungle`, `snow`, `solarized` |
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 1947 |
+| Tests | 2166 |
 
-Ten things go deliberately beyond ranger:
+Eleven things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -105,6 +105,13 @@ Ten things go deliberately beyond ranger:
   and a line is run directly when it safely can be, rather than always through `sh -c`, so passing
   two and a half thousand filenames to a program does not fail on Linux's 131 072-byte limit for a
   single argument.
+- **Previews wrap between words.** With `wrap_plaintext_previews` on, ranger cuts each line at
+  whatever character the pane's width lands on, so a wrapped paragraph comes out split through
+  the middle of words — unrecognisable enough that the setting reads as not working. Canger
+  breaks at a space, keeps a line's own indentation while dropping the spaces a break lands on,
+  measures in cells so CJK breaks where it looks like it should, and keeps the colours a
+  highlighter put there across the break. A word wider than the pane is still broken where the
+  pane ends.
 
 Releases carry a `.deb`, an AppImage and two tarballs:
 <https://github.com/magnacore/Canger/releases>. There is no apt repository, so the `.deb` is
@@ -340,6 +347,25 @@ Two things worth knowing before you edit one:
 
 A filename beginning with `_` is skipped, which disables a plugin without deleting it. A prebuilt
 `.dll` dropped into `plugins/` is loaded directly, with no compilation.
+
+### What a plugin can reach
+
+The common things need no interface: a class carrying `[Command]`, a linemode or a colourscheme is
+found by reflection. Implement `ICangerPlugin` when timing matters — `OnInit` runs before the
+interface exists, `OnReady` once it is up and the first directory is loaded.
+
+Three seams on `IFileManager` exist for plugins that do more than add a command:
+
+| seam | what it is for |
+|---|---|
+| `FileOpeners` | Claim a file type ahead of the ordinary open rules: a handler is offered the selection and says whether it took it. Better than binding a key, because `Enter`, `→`, `l` and `:open` all pass through it — and because a key bound to a plugin's command stops working when the plugin is removed, which is how removing one once took navigation with it. |
+| `BackgroundActivity` | A line in the status bar, with an optional progress bar and a highlighted `Badge`, for work that is running but is not a queued task. It shares the bar rather than replacing it, so permissions, free space and position stay visible. |
+| `KeyGrab` | Take the keyboard ahead of the browser's bindings for a while, and hand it back — for passing keys to a program Canger is running rather than to Canger. Only the browser: the console, pager, task view and device list keep their own keys. |
+
+Worked examples are in `artifacts/plugins/`. `archives.cs` and `zoxide.cs` add commands;
+`mka.cs` plays audio in the background through mpv and uses all three seams at once — it claims
+audio files, shows mpv's own status format with a progress bar, and `pam` hands the keyboard to
+mpv until Escape takes it back.
 
 Three flags exist for inspecting what a full-screen interface would hide, and are the quickest way
 to answer "why does this not work":

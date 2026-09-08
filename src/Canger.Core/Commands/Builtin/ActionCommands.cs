@@ -384,8 +384,8 @@ public sealed class SearchNextCommand : CangerCommand
         // size while the listing stays in the user's chosen order.
         Func<FsNode, bool>? matches = order switch
         {
-            "search" when FileManager.CurrentTab.LastSearch is { Length: > 0 } text =>
-                node => node.Basename.Contains(text, StringComparison.OrdinalIgnoreCase),
+            "search" when FileManager.CurrentTab.LastSearch is { } searched =>
+                searched.Accepts,
             "tag" => node => FileManager.Tags.Contains(node.RealPath),
             _ => null,
         };

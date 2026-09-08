@@ -1,5 +1,601 @@
 # Canger — port status
 
+## Starting on a file selects it, and the rule was already there
+
+`canger notes.txt` refused with `not a directory`, where ranger opens the directory holding the
+file with that file under the cursor — which is how a file handed over from a shell or another
+program arrives.
+
+**The rule had been implemented all along.** `Tab.Enter` carries ranger's `core/tab.py:151-153`
+— anything that is not a directory is entered as its parent with the cursor put on the name — and
+its own comment says so. It never saw a file, because startup asked a stricter question first and
+gave up before the tab was built. Ranger's startup check is only whether the path is there at all
+(`os.access(path_abs, os.F_OK)`, `core/main.py:108`); Canger's now asks the same, so a command-line
+path, `:cd <file>` and `--selectfile` all reach one rule.
+
+The same shape as the `n` defect below and the ninth in the series AGENT.md warns about: a
+mechanism that works, with nothing feeding it.
+
+**Tested through `Main`**, not through the check — the defect was the caller's question, so a test
+of the rule could not have seen it. `--list` prints a listing and marks the cursor, which makes
+the whole startup path assertable without a terminal.
+
+**Control:** the directory-only check back in place fails the file case; the mutation compiled.
+Verified with `tools/screen.py` on a directory of 1015 files: started on the 500th, the cursor
+arrives on it at 433/1014.
+
+## `n` repeats the search that was made, not one rebuilt from its text
+
+`,` (`file_select_similar`) marked the four files belonging together and then `n` found nothing to
+step through, where ranger walks them.
+
+`,` issues `scout -m ^stem`. Scout marked correctly, but the tab remembered the **pattern text**
+and `search_next` matched it as a plain case-insensitive substring — so it went hunting for a
+literal caret in the basenames. The pattern alone does not say how it was meant to be read: the
+flags decide that (`-r` regex, `-g` glob, `-l` letter skipping, `-i`/`-s` case, `-v` inversion),
+and a leading `^` anchors whichever applies. `n` was guessing, and guessed differently from the
+search it was repeating.
+
+`Tab.LastSearch` now holds the matcher scout built, which is what ranger keeps there — a compiled
+regex (`config/commands.py:1608`). A type change on a public property; nothing in the repo or the
+user's configuration read it as a string.
+
+**Controls, one per half:** `n` back to matching the text as a substring fails 2; the search
+remembering a matcher built without its flags fails 1. Both compiled. The three existing
+`search_next` tests set `LastSearch` by hand — the very seam the defect lived in — so they now go
+through `scout`. Verified in the real directory: `,` marks the four files and `n` walks them.
+
+## The activity badge needed a space of its own
+
+The `MPV` badge sat flush against the clock beside it.
+
+The badge pads itself as `" MPV "`, but both spaces are **inside** the block it is picked out
+with, so padding only made the highlight wider. The gap has to be a cell that is not highlighted,
+and it has to be counted in the width the bar reserves or the left block loses a column to it.
+
+**Control:** with the gap gone the new test fails on the *style* of the cell before the line,
+which is what "flush" means here — a test for a space character would have passed either way.
+
+## Previews wrap between words
+
+Asked whether preview text should wrap, then reported that `wrap_plaintext_previews` did not work
+when it did: ranger cuts each line at whatever character the pane's width lands on
+(`gui/widgets/pager.py:242-260`), so a wrapped paragraph comes out split through the middle of
+words, and the output does not read as wrapped text at all. **A deliberate divergence, the
+eleventh.**
+
+`Pager.Wrap` works out where a line should break and `DrawLine` draws the pieces:
+
+- after a space where there is one, and where the pane ends when a word is wider than it;
+- a line keeps its own indentation and is never broken *on* it, which would put out a row holding
+  nothing but spaces;
+- the spaces a break lands on are dropped, so a continuation is not adrift;
+- widths are counted in cells, so CJK breaks where it looks like it should;
+- the pieces are drawn from the original text, so a highlighter's colours survive the break.
+
+**Controls, one per half:** breaking at the column rather than the last word boundary fails 3;
+leaving the rule right but stepping `DrawLine` by the pane width fails 2. Both compiled.
+
+Two things the tests taught. The first headline test used a width where the pane edge fell exactly
+on a space, so it survived the mutation — it never distinguished word wrapping from column
+wrapping. And working out why an indentation expectation failed exposed a real flaw in the first
+draft: a break could land just after a line's leading spaces, emitting a blank row. That is the
+`seenWord` guard.
+
+## Removing a plugin: Canger survives it, and now says what went quiet
+
+Asked after removing `devicons.cs` and finding the icons still there, with the worry that Canger
+might break without a plugin.
+
+**Every plugin was removed in turn and driven.** `archives.cs`, `devicons.cs`, `zoxide.cs`,
+`mka.cs`: in all four Canger started, listed, and navigated. Nothing crashes. The earlier mka
+breakage was not a plugin failing but a *key binding* naming a plugin's command — `<CR>` and
+`<RIGHT>` pointed at `mka_open`, so removing the plugin took navigation with it. That is fixed
+already: a plugin claims a file type through `FileOpeners` and takes no binding.
+
+**Why the icons stayed.** Canger loads plugins from **two** directories — the install directory's
+`config/plugins/` and `~/.config/canger/plugins/` — and `devicons.cs` ships in the first. Removing
+the user's copy leaves the shipped one, which is what kept drawing the icons. Not a defect: it is
+what makes `default_linemode devicons` work out of the box. The user's copy is a duplicate and can
+be deleted.
+
+**What was missing was the telling.** A binding is stored as text and resolved only when the key is
+pressed, so removing a plugin leaves every key that pointed at it silently doing nothing until
+somebody presses one and gets "unknown command", with nothing to connect that to the file they
+deleted. `--config` already found these, but only there, and with the caveat that it runs *before*
+plugin hooks — so a command a plugin adds in `OnInit` looked dead when it was not.
+
+The check now lives in `Canger.Core.Input.BindingCheck` and runs again in a real session **after
+`NotifyReady`**, which is the only moment the answer is trustworthy. It says nothing when everything
+resolves, and otherwise one line naming the count and where to see the names:
+
+```
+all present            (nothing said)
+without archives.cs    1 key binding names a command that does not exist — run: canger --config
+without zoxide.cs      1 key binding names a command that does not exist — run: canger --config
+without mka.cs         3 key bindings name a command that does not exist — run: canger --config
+without devicons.cs    (nothing said — it binds no commands)
+```
+
+**Controls:** a dead binding no longer reported fails 2; the trailing comment taken as part of the
+command name fails 5 — that last one guards a fault this check has had before, where good bindings
+were called dead and the report stopped being believed.
+
+## Whether to show the volume outside the mode — no, and why
+
+Asked: should the volume show in normal mode too? No. The status line is deliberately the user's
+own `term-status-msg`, and anyone wanting the volume there always can add it to `mpv.conf` in one
+word — where it also shows when they run mpv in a terminal, which a format invented here never
+would. Hard-coding it would take back the choice that was handed over two changes ago.
+
+Three practical reasons alongside that: the volume cannot be changed outside the mode, since the
+keys are not forwarded, so the figure would never move; the activity line competes for room with
+the file details and the free space and is dropped entirely when the gap is too small; and the line
+looking different is itself the signal that the mode is on.
+
+**The question did expose a real gap.** Adding volume to one's own format would have made the mode
+show it twice. `DisplayFor` now leaves out anything the format already carries — volume as well as
+speed — so that route works cleanly. Control: the volume check removed fails 1.
+
+## The volume shows on the status line while the mode is on
+
+Reported: pressing the volume keys changed it with nothing on screen to say so, where mpv in a
+terminal announces it.
+
+mpv **does** write its OSD to standard output through a pipe — `Volume: 98%`, `Speed: 1.65` were
+measured — but picking those out means telling them from its start-up chatter by their shape, which
+is a parser waiting to be wrong. `term-status-msg` can instead be **set while mpv is running**, so
+the line itself is extended for as long as the mode lasts and put back when it ends. The figure is
+then always there rather than flashing past, which suits a mode whose only purpose is adjusting it.
+
+Speed is added only where the user's own format does not already show it, so a format ending
+`${speed}x` is not made to say it twice.
+
+**The first pair of controls came back empty** — the pty run proved the behaviour and no test
+pinned it, because the only observable was a socket write to an mpv that tests do not have. The
+choice of format moved into `Playback.DisplayFor(display, handsOver)`, a pure function the tests
+reach; the mutations now fail 2 and 1.
+
+pty, with the reporter's own format:
+
+```
+playing              00:00:36 / 00:01:00 (8%) 1.5x
+after pam            MPV  00:00:34 / 00:01:00 (13%) 1.5x   vol 100%
+after 9 9  (down)    vol 96%
+after 0 0 0 (up)     vol 102%
+after Escape         00:00:29 / 00:01:00 (27%) 1.5x        the volume is gone again
+```
+
+**Worth telling the user:** mpv's own defaults are `9` down and **`0` up**, not `8` — they have no
+`input.conf`, so `8` is bound to nothing and does nothing. The plugin forwards the key faithfully;
+there is nothing to fix on this side.
+
+## An mpv mode: `pam` hands the keyboard over, Escape takes it back
+
+Asked for: a mode where mpv's own keys work rather than Canger's, so speed (`[` `]`) and volume
+(`8` `9`) can be changed without every one of them meaning something else to the browser, with a
+coloured word in the status bar saying which mode you are in.
+
+**mpv accepts forwarded keys by name over its IPC socket**, which was measured before anything was
+built: two `]` took the speed from 1.5 to 1.815 and three `9` took the volume from 100 to 94 —
+mpv's own bindings and step sizes, so whatever the user has configured is what the key does. That
+is why keys are forwarded rather than translated into commands here.
+
+**Core.** `IKeyGrab` and `IFileManager.KeyGrab`: something holding the keyboard ahead of the
+browser's bindings. `IBackgroundActivity.Badge` puts a word in front of the activity line, drawn
+reversed — the colourscheme already uses that to mean "notice this", so it reads the same in every
+scheme without teaching any of them a new context.
+
+**Only ahead of the browser.** The console, the pager, the task view and the device list keep their
+keys: each is something the user opened and has to be able to close, and a grab that swallowed the
+key closing one would be a trap with no way out. Escape is never forwarded either, for the same
+reason.
+
+The keyboard is given back when playback ends, or the keys would point at a program that is no
+longer there.
+
+**Controls:** the grab asked while an overlay is up fails 1; Escape forwarded like any other key
+fails 1; the badge drawn in the ordinary style fails 1. The first draft of the grab test was
+vacuous — it asserted only that the property round-tripped — so the ordering rule moved into
+`Browser.GrabTakes`, which the tests actually exercise.
+
+pty, end to end:
+
+```
+playing             speed 1.5, cursor 1/2
+after pam           badge at column 82, style 0;1;7;93 against a plain bar
+after 9 ] j         speed 1.65, cursor 1/2  — j did not reach the browser
+after Escape and j  badge gone, cursor 2/2  — the keys are back
+```
+
+## Status bar alignment: inset the bar, then put it back
+
+Reported as the status bar not lining up with the browser's vertical rule. I read that as "the text
+should begin where the listing begins" and inset the bar by the frame — and the answer came back
+"now it's slightly ahead". Reverted (`448b069`, undone by `e2460aa`): the bar starts in the same
+column as the outer rule, which is where it began and what ranger does.
+
+**The lesson is about the diagnosis rather than the code.** The two candidates differ by one column,
+and I chose between them by reading pixels off a screenshot — twice, wrongly the first time.
+Rendering both with a column ruler and asking which was wanted settled it in one exchange:
+
+```
+col:     0123456789            col:     0123456789
+frame    ┌──────┬───            frame    ┌──────┬───
+listing  │      │               listing  │      │
+status   -rw------- 1 …         status    -rw------- 1 …
+         flush — kept                     inset — rejected
+```
+
+When the question is "which of two adjacent columns", show both and ask. Inferring geometry from an
+image cost two rounds.
+
+**Worth keeping from the attempt, though the code is gone.** The rule — which border settings mean
+a frame — had six tests, and the layout that applied it had none: removing the inset from the
+layout broke nothing while every test still passed. Splitting a rule from its application splits
+the tests from the behaviour, and only the control found it.
+
+Note the bar's *headline* — a message, or a running task — keeps its one-column margin, asked for
+earlier because the progress tint runs to the edge behind it. That is a different state of the same
+row, not an inconsistency with the above.
+
+## No preview for a `.mka`, and it was not Canger
+
+Reported: an `.mp3` shows information in the preview pane and an `.mka` shows nothing.
+
+`file(1)` types an audio-only Matroska as **`video/x-matroska`**, not audio. The user's `scope.sh`
+handles `video/*` in `handle_image` by running `ffmpegthumbnailer` and then `exit 1` — and a file
+with no video stream cannot be thumbnailed, so it ended there with no preview at all. An `.mp3` is
+`audio/mpeg`, misses that branch entirely, and reaches `mediainfo` further down.
+
+**Canger's own shipped `config/scope.sh` has that branch commented out**, so this was the user's
+configuration rather than a defect here. Fixed in their copy by dropping the `exit 1`, so anything
+that cannot be thumbnailed falls out of `handle_image` and reaches its metadata instead. Measured
+against the script's own exit codes:
+
+```
+                      old   new
+audio-only .mka        1     5     (1 = nothing, 5 = text preview)
+.mp3                   5     5
+a real .mkv            6     6     thumbnail still written
+```
+
+Their previous scope.sh is kept at `/tmp/scope.sh.backup`.
+
+## A plugin claims a file type instead of taking a key binding
+
+Reported: "I removed the mka plugin to test whether Canger works without it, and now I cannot open
+any folder — it says unknown command: mka_open." Exactly right, and the fault was the design.
+Pointing `<CR>` and `<RIGHT>` at a plugin's command meant the configuration named something that
+only existed while the plugin did, so removing the plugin took navigation with it — not just files,
+but folders too, because the same key does both.
+
+`IFileManager.FileOpeners` is the fix: a list of things offered a file before the ordinary rules
+are asked, each answering whether it took it. The plugin adds one in `OnInit`; nothing is rebound,
+`<CR>` and `<RIGHT>` are back to `move right=1`, and removing the file restores the ordinary
+behaviour exactly. Consulted only for a plain open, because `:open_with mpv` names its program on
+purpose.
+
+**Verified by removing the plugin and putting it back**, which is the property that was broken:
+
+```
+plugin installed:  folder opens=yes  tui intact=yes  clock in bar=yes
+plugin removed:    folder opens=yes  tui intact=no   (rifle, as before)
+```
+
+**Controls:** openers never consulted fails 15; consulted even for a named program fails 1; a claim
+no longer ending the matter fails 2.
+
+**The first attempt at verifying this was unsound**, and is worth recording. The check was "is
+there a clock", which matched *mpv's own status line printed to the terminal* just as happily as
+Canger's status bar — because the format is the user's and identical in both. Removing the plugin
+looked like success. What discriminates is whether the listing frame is still on screen: with the
+plugin, Canger keeps the terminal; without it, mpv takes it. Prove the state, not a symptom that
+two states share.
+
+## The loop has to wake for a background activity, as it does for a task
+
+Reported: audio plays at once but the status bar takes a few seconds to show it. Measured, and it
+was not mpv — its first reading is on the pipe in **0.12 s**. Inside Canger the clock appeared at
+**2.11 s** and then moved in **2.0 s** steps, because the main loop sleeps for `idle_delay`
+(2000 ms, ranger's default) and only a *queued job* shortened that. Playback is not a queued job,
+by design, so nothing did. mpv was reporting eight times a second into a loop that looked twice a
+minute.
+
+The wait is now shortened while any `IBackgroundActivity` is present — half a second, not the
+queue's own delay, because a clock counting in seconds needs no more and a file listened to for an
+hour should not hold the processor awake. An `idle_delay` set shorter than that is respected.
+
+The rule moved out of the loop into `Browser.IdleTimeout`, static and given everything it needs, so
+it can be checked without standing up a terminal — the same treatment `VisibleDirectories` and
+`ApplySettings` have.
+
+**Control:** the activity no longer shortening the wait fails 1. **Measured after:** the clock
+appears at **0.56 s** and follows each tick within half a second.
+
+**The shape worth remembering:** a new kind of thing was added to the interface and every place
+that already knew about *tasks* had to learn about it too. The status bar was the obvious one and
+was done; the main loop's timeout was not, and it is what made the feature feel broken.
+
+## Starting and stopping playback say nothing
+
+A message outranks the activity line, so "playing OSHO.mka" sat over the very clock it was
+announcing until something else displaced it, and "stopped OSHO.mka" covered the bar it had just
+vacated. Both are gone: the clock appearing *is* the announcement, and its leaving is the other one.
+
+The messages that remain are the ones where nothing visible happens — mpv failing to start, a pause
+or stop with nothing playing, and a control socket that does not answer.
+
+**Controls:** either announcement restored fails a test. pty: the clock appears about two seconds
+after opening, which is mpv's own start-up, and stopping returns the ordinary status bar at once.
+
+## The status line is mpv's own format, read from mpv's own configuration
+
+Asked for: "can it not just read the mpv setting itself rather than duplicating it in the plugin?"
+It can, and now does. The plugin passes `--term-status-msg` as
+`canger-mka:${=percent-pos}|` + whatever `term-status-msg` mpv's configuration names, so only the
+marker and the machine-readable percentage are Canger's; everything a person reads is the line the
+user already configured, down to the field order and the wording. Where mpv names no format, a
+plain one is used.
+
+`MPV_HOME` **replaces** the configuration directory rather than being searched before it, which is
+how mpv treats it. Falling through to `~/.config/mpv` afterwards was caught by the test for the
+plain fallback, which found the ambient configuration instead of the empty one it had just been
+given.
+
+**Two things broke when the format stopped being ours**, and both are the same mistake — a rule
+that quietly depended on the old format:
+
+- Completeness was judged by the line ending in `x`, because the old format ended in `${speed}x`.
+  The reporter's ends in `${?pause==yes:(Paused)}`, so every line mpv wrote while paused was
+  thrown away. A line is now judged complete by being terminated, which needs no knowledge of the
+  format at all — and needs nothing else, because the reading from just before a pause is exactly
+  what should be on screen while it is held.
+- The newest marker was searched for from the end of the output, which found the part-line still
+  being written and then gave up for want of a terminator, leaving the clock frozen on the reading
+  before. The search now starts at the last separator.
+
+Pause is still announced from this side, because a paused mpv writes nothing further and its own
+`${?pause==yes:…}` therefore arrives late or not at all. It is left off when the line already says
+it, so a format carrying its own marker does not say it twice — verified: the bar reads
+`(paused) 00:04:56 …` at once, and becomes `00:04:56 … (Paused)` if mpv's own line does turn up.
+
+**Controls:** the format imposed rather than read fails 1; `MPV_HOME` falling through fails 1; the
+prefix added unconditionally fails 1; the marker searched from the end fails 1.
+
+## Background audio: every key that opens a file has to be rebound, not just Enter
+
+Reported as "it still plays in the terminal", twice, and I twice explained it away as a session
+that predated the feature. The second time the session was demonstrably newer, and the running
+process settled it in one line:
+
+```
+mpv -- /home/manuj/.../OSHO.mka
+```
+
+That is rifle's command line (`mpv -- "$@"`), not the plugin's, which carries `--no-video`,
+`--input-terminal=no`, `--input-ipc-server=` and `--term-status-msg=`. The reporter also said space
+paused it, which is the same evidence from the other end: the plugin's mpv is started with
+`--input-terminal=no` and ignores the keyboard entirely.
+
+So `mka_open` never ran. **The configuration binds two keys to opening a file** — `<CR>` at line 519
+and `<RIGHT>` at line 511 — and only the first had been rebound. The reporter navigates with the
+arrow keys.
+
+Both now go through `mka_open`, and the arrow key was verified the same way as Enter: the listing
+stays up, the bar reads `playing OSHO.mka`, and `pap` gives
+`(paused) 00:00:04 / 00:07:36 (1%)`.
+
+**What to do about it properly.** Rebinding openers one at a time is a rule nobody can keep — a
+mouse binding or a fresh `map l move right=1` would silently bypass the plugin again. The right
+answer is a hook on the *opening* of a file rather than on the keys that lead to it, which Canger
+does not have; `move right` and rifle would have to offer one. Worth doing before this merges, or
+worth stating plainly in the plugin's own comment.
+
+**The lesson, and it is the third time this shape has appeared:** an explanation that fits the
+evidence is not the same as evidence. "The session predates the feature" fitted twice and was
+wrong twice; `ps` gave the answer in one command. Look at what is running before explaining why it
+cannot be happening.
+
+## Background audio (`feature/mka-playback`, unmerged)
+
+Asked for: Enter on an `.mka` plays it without blocking the interface, `pap` pauses and resumes,
+`pas` stops, mpv's own progress line appears in the gap in the status bar, and a copy or an archive
+takes the bar back while it runs. **On a branch for testing; not merged.**
+
+### What mpv actually does, measured
+
+Every one of these decided the design, and three of them are traps.
+
+- `--term-status-msg` **is** written to standard output through a pipe, about eight times a second,
+  with `${time-pos}`, `${duration}`, `${percent-pos}` and `${speed}` already formatted. So mpv does
+  the formatting and there is no arithmetic here to disagree with what the user sees.
+- **`--no-terminal` silences it**, and so does every `--msg-level=all=…` value tried — no, error,
+  warn — because the status message rides that log level. Both are the obvious way to quieten a
+  background player, and either would have shipped a plugin that plays perfectly and shows nothing.
+  `--input-terminal=no` keeps the line and still stops mpv reading the keyboard: sixteen readings
+  in two seconds against zero.
+- **A unix socket path is about 108 bytes**, and mpv reports only "Could not create IPC socket"
+  past that. The scratch path used for the first probe was longer, which looked exactly like mpv
+  having no IPC at all. The socket lives in `$XDG_RUNTIME_DIR`.
+- **A paused mpv writes nothing further**, so the last reading to arrive is the one from just
+  before the pause. Taking the `(paused)` label from mpv's own `${?pause==yes:…}` therefore showed
+  it only once playback *resumed*, by which time it was wrong. This side of the socket knows the
+  answer as the command is sent, so it keeps the flag itself and asks for a redraw.
+- The newest reading has **no terminator** until the one after it arrives. Waiting for one showed
+  the reading before last, which froze the clock the moment playback paused.
+
+### Core additions
+
+- `IBackgroundActivity`, and `IFileManager.BackgroundActivity`. The task queue is for work that
+  finishes; playback has no end to wait for and must not hold a place other work queues behind.
+  `Describe()` is called while the bar is drawn, which is the only heartbeat a plugin gets.
+- The status bar draws it **between** the two existing blocks rather than over them: the left block
+  is drawn first and reports where it stopped, the right block is measured first as before, and the
+  activity is right-aligned in what is left — or left out entirely when the gap is too small, since
+  a clipped clock is worth less than what is under the cursor. A queued task still replaces the
+  whole line, and a message still outranks everything.
+- `ScriptCompiler` now references **the whole framework** rather than only what Canger has loaded.
+  A plugin asking for `System.Net.Sockets` was told the namespace does not exist merely because
+  Canger had never opened a socket — a plugin's reach depended on what the program happened to have
+  done first. Cold compile went from 0.93 s to 0.98 s, and nothing when cached.
+
+### Verification
+
+Controls, each with the mutation confirmed to compile: the silencing flags reintroduced fails 2;
+Enter no longer falling through for non-audio fails 2; the newest reading skipped fails 1; the
+activity overlapping the left block fails 1; drawing it left-aligned fails 1; the framework
+references removed fails 2.
+
+pty, on the real binary, with ten minutes of silence so the machine stayed quiet:
+
+```
+playing            00:00:05 / 00:10:00 (1%) 1.5x
+after pap          (paused) 00:00:08 / 00:10:00 (1%) 1.5x
++3s paused         (paused) 00:00:08 / 00:10:00 (1%) 1.5x     unchanged
+after pap again    00:00:11 / 00:10:00 (2%) 1.5x
+after pas          gone
+```
+
+and the precedence, with an archive started while playing:
+
+```
+archive running    Compressing: out.tar.lz:  51%  24.6 M/48 M
+after it ends      00:00:39 / 00:10:00 (7%)                   playback never stopped
+```
+
+**Not merged, and one thing to decide before it is:** `map <CR> mka_open` and the `pap`/`pas`
+bindings are in `~/.config/canger/cc.conf` but not in the shipped `config/cc.conf`, and the plugin
+covers nine audio extensions rather than `.mka` alone. Both are easy to narrow.
+
+## `setlocal` works at the console
+
+It used to answer "setlocal is only available in the configuration file so far", which left a
+directory held at a sort by `setinregex` with no way to be re-sorted at all: a path-scoped setting
+outranks the global one `on` and `om` write, in Canger as in ranger. Ranger has `setlocal` as an
+ordinary command, so this was a gap rather than a decision.
+
+**All four spellings** are now commands — `setlocal`, `setinpath`, `setinregex`, `setintag` — and
+they hand the line to the same `SetDirective` the configuration reader uses, so the quoting rules,
+the `~` expansion, the `option!` toggle and the way a path becomes a pattern cannot drift apart
+between a file and a keystroke.
+
+**Naming no scope means the directory you are in.** Ranger does the same
+(`config/commands.py:547-548`, falling back to `fm.thisdir.path`), and its fallback is
+`None` while a configuration file is being read — so reading a file still refuses rather than
+guessing. `setlocal sort=natural` counts as naming no scope: the operand pattern matches it, but
+`sort=` is not one of the words that introduce one.
+
+**A deliberate divergence.** The implicit scope is escaped and anchored even for the
+regular-expression spelling. Ranger uses the path as a raw expression there, which turns a `+`, a
+`(` or a `#` in a folder name into syntax — and the reporter has a folder called `C#`.
+
+**Controls:** the parser's fallback removed fails 13; the command passing no current directory
+fails 5.
+
+**Verified in the reporter's own folder**, which is held at `sort mtime` with `sort_reverse true`
+by `setinregex`:
+
+```
+on arrival                      he-chose-this-over-3-crore-salary...   (oldest first)
+after `on`                      unchanged, as ranger behaves
+:setlocal sort natural + gg     5-signs-youre-about-to-become...       (natural: 5 before 15)
+:setlocal sort_reverse false    unchanged order, now ascending
+:setlocal sort mtime + gg       decans-market-cycles-wheels...         (the newest file)
+:setlocal nonsense_setting 1    No such setting: 'nonsense_setting'.
+```
+
+The rule survives leaving the directory and coming back, and the cursor follows the file it was on
+across a re-sort, which is what ranger's `refilter` does too.
+
+## A directory resolves its settings for its own path
+
+The first fix was not enough, and the report said so. It resolved one set of settings from the
+directory the user was standing in and stamped that on every directory the cache handed out. But
+`setinregex` and `setlocal` scope a setting to a path, and the folders in question are held at
+`sort mtime` with `sort_reverse true` by regex — so opening one from elsewhere still listed it by
+name for its first load, which is when the cursor is placed.
+
+Settings are now resolved **per directory path**, through
+`CangerSettings.DirectorySettingsFor(path)`, and the cache holds a function rather than a value.
+That is ranger's arrangement: a directory owns a settings object bound to its own path and every
+lookup goes through it (`container/settings.py:338`).
+
+**Verified on the reporter's own folders**, not a fixture. `STUDY PASSIVE TRADING` now matches
+`ls -tr` exactly — oldest first, which is what `sort mtime` plus `sort_reverse true` asks for — with
+the cursor on row 0. `04 RA RP SP` now opens with `JOY`, a symlink, on row 0 and selected; it used
+to select `AUDIO SPLIT`.
+
+**Control:** resolving once from the current directory instead of per directory fails
+`AFolderWithASortRuleOfItsOwnOpensOnItsFirstRow`.
+
+## `on` and `oM` in a folder held by `setinregex` — not a defect
+
+Reported as a second problem: pressing `on` in a folder configured by `setinregex` does nothing.
+Ranger's own settings container, run directly, gives the answer:
+
+```
+path-scoped sort=mtime, global sort=natural:
+  global             -> natural
+  for /home/me/Study -> mtime
+after a further global set, which is what `on` does:
+  global             -> basename
+  for /home/me/Study -> mtime        (unchanged)
+```
+
+A path-scoped setting wins over the global and a later global `set` does not disturb it. `on` is
+`set sort=natural`, a global set, so the folder keeps its own rule. Canger matches.
+
+**A real gap alongside it:** ranger's `setlocal` is an ordinary command and can be typed at the
+console to override a path-scoped setting for the session. Canger answers "setlocal is only
+available in the configuration file so far", so there is no runtime override at all. Not fixed
+here; worth doing if the interactive override is wanted.
+
+## Opening a folder puts the cursor on its first row
+
+Reported twice over: under `sort=mtime` the highlighted entry was the first *alphabetical* name,
+halfway down the list; and where the first row was a symlink, the cursor sat on the first non-link
+folder instead. **One cause.**
+
+**The defect.** A directory learned its sort order a frame after it was loaded, when the render
+path walked the visible columns. The first load is when the cursor is placed, so it was placed on
+row 0 of a listing ordered by *name*; when the real order arrived, `Refilter` kept the cursor on
+that same entry and carried it down the list. With the default `sort natural` the two orders agree,
+which is why only a non-default sort showed it.
+
+**The fix.** The listing settings are now a `DirectorySettings` value the cache holds and stamps on
+every directory it hands out — ranger's rule, where a directory binds itself to them in its
+constructor (`container/directory.py:140-148`).
+
+Stamping at *creation* alone fixed nothing, and the pty run proved it: a subdirectory's node is
+made while its **parent** is listed, long before the user changes the sort, so by the time the
+folder is opened the node already exists and was skipped. They are applied on the way past instead,
+which costs nothing because every setter returns at once on a non-change.
+
+**Parity, by running ranger's own `Directory` over the same fixture** rather than reading it. For a
+tree holding a directory, a symlink to a directory, its target and a file, `sort=mtime`,
+directories first:
+
+```
+bbb-dir      mtime=1577817000     ranger's pointer: index 0
+zzz-link     mtime=1546281000     <- the target's mtime, not the link's own 2026
+real-target  mtime=1546281000
+ccc-file.txt mtime=1609439400
+```
+
+So ranger sorts a symlink by its **target's** mtime, groups a link to a directory with the
+directories, and points at index 0. Canger now agrees on all three. The only difference left is the
+order of two entries whose mtimes are identical, which is arbitrary in both.
+
+**Controls**, each with the mutation confirmed to compile: configuring only newly created nodes
+fails 2; configuring nothing on creation fails 1; not telling the cache at all fails 5.
+
+**The tests failed all three controls at 0 on their first draft.** The directory they opened was
+also the *previewed* one, so the walk over the visible columns configured it directly and the cache
+path was never exercised. They now park the cursor on a file — through the **tab's** cursor, not
+the directory's, since the preview column follows the tab — and assert the preview is empty before
+measuring anything.
+
 ## The launcher's PATH covers three directories
 
 `canger.sh` prepended `~/.local/bin` when it was missing; `/usr/local/bin` and `/sbin` now go

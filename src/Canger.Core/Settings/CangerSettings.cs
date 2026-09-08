@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using Canger.Core.Model;
+
 namespace Canger.Core.Settings;
 
 /// <summary>
@@ -50,9 +52,48 @@ public sealed class CangerSettings(ISettings settings)
     public Func<string?>? CurrentPath { get; set; }
 
     private T Required<T>(string name) where T : notnull =>
-        settings.Get<T>(name, CurrentPath?.Invoke()) is T value
+        RequiredFor<T>(name, CurrentPath?.Invoke());
+
+    /// <summary>A setting that must have a value, resolved for a given path.</summary>
+    private T RequiredFor<T>(string name, string? path) where T : notnull =>
+        settings.Get<T>(name, path) is T value
             ? value
             : (T)SettingsCatalog.Require(name).DefaultValue!;
+
+    /// <summary>
+    /// Everything a directory needs in order to list itself, resolved for that directory.
+    /// </summary>
+    /// <param name="path">The directory the settings are for.</param>
+    /// <returns>Its settings.</returns>
+    /// <remarks>
+    /// <para>
+    /// Resolved for the directory rather than for whichever one the user is standing in, because
+    /// <c>setlocal</c> and <c>setinregex</c> scope a setting to a path. A single resolved value
+    /// pushed onto every directory gets the folder with a rule of its own wrong at the one moment
+    /// that matters: the first load, which is when its cursor is placed. Opening a folder held at
+    /// <c>sort mtime</c> by a regex then listed it by name, put the cursor on the first name, and
+    /// re-sorted a frame later with the cursor still on that entry — halfway down the list.
+    /// </para>
+    /// <para>
+    /// Ranger resolves the same way: a directory holds a settings object bound to its own path and
+    /// every lookup goes through it (<c>container/settings.py:338</c>).
+    /// </para>
+    /// </remarks>
+    public DirectorySettings DirectorySettingsFor(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
+        return new DirectorySettings(
+            new SortOrder(
+                SortOrder.ParseKey(RequiredFor<string>("sort", path)),
+                settings.Get<bool>("sort_reverse", path),
+                settings.Get<bool>("sort_directories_first", path),
+                settings.Get<bool>("sort_case_insensitive", path),
+                settings.Get<bool>("sort_unicode", path)),
+            settings.Get<bool>("show_hidden", path),
+            RequiredFor<string>("hidden_filter", path),
+            settings.Get<bool>("autoupdate_cumulative_size", path));
+    }
 
     // ---- Appearance and layout ------------
 

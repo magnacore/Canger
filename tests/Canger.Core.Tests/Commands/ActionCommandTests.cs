@@ -69,10 +69,12 @@ public class ActionCommandTests
     [Fact]
     public void SearchNext_RepeatsTheLastTextSearch()
     {
+        // Through the search that sets it up, not by handing search_next a matcher: the defect
+        // this guards against is in what a search leaves behind for `n`, and a test that supplies
+        // that itself has no way to see it.
         FakeFileManager manager = Manager();
-        manager.CurrentTab.LastSearch = "dir";
-        manager.SearchMethod = "search";
         manager.CurrentTab.MoveCursor(0);
+        manager.Execute("scout -rs dir");
 
         manager.Execute("search_next");
 
@@ -83,14 +85,59 @@ public class ActionCommandTests
     public void SearchNext_WrapsAroundTheListing()
     {
         FakeFileManager manager = Manager();
-        manager.CurrentTab.LastSearch = "adir";
-        manager.SearchMethod = "search";
+        manager.Execute("scout -rs adir");
         manager.CurrentTab.MoveCursorTo(
             manager.CurrentTab.Current.Entries.First(e => e.Basename == "two.txt"));
 
         manager.Execute("search_next");
 
         Assert.Equal("adir", CursorName(manager));
+    }
+
+    [Fact]
+    public void SearchNext_WalksTheSetAnAnchoredSearchMarked()
+    {
+        // What `,` does: `file_select_similar` issues `scout -m ^stem`, which marks the files
+        // belonging together, and `n` then steps through them. The pattern alone does not say
+        // how it was read — the caret anchors it rather than being a character to look for — so
+        // remembering the text and matching it as a substring left `n` with nothing to find,
+        // while the marks on screen said the search had worked.
+        FakeFileManager manager = new(
+            new InMemoryFileSystem()
+                .AddFile("/home/show-part-001-002r-050p.mkv")
+                .AddFile("/home/show-part-002-001r-100p.mkv")
+                .AddFile("/home/unrelated.mkv"),
+            "/home");
+
+        manager.Execute("scout -m ^show");
+
+        Assert.Equal("show-part-001-002r-050p.mkv", CursorName(manager));
+        Assert.Equal(2, manager.CurrentTab.Current.Entries.Count(e => e.IsMarked));
+
+        manager.Execute("search_next");
+
+        Assert.Equal("show-part-002-001r-100p.mkv", CursorName(manager));
+    }
+
+    [Fact]
+    public void SearchNext_ReadsThePatternTheWayTheSearchDid()
+    {
+        // `/` is `scout -rs`, so the pattern is a regular expression. `n` has to read it the same
+        // way, which it can only do if the search hands on how it was read rather than the text.
+        FakeFileManager manager = new(
+            new InMemoryFileSystem()
+                .AddFile("/home/show-part-001-002r-050p.mkv")
+                .AddFile("/home/show-part-002-001r-100p.mkv")
+                .AddFile("/home/unrelated.mkv"),
+            "/home");
+        manager.CurrentTab.MoveCursor(0);
+
+        manager.Execute("scout -rs ^show.*100p");
+        manager.CurrentTab.MoveCursor(0);
+
+        manager.Execute("search_next");
+
+        Assert.Equal("show-part-002-001r-100p.mkv", CursorName(manager));
     }
 
     [Fact]
@@ -120,8 +167,7 @@ public class ActionCommandTests
     public void SearchNext_SaysSoWhenThereIsNothingToFind()
     {
         FakeFileManager manager = Manager();
-        manager.CurrentTab.LastSearch = "nothing matches this";
-        manager.SearchMethod = "search";
+        manager.Execute("scout -rs nothing matches this");
 
         manager.Execute("search_next");
 

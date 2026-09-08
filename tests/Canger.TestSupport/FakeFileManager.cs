@@ -108,6 +108,15 @@ public sealed class FakeFileManager : IFileManager
     public CangerSettings Settings { get; }
 
     /// <inheritdoc />
+    public Canger.Core.Tasks.IBackgroundActivity? BackgroundActivity { get; set; }
+
+    /// <inheritdoc />
+    public IList<Func<IReadOnlyList<string>, bool>> FileOpeners { get; } = [];
+
+    /// <inheritdoc />
+    public Canger.Core.Input.IKeyGrab? KeyGrab { get; set; }
+
+    /// <inheritdoc />
     public DirectoryCache Directories { get; }
 
     /// <inheritdoc />

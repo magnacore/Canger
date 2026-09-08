@@ -323,6 +323,15 @@ public sealed class Browser : IFileManager, IDisposable
     public DirectoryCache Directories { get; }
 
     /// <inheritdoc />
+    public Core.Tasks.IBackgroundActivity? BackgroundActivity { get; set; }
+
+    /// <inheritdoc />
+    public IList<Func<IReadOnlyList<string>, bool>> FileOpeners { get; } = [];
+
+    /// <inheritdoc />
+    public Core.Input.IKeyGrab? KeyGrab { get; set; }
+
+    /// <inheritdoc />
     public IFileSystem FileSystem { get; }
 
     /// <inheritdoc />
@@ -1420,11 +1429,9 @@ public sealed class Browser : IFileManager, IDisposable
             // While a job is only waiting on an outside program there is nothing to come back
             // for, so the wait happens here — where a keystroke ends it immediately — instead of
             // inside the job, where it would hold up everything else.
-            int timeout = _decoder.HasPendingInput
-                ? EscapeDelayMilliseconds
-                : Volatile.Read(ref _needsRedraw) ? 0
-                : Tasks.HasWork ? (int)Tasks.IdleDelay.TotalMilliseconds
-                : Settings.IdleDelay;
+            int timeout = IdleTimeout(
+                _decoder.HasPendingInput, Volatile.Read(ref _needsRedraw), Tasks.HasWork,
+                Tasks.IdleDelay, BackgroundActivity is not null, Settings.IdleDelay);
 
             // A message showing has to be taken down on time, and the loop is otherwise asleep
             // for the whole idle delay. Without this it would linger for up to `idle_delay`
@@ -1587,8 +1594,18 @@ public sealed class Browser : IFileManager, IDisposable
             // branch to be correct, and the day one was left out every keystroke in the device
             // list ran twice: `q` closed the list and then quit Canger. Nothing failed, because
             // both halves did exactly what they were bound to do.
-            switch (FocusedOn(_console.IsOpen, _pager.IsVisible, _deviceView.IsVisible,
-                              _taskView.IsVisible))
+            KeyTarget target = FocusedOn(_console.IsOpen, _pager.IsVisible,
+                                         _deviceView.IsVisible, _taskView.IsVisible);
+
+            // Between the overlays and the bindings: something holding the keyboard takes the key
+            // instead of the browser, but never instead of the console or the pager, which the
+            // user opened and has to be able to close.
+            if (GrabTakes(target, KeyGrab, key.Key))
+            {
+                continue;
+            }
+
+            switch (target)
             {
                 case KeyTarget.Console:
                     HandleConsoleKey(key.Key);
@@ -2333,31 +2350,16 @@ public sealed class Browser : IFileManager, IDisposable
         ColorNames.TryParse(setting, out Color color) ? color : null;
 
     private void ApplySettingsToDirectory() =>
-        ApplySettings(
-            CurrentTab,
-            Tabs,
-            Settings.Viewmode,
-            new SortOrder(
-                SortOrder.ParseKey(Settings.Sort),
-                Settings.SortReverse,
-                Settings.SortDirectoriesFirst,
-                Settings.SortCaseInsensitive,
-                Settings.SortUnicode),
-            Settings.ShowHidden,
-            Settings.HiddenFilter,
-            Settings.AutoupdateCumulativeSize);
+        ApplySettings(CurrentTab, Tabs, Settings.Viewmode, Settings.DirectorySettingsFor);
 
     /// <summary>Gives each directory the settings that decide what it lists and in what order.</summary>
     /// <param name="current">The tab in front of the user.</param>
     /// <param name="tabs">Every open tab, for the view mode that shows them all at once.</param>
     /// <param name="viewmode">The <c>viewmode</c> setting.</param>
-    /// <param name="order">The <c>sort</c> family, already resolved.</param>
-    /// <param name="showHidden">The <c>show_hidden</c> setting.</param>
-    /// <param name="hiddenPattern">The <c>hidden_filter</c> setting.</param>
-    /// <param name="autoupdate">The <c>autoupdate_cumulative_size</c> setting.</param>
+    /// <param name="resolve">What a directory's settings are, given its path.</param>
     /// <remarks>
     /// <para>
-    /// Every setter here re-derives the listing on a change and returns immediately on a
+    /// Every setter re-derives the listing on a change and returns immediately on a
     /// non-change, so this is cheap to call each frame and there is nothing to remember to
     /// invalidate.
     /// </para>
@@ -2368,6 +2370,13 @@ public sealed class Browser : IFileManager, IDisposable
     /// had — and so did a change of sort order. Ranger has no such gap because every directory
     /// binds itself to these settings when it is created
     /// (<c>container/directory.py:140-148</c>), so all of them refilter at once.
+    /// </para>
+    /// <para>
+    /// Resolved per directory rather than once for the current one, because <c>setlocal</c> and
+    /// <c>setinregex</c> scope a setting to a path. Pushing the current directory's answer onto
+    /// its neighbours listed a folder with a rule of its own by the wrong key for its first load —
+    /// which is when its cursor is placed — and the cursor then stayed on that entry as the right
+    /// order moved it down the list.
     /// </para>
     /// <para>
     /// The set is chosen <em>here</em>, from the tab, rather than passed in. Taking a ready-made
@@ -2381,21 +2390,88 @@ public sealed class Browser : IFileManager, IDisposable
     /// </para>
     /// </remarks>
     internal static void ApplySettings(Tab current, IReadOnlyDictionary<int, Tab> tabs,
-                                       string? viewmode, SortOrder order, bool showHidden,
-                                       string hiddenPattern, bool autoupdate)
+                                       string? viewmode,
+                                       Func<string, DirectorySettings> resolve)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(tabs);
-        ArgumentNullException.ThrowIfNull(hiddenPattern);
+        ArgumentNullException.ThrowIfNull(resolve);
+
+        // The directories that exist, and then the ones that do not yet. A directory opened later
+        // is configured on its way out of the cache, before its first load, because that load is
+        // when its cursor is placed.
+        current.Directories.Settings = resolve;
 
         foreach (DirectoryNode directory in VisibleDirectories(current, tabs, viewmode))
         {
-            directory.ShowHidden = showHidden;
-            directory.HiddenPattern = hiddenPattern;
-            directory.SortOrder = order;
-            directory.AutoupdateCumulativeSize = autoupdate;
+            resolve(directory.Path).ApplyTo(directory);
         }
     }
+
+    /// <summary>How long the loop may sleep before it looks at the screen again.</summary>
+    /// <param name="pendingInput">Whether an escape sequence may still be in flight.</param>
+    /// <param name="needsRedraw">Whether something answered from another thread.</param>
+    /// <param name="hasWork">Whether the queue has a job to advance.</param>
+    /// <param name="taskDelay">How long that job is content to wait.</param>
+    /// <param name="hasActivity">Whether something outside the queue is reporting.</param>
+    /// <param name="idleDelay">The <c>idle_delay</c> setting, in milliseconds.</param>
+    /// <returns>The poll timeout, in milliseconds.</returns>
+    /// <remarks>
+    /// <para>
+    /// A background activity has to shorten the wait as a queued job does, and for the same
+    /// reason: something on screen is changing without anyone touching the keyboard. It did not,
+    /// and the effect was measured — audio started at once while its clock took 2.11 s to appear
+    /// and then moved in 2.0 s steps, because mpv was reporting eight times a second into a loop
+    /// that looked twice a minute.
+    /// </para>
+    /// <para>
+    /// Half a second rather than the queue's own delay, which is however long the running job is
+    /// content to wait and is measured in milliseconds. A clock counting in seconds needs no more
+    /// than this, and a file listened to for an hour should not hold the processor awake for the
+    /// sake of a figure that changes once a second.
+    /// </para>
+    /// <para>
+    /// Static, and given everything it needs, so the rule can be checked without standing up a
+    /// terminal — as <see cref="VisibleDirectories"/> and <see cref="ApplySettings"/> are.
+    /// </para>
+    /// </remarks>
+    internal static int IdleTimeout(bool pendingInput, bool needsRedraw, bool hasWork,
+                                    TimeSpan taskDelay, bool hasActivity, int idleDelay)
+    {
+        if (pendingInput)
+        {
+            return EscapeDelayMilliseconds;
+        }
+
+        if (needsRedraw)
+        {
+            return 0;
+        }
+
+        if (hasWork)
+        {
+            return (int)taskDelay.TotalMilliseconds;
+        }
+
+        return hasActivity ? Math.Min(ActivityDelayMilliseconds, idleDelay) : idleDelay;
+    }
+
+    /// <summary>How often the screen is looked at while something outside the queue reports.</summary>
+    private const int ActivityDelayMilliseconds = 500;
+
+    /// <summary>Whether something holding the keyboard takes this key.</summary>
+    /// <param name="target">Whatever the key would otherwise go to.</param>
+    /// <param name="grab">What is holding the keyboard, if anything.</param>
+    /// <param name="key">The key.</param>
+    /// <returns><see langword="true"/> when the key was taken and nothing else should act on it.</returns>
+    /// <remarks>
+    /// Only where the key would have gone to the browser. The console, the pager, the task view
+    /// and the device list are things the user opened and has to be able to close, and a grab that
+    /// swallowed the key closing them would be a trap with no way out — so the grab is not even
+    /// asked while one of them is up.
+    /// </remarks>
+    internal static bool GrabTakes(KeyTarget target, Core.Input.IKeyGrab? grab, int key) =>
+        target == KeyTarget.Browser && grab is not null && grab.Handle(key);
 
     /// <summary>Draws the info lines over the bottom of the listing.</summary>
     /// <param name="lines">What to show, one per row.</param>
@@ -2775,6 +2851,23 @@ public sealed class Browser : IFileManager, IDisposable
             // The queue's line, not the running job's: with more than one thing queued the bar
             // speaks for all of it, and with one it is the job's own line unchanged.
             _statusBar.TaskDescription = Tasks.Summary()?.Describe();
+
+            // Asked only where the queue has nothing to say, and asked *while drawing*, which is
+            // the heartbeat a plugin has no other way of getting. A copy therefore takes the bar
+            // back for as long as it runs, and the quieter thing reappears when it is done.
+            _statusBar.ActivityDescription = null;
+            _statusBar.ActivityBadge = null;
+
+            if (_statusBar.TaskDescription is null && BackgroundActivity is { } activity)
+            {
+                _statusBar.ActivityDescription = activity.Describe();
+                _statusBar.ActivityBadge = activity.Badge;
+
+                if (_statusBar.ActivityDescription is not null)
+                {
+                    _statusBar.Progress = activity.Progress;
+                }
+            }
             _statusBar.FreeBytes = FreeSpace();
             _statusBar.Render(_screen);
         }

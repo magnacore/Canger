@@ -178,6 +178,9 @@ public sealed class CommandLineOptions
 
         A file manager for the terminal.
 
+        Each path opens in a tab of its own. A path naming a file rather than a
+        directory opens the directory holding it, with that file under the cursor.
+
         Options:
           -h, --help              show this message and exit
               --version           show the version and exit

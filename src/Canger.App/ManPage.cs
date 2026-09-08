@@ -69,6 +69,12 @@ public static class ManPage
                    are, the listing itself, and a preview of whatever the cursor is on. Moving right
                    enters a directory or opens a file; moving left goes back up.
                    .PP
+                   Each
+                   .I path
+                   opens in a tab of its own. One that names a file rather than a directory opens
+                   the directory holding it, with that file under the cursor, so a file handed over
+                   from a shell or another program arrives selected.
+                   .PP
                    Almost everything is a command, and almost every key is bound to one. Typing
                    .B :
                    opens a prompt where the same commands can be typed by name, which is how to
