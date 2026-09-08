@@ -1,5 +1,36 @@
 # Canger — port status
 
+## Status bar alignment: inset the bar, then put it back
+
+Reported as the status bar not lining up with the browser's vertical rule. I read that as "the text
+should begin where the listing begins" and inset the bar by the frame — and the answer came back
+"now it's slightly ahead". Reverted (`448b069`, undone by `e2460aa`): the bar starts in the same
+column as the outer rule, which is where it began and what ranger does.
+
+**The lesson is about the diagnosis rather than the code.** The two candidates differ by one column,
+and I chose between them by reading pixels off a screenshot — twice, wrongly the first time.
+Rendering both with a column ruler and asking which was wanted settled it in one exchange:
+
+```
+col:     0123456789            col:     0123456789
+frame    ┌──────┬───            frame    ┌──────┬───
+listing  │      │               listing  │      │
+status   -rw------- 1 …         status    -rw------- 1 …
+         flush — kept                     inset — rejected
+```
+
+When the question is "which of two adjacent columns", show both and ask. Inferring geometry from an
+image cost two rounds.
+
+**Worth keeping from the attempt, though the code is gone.** The rule — which border settings mean
+a frame — had six tests, and the layout that applied it had none: removing the inset from the
+layout broke nothing while every test still passed. Splitting a rule from its application splits
+the tests from the behaviour, and only the control found it.
+
+Note the bar's *headline* — a message, or a running task — keeps its one-column margin, asked for
+earlier because the progress tint runs to the edge behind it. That is a different state of the same
+row, not an inconsistency with the above.
+
 ## No preview for a `.mka`, and it was not Canger
 
 Reported: an `.mp3` shows information in the preview pane and an `.mka` shows nothing.
