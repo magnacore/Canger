@@ -1,5 +1,87 @@
 # Canger — port status
 
+## Starting on a file selects it, and the rule was already there
+
+`canger notes.txt` refused with `not a directory`, where ranger opens the directory holding the
+file with that file under the cursor — which is how a file handed over from a shell or another
+program arrives.
+
+**The rule had been implemented all along.** `Tab.Enter` carries ranger's `core/tab.py:151-153`
+— anything that is not a directory is entered as its parent with the cursor put on the name — and
+its own comment says so. It never saw a file, because startup asked a stricter question first and
+gave up before the tab was built. Ranger's startup check is only whether the path is there at all
+(`os.access(path_abs, os.F_OK)`, `core/main.py:108`); Canger's now asks the same, so a command-line
+path, `:cd <file>` and `--selectfile` all reach one rule.
+
+The same shape as the `n` defect below and the ninth in the series AGENT.md warns about: a
+mechanism that works, with nothing feeding it.
+
+**Tested through `Main`**, not through the check — the defect was the caller's question, so a test
+of the rule could not have seen it. `--list` prints a listing and marks the cursor, which makes
+the whole startup path assertable without a terminal.
+
+**Control:** the directory-only check back in place fails the file case; the mutation compiled.
+Verified with `tools/screen.py` on a directory of 1015 files: started on the 500th, the cursor
+arrives on it at 433/1014.
+
+## `n` repeats the search that was made, not one rebuilt from its text
+
+`,` (`file_select_similar`) marked the four files belonging together and then `n` found nothing to
+step through, where ranger walks them.
+
+`,` issues `scout -m ^stem`. Scout marked correctly, but the tab remembered the **pattern text**
+and `search_next` matched it as a plain case-insensitive substring — so it went hunting for a
+literal caret in the basenames. The pattern alone does not say how it was meant to be read: the
+flags decide that (`-r` regex, `-g` glob, `-l` letter skipping, `-i`/`-s` case, `-v` inversion),
+and a leading `^` anchors whichever applies. `n` was guessing, and guessed differently from the
+search it was repeating.
+
+`Tab.LastSearch` now holds the matcher scout built, which is what ranger keeps there — a compiled
+regex (`config/commands.py:1608`). A type change on a public property; nothing in the repo or the
+user's configuration read it as a string.
+
+**Controls, one per half:** `n` back to matching the text as a substring fails 2; the search
+remembering a matcher built without its flags fails 1. Both compiled. The three existing
+`search_next` tests set `LastSearch` by hand — the very seam the defect lived in — so they now go
+through `scout`. Verified in the real directory: `,` marks the four files and `n` walks them.
+
+## The activity badge needed a space of its own
+
+The `MPV` badge sat flush against the clock beside it.
+
+The badge pads itself as `" MPV "`, but both spaces are **inside** the block it is picked out
+with, so padding only made the highlight wider. The gap has to be a cell that is not highlighted,
+and it has to be counted in the width the bar reserves or the left block loses a column to it.
+
+**Control:** with the gap gone the new test fails on the *style* of the cell before the line,
+which is what "flush" means here — a test for a space character would have passed either way.
+
+## Previews wrap between words
+
+Asked whether preview text should wrap, then reported that `wrap_plaintext_previews` did not work
+when it did: ranger cuts each line at whatever character the pane's width lands on
+(`gui/widgets/pager.py:242-260`), so a wrapped paragraph comes out split through the middle of
+words, and the output does not read as wrapped text at all. **A deliberate divergence, the
+eleventh.**
+
+`Pager.Wrap` works out where a line should break and `DrawLine` draws the pieces:
+
+- after a space where there is one, and where the pane ends when a word is wider than it;
+- a line keeps its own indentation and is never broken *on* it, which would put out a row holding
+  nothing but spaces;
+- the spaces a break lands on are dropped, so a continuation is not adrift;
+- widths are counted in cells, so CJK breaks where it looks like it should;
+- the pieces are drawn from the original text, so a highlighter's colours survive the break.
+
+**Controls, one per half:** breaking at the column rather than the last word boundary fails 3;
+leaving the rule right but stepping `DrawLine` by the pane width fails 2. Both compiled.
+
+Two things the tests taught. The first headline test used a width where the pane edge fell exactly
+on a space, so it survived the mutation — it never distinguished word wrapping from column
+wrapping. And working out why an indentation expectation failed exposed a real flaw in the first
+draft: a break could land just after a line's leading spaces, emitting a blank row. That is the
+`seenWord` guard.
+
 ## Removing a plugin: Canger survives it, and now says what went quiet
 
 Asked after removing `devicons.cs` and finding the icons still there, with the worry that Canger
