@@ -36,8 +36,11 @@ public class ActivityBadgeTests
     }
 
     [Fact]
-    public void ItIsShownInFrontOfTheLine()
+    public void ItSitsWithTheFlagsAtTheRightHandEnd()
     {
+        // Where this bar says what state you are in: `Mrk`, `VIS` and `FROZEN` are all there, and
+        // the eye already goes there for them. In front of the activity line it was the one flag
+        // in a place no other flag appears.
         (StatusBar bar, ScreenBuffer screen) = Build();
         bar.ActivityDescription = "00:04:21 / 00:06:44";
         bar.ActivityBadge = "MPV";
@@ -45,51 +48,51 @@ public class ActivityBadgeTests
         bar.Render(screen);
         string line = screen.TextAt(0);
 
-        Assert.True(line.IndexOf("MPV", StringComparison.Ordinal) <
+        Assert.True(line.IndexOf("MPV", StringComparison.Ordinal) >
                     line.IndexOf("00:04:21", StringComparison.Ordinal),
-                    "the badge is not in front of the line");
+                    "the badge is not past the line it belongs to");
+        Assert.EndsWith("MPV", line.TrimEnd(), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ItIsPickedOutFromTheRestOfTheBar()
+    public void ItIsSpacedAndPaddedLikeTheFlagsBesideIt()
     {
-        // Text alone cannot say "you are in a mode"; the point of the badge is that it looks
-        // different, so the style is what has to be asserted.
+        // Two columns between the flags, one off the right edge, and the highlighted block is the
+        // word itself: a badge that padded itself would be two columns wider than `VIS` for a
+        // word of the same length, and would not line up with it.
         (StatusBar bar, ScreenBuffer screen) = Build();
-        bar.ActivityDescription = "00:04:21 / 00:06:44";
+        bar.IsVisualMode = true;
+        bar.ActivityBadge = "MPV";
+
+        bar.Render(screen);
+        string line = screen.TextAt(0);
+        int badge = line.IndexOf("MPV", StringComparison.Ordinal);
+        int flag = line.IndexOf("VIS", StringComparison.Ordinal);
+
+        Assert.Equal(flag + "VIS".Length + 2, badge);
+        Assert.Equal(" ", line[(badge + 3)..]);
+        Assert.Equal(screen[flag, 0].Style, screen[badge, 0].Style);
+        Assert.NotEqual(screen[badge, 0].Style, screen[badge - 1, 0].Style);
+        Assert.NotEqual(screen[badge, 0].Style, screen[badge + 3, 0].Style);
+    }
+
+    [Fact]
+    public void ItIsShownWithNoLineToGoWith()
+    {
+        // It names a state rather than decorating a figure, so it is drawn while the state holds.
+        // Requiring a line meant the badge was missing for as long as mpv had not yet said
+        // anything — with the keyboard handed over the whole time, which is precisely when the
+        // user needs telling.
+        (StatusBar bar, ScreenBuffer screen) = Build();
         bar.ActivityBadge = "MPV";
 
         bar.Render(screen);
 
-        string line = screen.TextAt(0);
-        int badge = line.IndexOf("MPV", StringComparison.Ordinal);
-        int clock = line.IndexOf("00:04:21", StringComparison.Ordinal);
-
-        Assert.NotEqual(screen[clock, 0].Style, screen[badge, 0].Style);
+        Assert.Contains("MPV", screen.TextAt(0), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ItIsSetOffFromTheLineByASpaceOfItsOwn()
-    {
-        // The spaces the badge pads itself with are inside its highlighted block, so they read as
-        // part of the block and the line starts flush against it. The gap has to be outside.
-        (StatusBar bar, ScreenBuffer screen) = Build();
-        bar.ActivityDescription = "00:04:21 / 00:06:44";
-        bar.ActivityBadge = "MPV";
-
-        bar.Render(screen);
-
-        string line = screen.TextAt(0);
-        int badge = line.IndexOf("MPV", StringComparison.Ordinal);
-        int clock = line.IndexOf("00:04:21", StringComparison.Ordinal);
-
-        Assert.Equal(' ', line[clock - 1]);
-        Assert.Equal(screen[clock, 0].Style, screen[clock - 1, 0].Style);
-        Assert.NotEqual(screen[badge, 0].Style, screen[clock - 1, 0].Style);
-    }
-
-    [Fact]
-    public void NoBadgeLeavesTheLineAsItWas()
+    public void NoBadgeLeavesTheFlagsAsTheyWere()
     {
         (StatusBar bar, ScreenBuffer screen) = Build();
         bar.ActivityDescription = "00:04:21 / 00:06:44";
@@ -102,15 +105,21 @@ public class ActivityBadgeTests
     }
 
     [Fact]
-    public void ABadgeWithNoLineShowsNothing()
+    public void AHeadlineTakesTheBarAndEveryFlagWithIt()
     {
-        // The badge decorates a line; on its own there is nothing to decorate.
+        // A queued task replaces the whole bar, as a message does, so `Mrk` and `VIS` go too.
+        // The badge is one of them now and goes the same way.
         (StatusBar bar, ScreenBuffer screen) = Build();
+        bar.IsVisualMode = true;
         bar.ActivityBadge = "MPV";
+        bar.TaskDescription = "Copying 3 files";
 
         bar.Render(screen);
+        string line = screen.TextAt(0);
 
-        Assert.DoesNotContain("MPV", screen.TextAt(0), StringComparison.Ordinal);
+        Assert.Contains("Copying 3 files", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("MPV", line, StringComparison.Ordinal);
+        Assert.DoesNotContain("VIS", line, StringComparison.Ordinal);
     }
 }
 

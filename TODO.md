@@ -1,5 +1,194 @@
 # Canger — port status
 
+## A selection of audio plays as one queue
+
+Reported: selecting several `.mka` files and pressing Enter played them **in the terminal**, over
+the interface — the one thing this plugin exists to prevent. Asked for them to play through the
+plugin instead, with the whole queue's progress on the bar: two five-minute files should read as
+ten minutes.
+
+**Why they escaped.** The opener took `paths.Count != 1` as "not mine", so any selection of more
+than one fell through to rifle, which ran mpv in the foreground. It now claims a selection where
+**every** file is playable, and declines a mixed one — claiming that would mean silently dropping
+whatever is not audio. `mka_play`, asked for by name, plays the playable files of the selection and
+leaves the rest alone.
+
+**One mpv, not one per file.** The files go to mpv as a playlist, so `pap` holds all of it, `pas`
+stops all of it, the mode hands the keyboard to whatever is playing, and the gap between two parts
+is mpv's own rather than however long Canger takes to notice one ended.
+
+**Where the total comes from.** Not from mpv: it reports on the file it is playing and knows
+nothing of the lengths ahead, so a bar waiting on mpv would learn the total as it finished. The
+files are measured up front with `ffprobe`, falling back to `mediainfo` — in parallel, off the
+interface's thread, since forty parts measured one after another would keep the total off the
+screen. With neither tool, or with any one file unmeasurable, there is no honest total and the
+line stays the one mpv writes for the file playing now.
+
+**The line is the user's own format.** The first attempt composed a line of Canger's own shape,
+and it was wrong in a way that showed immediately: it counted *up* where their `mpv.conf` asks for
+`${playtime-remaining}`, which counts down. Asked for the queue to read exactly as a single file
+does, plus the `1/2`.
+
+So the format is theirs and only the figures are replaced. The format is split into its literal
+text and its `${…}` expressions; the ones a queue changes the meaning of — `duration`,
+`time-pos`, `playback-time`, `time-remaining`, `playtime-remaining`, `percent-pos`, with or
+without mpv's `=` prefix — are answered here from the measured durations, and **everything else is
+asked of mpv** as a machine-readable field of its own and spliced back in. That covers the speed,
+the volume the mode adds, a title, and conditionals like `${?pause==yes:(Paused)}` without this
+plugin having to know what any of them mean — which is what keeps it from becoming a second
+implementation of mpv's format language. Expressions are brace-matched, because mpv's conditionals
+nest.
+
+Three things move together or not at all — which format is in force, which of its parts mpv
+answers, and what it last answered — and a reading whose field count does not match the format is
+dropped whole, which is what keeps the line from being built out of one format and another's
+values for the frame or two after the mode changes it.
+
+**Controls, eight:** the opener back to one file fails 3; `Elapsed` forgetting the files already
+played fails 2; `Describe` ignoring the queue fails 1; `Progress` staying per-file fails 1; the
+status format without the new fields fails 1; a line of Canger's own shape again fails 5; nothing
+answered from the queue fails 5; and the parts mpv must answer never asked for fails 1. All
+compiled.
+
+That last one **failed nothing at first**, and is the useful one: the readings a test writes carry
+whatever fields it likes, so no test could tell whether the plugin had actually asked mpv for them
+— while a real mpv sends exactly what the format names, and a short reading is thrown away whole.
+A test now asserts the command line names every part mpv has to answer. The wiring tests set the
+durations by reflection, for the same class of reason: the arithmetic being right is a different
+question from the queue's clock being the one that reaches the bar.
+
+## Whether mpv is paused has to be asked, not read
+
+Reported: `p` and `Space` in the mode paused the audio and the word `(Paused)` appeared only
+sometimes — alternating within a single playback.
+
+Two things were wrong, and the second was hiding behind the first.
+
+**This side kept the state itself.** `_paused` was toggled by `pap` and by nothing else, so a key
+pressed in the mode went straight to mpv and paused it without this ever hearing. Whether the word
+appeared depended on which of the two had been used last. Fixed by asking mpv — but the obvious
+way to ask does not work either, which is the interesting half.
+
+**mpv's answer cannot be read from its status line.** It writes two or three readings as it pauses
+and then stops, and a reading is terminated by the beginning of the next — so the one that says it
+has paused is the last thing it writes and nothing follows it. Canger drains a background process
+with the framework's line reader, which holds a line back until its terminator arrives, so that
+reading is *still sitting in the reader* for as long as the pause lasts. An earlier attempt here
+accepted an unterminated tail and passed its tests against a fake whose output is a plain string;
+against a real mpv it changed nothing, because the tail never arrives. That attempt was reverted:
+a mechanism nothing can feed.
+
+**So it is asked over the control socket**, `get_property pause`, on each frame — with a bounded
+receive timeout, since this runs on the thread that draws. On each frame rather than after the
+keys that might have caused it, for two reasons: which keys pause is mpv's `input.conf` to say,
+not this plugin's to guess; and a reply asked for in the same breath as a keypress can be answered
+*before* the keypress is acted on. That was measured — `keypress SPACE` followed by
+`get_property pause` on one connection answered `false` — and it is why an attempt to fix this by
+querying after each key would have alternated too.
+
+What the last reading said remains the fallback, which is all there is when no control socket came
+up, and is what the tests exercise.
+
+**Controls:** mpv's answer ignored fails 1; the pause never asked for in the status format fails 1;
+a reading written under another format accepted fails 1; waiting for a terminator again fails 1.
+The first version of the pause test **passed with the defect put back**, because the reading it
+fed carried `(Paused)` in its readable half — so the word was on the line whether or not the state
+had been read at all. It now runs against a format that says nothing about pausing.
+
+**Verified in a real session**, all six states: `pap`, `p` in the mode and `Space` in the mode each
+show `(Paused)` when they pause and clear it when they resume, for a single file and for a queue.
+
+**Then the word jumped.** Reported next: it appeared in front of the line and immediately moved to
+the back. Both indicators were firing in turn — this side's own prefix went on the instant the
+socket answered, and dropped again a frame later when the reading carrying their own
+`${?pause==yes:(Paused)}` arrived and the line already said it. Whether to add the prefix is now
+decided from the **format** rather than from whether the line happens to contain the word, because
+those two differ exactly when it matters: the socket answers at once and the reading spelling it
+out is a frame behind. A format that asks about `pause` says it in the place its author chose, and
+this side says nothing. Same rule as the volume, one paragraph up.
+
+The cost is that the word arrives with the reading rather than instantly — measured at under a
+second, against a jump that was instant and wrong. Control: the prefix added regardless of the
+format fails 1.
+
+**The volume appears as it moves, and then goes.** Reported after the first attempt: entering the
+mode showed the volume and kept it there, in normal playback it never showed at all, and mpv in a
+terminal does neither — it shows the figure as it is changed and takes it away again. Asked for
+that, and for the format to decide: a `term-status-msg` naming `${volume}` shows it always,
+anything else shows it only when it moves.
+
+So the mode no longer touches the volume. It is a machine-readable field like the rest, and what
+puts it on the line is the **figure changing** — not the key that changed it, which means it shows
+however it was moved (`8` and `9`, mute, or something else on the machine), and the first reading
+after playback starts is not a change and says nothing. It stays for a second, which is mpv's own
+`osd-duration`. Controls: shown whether or not it moved fails 5; said twice on a format that
+already has it fails 1; the change never noticed fails 1.
+
+One thing to know, and it is the status bar's rule rather than this plugin's: where the bar has no
+room, the whole activity line is left out rather than truncated, because what is under the cursor
+is worth more than what is playing. The volume's nine columns can be what tips it over — at 120
+columns the single-file line went blank for the second the volume was up, and at 160 it read
+`00:03:14 / 00:05:00 (3%) 1.5x  vol 98%` as intended.
+
+**The volume went missing when the queue's line arrived.** Reported straight after: in the mode, `8` and `9` moved the
+volume with nothing on screen to say so. The mode works by adding `${volume}` to the format mpv
+fills in — and a queue shows its own line *instead* of that one, so the figure had nowhere to
+appear. A good example of the shape AGENT.md warns about, arrived at from the other end: not a
+mechanism nothing feeds, but a new line quietly cutting the feed to an old one. It was fixed by
+carrying the volume on the queue's line, and then fixed properly by the change above, which
+removed the special case altogether.
+
+**Verified with real playback**, on silent files made for the purpose so nothing was audible: two
+five-minute files read `1/2  00:00:04 / 00:10:00 (1%) 1.5x`; `pap` showed `(paused)`; `pas`
+cleared it and left no mpv behind. A 4-second and a 6-second file crossed from
+`1/2 … 00:00:01 / 00:00:10 (19%)` to `2/2 … 00:00:07 / 00:00:10 (79%)`, which is the only way to
+see the playlist advance. A single file is unchanged: mpv's own line, no `n/m` in front of it. In
+the mode the line reads `1/2  00:00:06 / 00:10:00 (1%) 1.5x  vol 100%` beside the `MPV` badge, and
+the volume follows the keys and goes away with Escape. Against the reporter's own `mpv.conf` the
+queue reads `1/2  00:06:37 / 00:10:00 (1%) 1.5x` and **counts down**, four seconds every three of
+wall clock, which is `playtime-remaining` over ten minutes of audio at 1.5x.
+
+## The activity badge moves in with the other flags
+
+Reported that badges belong at the right-hand end of the status bar, where `Mrk` and `VIS` are,
+while the `MPV` badge sat in front of the activity line — the one flag in a place no other flag
+appears. With an instruction to pay attention to the spacing.
+
+It is now the last of the parts `DrawRight` builds, so the two-column separator between the flags
+and the one-column margin off the right edge apply to it as they do to the rest, and it lines up
+with them. **Its own padding is gone**: `" MPV "` was two columns wider than `VIS` for a word of
+the same length, and the separator is what spaces these.
+
+**It no longer depends on there being a line.** A badge names a state, and `Describe()` returns
+null before mpv has said anything — so the flag was missing for the first second or two of the
+mode, with the keyboard handed over the whole time. A flag that goes out while the state it names
+is still true is worse than no flag. A message or a queued task still takes the whole bar and
+every flag on it, this one included, exactly as it does for `Mrk` and `VIS`.
+
+**`Describe()` is now asked on every frame**, whatever else the bar is showing. It is the only
+heartbeat a plugin gets, and it is where mpv's output is drained and its exit noticed — the exit
+being what hands the keyboard back. Asking only while the queue was quiet meant a copy running for
+a minute left the pipe filling and, if mpv ended in that minute, a keyboard grab pointed at a
+process that no longer existed.
+
+The decision now lives in `Browser.ActivityFor`, a static rule, because a `Browser` cannot be
+built without a terminal and this is the only way it can be tested. Six controls, three on the bar
+and three on the rule: the badge not among the flags fails 3; the badge requiring a line fails 2;
+the badge padding itself fails 1; the badge dropped under a headline fails 1; no heartbeat under a
+headline fails 1; the badge requiring a line in the rule fails 1. All compiled.
+
+**Removing the plugin.** Asked for, and checked with the plugin actually moved aside and Canger
+driven: it starts, lists and navigates; the status bar reads exactly as it did before any of this
+existed — nothing feeds `ActivityBadge`, so `DrawRight` adds no part and the flags are unchanged;
+`pam` answers `unknown command: mka_mode`; and startup says `3 key bindings name a command that
+does not exist — run: canger --config`. `ActivityFor(null, …)` is `(null, null, null)` and holds
+no state between frames, which is the whole of what removal has to do. The live plugin was
+restored byte-identically (same SHA-256).
+
+Not driven through mpv itself: seeing the badge in place means playing audio out loud on the
+user's machine. The placement, spacing and styles are asserted by column and by cell style in
+`ActivityBadgeTests`.
+
 ## Starting on a file selects it, and the rule was already there
 
 `canger notes.txt` refused with `not a directory`, where ranger opens the directory holding the

@@ -38,12 +38,21 @@ public interface IBackgroundActivity
     double? Progress { get; }
 
     /// <summary>
-    /// A short word shown before the line and picked out, or <see langword="null"/> for none.
+    /// A short word picked out among the status bar's right-hand flags, or <see langword="null"/>
+    /// for none.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// For a state the user is in rather than a figure they are watching — that the keyboard has
     /// been handed to something else, say, which is worth saying loudly because every key does
     /// something different until it is handed back.
+    /// </para>
+    /// <para>
+    /// Drawn with <c>Mrk</c>, <c>VIS</c> and <c>FROZEN</c>, and on the same terms: shown whenever
+    /// it is given, whether or not <see cref="Describe"/> has anything to say — a flag that goes
+    /// out while the state it names is still true is worse than no flag — and hidden with the
+    /// rest of them while a message or a queued task holds the bar.
+    /// </para>
     /// </remarks>
     string? Badge => null;
 }
