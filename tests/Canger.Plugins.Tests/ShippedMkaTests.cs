@@ -69,6 +69,7 @@ public sealed class ShippedMkaTests : IDisposable
             .AddDirectory("/home/audio")
             .AddDirectory("/home/audio/folder")
             .AddFile("/home/audio/book.mka")
+            .AddFile("/home/audio/part2.mka")
             .AddFile("/home/audio/notes.txt");
 
         FakeFileManager manager = new(files, "/home/audio");
@@ -95,6 +96,15 @@ public sealed class ShippedMkaTests : IDisposable
         return manager;
     }
 
+    /// <summary>Marks files by name, which is what makes a selection of several.</summary>
+    private static void Mark(FakeFileManager manager, params string[] names)
+    {
+        foreach (Canger.Core.Model.FsNode entry in manager.CurrentTab.Current.Entries)
+        {
+            entry.IsMarked = names.Contains(entry.Basename);
+        }
+    }
+
     private static string CommandFor(FakeFileManager manager) =>
         Assert.Single(((FakeFileManager.RecordingProcessRunner)manager.Runner).Requests).Command;
 
@@ -114,6 +124,40 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
+    public void EnterOnSeveralAudioFilesPlaysThemAsOneQueue()
+    {
+        // Reported: selecting several and pressing Enter played them in the terminal, over the
+        // interface. The opener took only one file, so a selection of several fell through to
+        // rifle — which is exactly the thing this plugin exists to take over.
+        FakeFileManager manager = Build();
+        Mark(manager, "book.mka", "part2.mka");
+
+        Assert.True(manager.Execute("open"));
+
+        // One mpv, not one per file: the playlist is mpv's, so `pap` holds all of it and the gap
+        // between two parts is mpv's own.
+        string command = CommandFor(manager);
+
+        Assert.Contains("book.mka", command, StringComparison.Ordinal);
+        Assert.Contains("part2.mka", command, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AMixedSelectionIsLeftToTheOrdinaryRules()
+    {
+        // All audio or none. Claiming a selection holding other things would mean silently
+        // dropping whatever could not be played.
+        FakeFileManager manager = Build();
+        Mark(manager, "book.mka", "notes.txt");
+
+        manager.Execute("open");
+
+        Assert.DoesNotContain(
+            ((FakeFileManager.RecordingProcessRunner)manager.Runner).Requests,
+            request => request.Command.Contains("mpv ", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ItAsksMpvForTheStatusLineItThenReads()
     {
         FakeFileManager manager = Build();
@@ -125,7 +169,8 @@ public sealed class ShippedMkaTests : IDisposable
         // mpv's own configuration names, so asserting a particular field here would make the test
         // depend on the mpv.conf of whoever runs it.
         Assert.Contains("--term-status-msg=", command, StringComparison.Ordinal);
-        Assert.Contains("canger-mka:${=percent-pos}|", command, StringComparison.Ordinal);
+        Assert.Contains("canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed}|",
+                        command, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -302,6 +347,156 @@ public sealed class ShippedMkaTests : IDisposable
         manager.Execute("mka_stop");
 
         Assert.Null(manager.KeyGrab);
+    }
+
+    /// <summary>
+    /// Tells the plugin how long the queued files are, as measuring them would have.
+    /// </summary>
+    /// <remarks>
+    /// The files in these tests are in memory and have no duration to measure — and a test that
+    /// ran ffprobe would be testing ffprobe. What is worth pinning here is that the queue's clock
+    /// is the one that reaches the bar, which is a different question from the arithmetic being
+    /// right and has to be asked separately: the arithmetic was right and unreachable for as long
+    /// as it took to write this.
+    /// </remarks>
+    private static void Measured(IBackgroundActivity activity, double[] durations) =>
+        activity.GetType()
+                .GetField("_durations", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(activity, durations);
+
+    /// <summary>Starts a queue against a fake mpv saying where it has got to.</summary>
+    private FakeFileManager Queued(string reading)
+    {
+        FakeFileManager manager = Build();
+        Mark(manager, "book.mka", "part2.mka");
+
+        ((FakeFileManager.RecordingProcessRunner)manager.Runner).BackgroundResults["mpv"] =
+            new FakeFileManager.FakeBackgroundProcess
+            {
+                StepsBeforeExit = 10_000,
+                StandardOutput = reading,
+            };
+
+        manager.Execute("open");
+
+        return manager;
+    }
+
+    [Fact]
+    public void TheBarIsToldTheQueuesOwnClockOnceTheFilesAreMeasured()
+    {
+        // A minute into the second of two five-minute files: six minutes of ten, and the bar
+        // three fifths of the way along — not a fifth of the way through part two.
+        FakeFileManager manager = Queued("canger-mka:20;1;60;1.5|00:01:00 / 00:05:00 (20%) 1.5x\r");
+        IBackgroundActivity activity = manager.BackgroundActivity!;
+
+        Measured(activity, [300d, 300d]);
+
+        Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x", activity.Describe());
+        Assert.Equal(0.6, activity.Progress!.Value, 3);
+    }
+
+    [Fact]
+    public void AnUnmeasuredQueueShowsWhatMpvSaysAboutTheFilePlayingNow()
+    {
+        // With no tool to measure them there is no honest total, and mpv's own line for the file
+        // playing is better than a made-up one.
+        FakeFileManager manager = Queued("canger-mka:20;1;60;1.5|00:01:00 / 00:05:00 (20%) 1.5x\r");
+        IBackgroundActivity activity = manager.BackgroundActivity!;
+
+        Assert.Equal("00:01:00 / 00:05:00 (20%) 1.5x", activity.Describe());
+        Assert.Equal(0.2, activity.Progress!.Value, 3);
+    }
+
+    /// <summary>Calls one of the plugin's own static methods.</summary>
+    /// <remarks>
+    /// The arithmetic a queue's clock is made of is worth testing on its own: driving it through
+    /// mpv would mean a real process, real audio files and real waiting, and would still only
+    /// ever exercise whatever position that run happened to reach.
+    /// </remarks>
+    private static object Call(string type, string method, params object[] arguments)
+    {
+        string plugins = PluginDirectory();
+        Assert.SkipWhen(plugins.Length == 0, "the repository layout was not found");
+
+        CompilationResult compiled =
+            new ScriptCompiler().Compile("mka", [Path.Join(plugins, "mka.cs")]);
+
+        Assert.True(compiled.Succeeded, string.Join("; ", compiled.Diagnostics));
+
+        MethodInfo found = compiled.Assembly!.GetType(type)!.GetMethod(
+            method, BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!;
+
+        return found.Invoke(null, arguments)!;
+    }
+
+    [Theory]
+    [InlineData(0, "00:00:00")]
+    [InlineData(59.6, "00:00:59")]
+    [InlineData(600, "00:10:00")]
+    [InlineData(3671, "01:01:11")]
+    public void TheClockIsSpelledAsMpvSpellsOne(double seconds, string expected)
+    {
+        // Beside figures mpv wrote, so it is written the same way — hours and all, since a total
+        // that changed shape as it crossed an hour would shift the line sideways.
+        Assert.Equal(expected, Call("Playback", "Clock", seconds));
+    }
+
+    [Fact]
+    public void TheQueuesClockCountsTheFilesAlreadyPlayed()
+    {
+        // Two files of five minutes, a minute into the second: six minutes of ten.
+        double[] durations = [300d, 300d];
+
+        Assert.Equal(360d, (double)Call("Playback", "Elapsed", durations, 1, 60d), 3);
+        Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x",
+                     Call("Playback", "OverallLine", durations, 1, 60d, "1.5"));
+    }
+
+    [Fact]
+    public void TheQueuesTotalIsTheWholeQueueFromTheFirstFrame()
+    {
+        // What was asked for: two files of five minutes read as ten minutes, from the start —
+        // not five minutes twice over.
+        double[] durations = [300d, 300d];
+
+        Assert.Equal("1/2  00:00:00 / 00:10:00 (0%) 1x",
+                     Call("Playback", "OverallLine", durations, 0, 0d, "1"));
+    }
+
+    [Fact]
+    public void APositionPastTheEndOfItsFileDoesNotOverrunTheTotal()
+    {
+        // mpv reports the position it has, and between two files that reading can belong to the
+        // one just finished. Counting it in full would put the clock past the total.
+        double[] durations = [300d, 300d];
+
+        Assert.Equal(300d, (double)Call("Playback", "Elapsed", durations, 0, 900d), 3);
+    }
+
+    [Theory]
+    [InlineData("301.234000\n", 301.234)]
+    [InlineData("  42\n", 42d)]
+    public void ADurationIsReadFromWhatTheToolPrinted(string output, double expected)
+    {
+        Assert.Equal(expected, (double)Call("Durations", "Seconds", output)!, 3);
+    }
+
+    [Theory]
+    [InlineData("N/A")]
+    [InlineData("")]
+    [InlineData("0")]
+    public void AnUnmeasurableFileHasNoDurationRatherThanZero(string output)
+    {
+        // Zero has to read as "no answer" too: a file counted as nothing long would shorten the
+        // total that every other figure is measured against.
+        Assert.Null(Call("Durations", "Seconds", output));
+    }
+
+    [Fact]
+    public void MediainfoAnswersInMilliseconds()
+    {
+        Assert.Equal(300d, (double)Call("Durations", "Milliseconds", "300000")!, 3);
     }
 
     /// <summary>Asks the compiled plugin what it would tell mpv to print.</summary>

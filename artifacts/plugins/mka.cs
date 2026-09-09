@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading.Tasks;
 using Canger.Core.Input;
 using Canger.Core.Processes;
 using Canger.Core.Tasks;
@@ -50,6 +53,125 @@ internal static class Playable
 }
 
 /// <summary>
+/// How long each file lasts, asked of a tool that can say.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A queue's total cannot come from mpv: it reports on the file it is playing and knows nothing
+/// about the length of the ones after it until it reaches them, so a bar that waited for mpv
+/// would only learn the total as it finished. The files are therefore measured before playback
+/// starts, which is the only moment the answer is knowable in advance.
+/// </para>
+/// <para>
+/// <c>ffprobe</c> first, <c>mediainfo</c> second, because between them they cover every machine
+/// this has been run on and neither is worth requiring. With neither, or with any one file
+/// unmeasurable, there is no honest total — and the status line falls back to the file playing
+/// now rather than inventing one.
+/// </para>
+/// </remarks>
+internal static class Durations
+{
+    /// <summary>Seconds, as ffprobe prints them.</summary>
+    /// <param name="output">What ffprobe wrote.</param>
+    /// <returns>The duration, or <see langword="null"/> where the answer was not a number.</returns>
+    /// <remarks>
+    /// <c>N/A</c> is ffprobe's answer for a stream it cannot measure, and the empty string is
+    /// what a missing file gives. Both have to read as "no answer" rather than as zero, or a
+    /// silent file would shorten the total everything else is measured against.
+    /// </remarks>
+    internal static double? Seconds(string output) =>
+        double.TryParse(output.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture,
+                        out double seconds) && seconds > 0
+            ? seconds
+            : null;
+
+    /// <summary>Seconds, from the milliseconds mediainfo prints.</summary>
+    /// <param name="output">What mediainfo wrote.</param>
+    /// <returns>The duration, or <see langword="null"/> where the answer was not a number.</returns>
+    internal static double? Milliseconds(string output) =>
+        Seconds(output) is { } milliseconds ? milliseconds / 1000 : null;
+
+    /// <summary>Measures every file, or reports that it could not.</summary>
+    /// <param name="paths">The files, in the order they will play.</param>
+    /// <returns>
+    /// One duration per file, or <see langword="null"/> when any of them could not be measured.
+    /// </returns>
+    /// <remarks>
+    /// All at once, because the answers are independent and a queue of forty parts measured one
+    /// after another would keep the total off the screen for as long as it took. Each probe is
+    /// its own short-lived process; the whole thing runs off the interface's thread.
+    /// </remarks>
+    internal static double[]? Of(IReadOnlyList<string> paths)
+    {
+        double?[] measured = new double?[paths.Count];
+
+        Parallel.For(0, paths.Count, i => measured[i] = Measure(paths[i]));
+
+        return measured.All(duration => duration is not null)
+            ? [.. measured.Select(duration => duration!.Value)]
+            : null;
+    }
+
+    /// <summary>Asks each tool in turn for one file's length.</summary>
+    private static double? Measure(string path) =>
+        Seconds(Ask("ffprobe",
+                    ["-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", path]))
+        ?? Milliseconds(Ask("mediainfo", ["--Output=General;%Duration%", path]));
+
+    /// <summary>Runs a program and returns what it printed.</summary>
+    /// <remarks>
+    /// Started directly rather than through the file manager's runner: that runner is for
+    /// programs the user asked for — it can suspend the interface, take the terminal, or queue
+    /// the work — and none of that belongs to a measurement nobody asked for. The arguments go
+    /// through <see cref="ProcessStartInfo.ArgumentList"/>, so a filename containing a quote or a
+    /// space reaches the tool exactly as it is spelled and no shell ever sees it.
+    /// </remarks>
+    private static string Ask(string program, IReadOnlyList<string> arguments)
+    {
+        try
+        {
+            ProcessStartInfo start = new(program)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+
+            foreach (string argument in arguments)
+            {
+                start.ArgumentList.Add(argument);
+            }
+
+            using Process? process = Process.Start(start);
+
+            if (process is null)
+            {
+                return string.Empty;
+            }
+
+            string output = process.StandardOutput.ReadToEnd();
+
+            // Bounded, because a measurement that hangs would hang the queue's total behind it.
+            // The file plays either way; only the total waits on this.
+            if (!process.WaitForExit(TimeSpan.FromSeconds(10)))
+            {
+                process.Kill(entireProcessTree: true);
+                return string.Empty;
+            }
+
+            return process.ExitCode == 0 ? output : string.Empty;
+        }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException or IOException)
+        {
+            // The tool is not installed, or cannot be run here. The other one is tried next, and
+            // if it is not there either the queue simply has no total.
+            return string.Empty;
+        }
+    }
+}
+
+/// <summary>
 /// The one thing playing, and what it has to say for the status bar.
 /// </summary>
 /// <remarks>
@@ -93,10 +215,14 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// bar shows is what mpv would have shown them, down to the field order and the wording.
     /// <c>${=percent-pos}</c> is the same figure unrounded, and is what the bar is tinted from;
     /// it has to be asked for separately because a format written for a person need not contain a
-    /// percentage at all.
+    /// percentage at all. The three fields after it — where the playlist has got to, how far into
+    /// that file, and the speed — are what a queue's own clock is worked out from, and are asked
+    /// for on every playback because asking only for a queue would mean two formats to keep in
+    /// step. The speed is asked for in mpv's display spelling rather than raw, since nothing here
+    /// does arithmetic with it and <c>${=speed}</c> reads as <c>1.500000x</c> on the bar.
     /// </remarks>
     private static string StatusFormat(string display) =>
-        Marker + "${=percent-pos}|" + display;
+        Marker + "${=percent-pos};${playlist-pos};${=time-pos};${speed}|" + display;
 
     /// <summary>What is shown in front of the clock while playback is held.</summary>
     /// <remarks>
@@ -122,6 +248,28 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     private bool _handsOver;
     private string _display = DefaultStatusFormat;
 
+    /// <summary>The files handed to mpv, in the order they play.</summary>
+    private string[] _files = [];
+
+    /// <summary>
+    /// How long each of them lasts, or <see langword="null"/> while that is not known.
+    /// </summary>
+    /// <remarks>
+    /// Written by the thread that measures them and read by the one that draws, so it is written
+    /// as one reference rather than filled in place: a reader sees either no answer or the whole
+    /// answer, never half of one.
+    /// </remarks>
+    private volatile double[]? _durations;
+
+    /// <summary>Which file of the queue mpv says it is playing, counted from zero.</summary>
+    private int _index;
+
+    /// <summary>How far into that file it has got, in seconds.</summary>
+    private double _position;
+
+    /// <summary>The speed mpv reports, as it spells it.</summary>
+    private string _speed = "1";
+
     /// <summary>The format used where mpv's configuration names none.</summary>
     internal static string PlainStatusFormat => DefaultStatusFormat;
 
@@ -133,7 +281,27 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     internal bool IsActive => _process is { HasExited: false };
 
     /// <inheritdoc />
-    public double? Progress => _progress;
+    /// <remarks>
+    /// The whole queue's, where the queue has been measured: a bar that ran to full and started
+    /// again at each part would say nothing about how much listening is left, which is the one
+    /// thing a queue's bar is for.
+    /// </remarks>
+    public double? Progress
+    {
+        get
+        {
+            if (_files.Length > 1 && _durations is { Length: > 1 } durations)
+            {
+                double total = durations.Sum();
+
+                return total > 0
+                    ? Math.Clamp(Elapsed(durations, _index, _position) / total, 0, 1)
+                    : _progress;
+            }
+
+            return _progress;
+        }
+    }
 
     /// <inheritdoc />
     /// <remarks>
@@ -168,9 +336,16 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             return null;
         }
 
-        return _paused && !_text.Contains("paused", StringComparison.OrdinalIgnoreCase)
-            ? PausedPrefix + _text
+        // The queue's own clock where there is one, and mpv's line for the file playing now
+        // where there is not — which covers a single file, a queue still being measured, and one
+        // holding something no tool here could measure.
+        string text = _files.Length > 1 && _durations is { Length: > 1 } durations
+            ? OverallLine(durations, _index, _position, _speed)
             : _text;
+
+        return _paused && !text.Contains("paused", StringComparison.OrdinalIgnoreCase)
+            ? PausedPrefix + text
+            : text;
     }
 
     /// <summary>
@@ -237,10 +412,21 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         return true;
     }
 
-    /// <summary>Starts playing a file, replacing whatever was playing.</summary>
-    /// <param name="path">The file to play.</param>
-    internal void Start(string path)
+    /// <summary>Starts playing files, replacing whatever was playing.</summary>
+    /// <param name="paths">The files, in the order they should play.</param>
+    /// <remarks>
+    /// Handed to one mpv as a playlist rather than started one after another, so that a queue
+    /// behaves as a queue: <c>pap</c> holds all of it, <c>pas</c> stops all of it, the mode hands
+    /// the keyboard to the thing actually playing, and the gap between two parts is mpv's own
+    /// rather than the time it takes Canger to notice one has ended.
+    /// </remarks>
+    internal void Start(IReadOnlyList<string> paths)
     {
+        if (paths.Count == 0)
+        {
+            return;
+        }
+
         Stop();
 
         // In the runtime directory, and short, because a unix socket address is about 108 bytes
@@ -277,7 +463,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             $"mpv --no-video --idle=no --input-terminal=no " +
             $"--input-ipc-server={Quote(_socket)} " +
             $"--term-status-msg={Quote(StatusFormat(_display))} " +
-            $"{Quote(path)}";
+            string.Join(' ', paths.Select(Quote));
 
         _process = _fileManager.Runner.StartInBackground(new ProcessRequest(command));
 
@@ -290,6 +476,36 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         _text = null;
         _progress = null;
         _paused = false;
+        _files = [.. paths];
+        _durations = null;
+        _index = 0;
+        _position = 0;
+        _speed = "1";
+
+        // Measured off the interface's thread, because ffprobe on forty files takes longer than a
+        // frame and the audio should not wait on arithmetic. Until the answer lands the status
+        // line is the one mpv writes for the file playing now, which is the same line a single
+        // file gets — so the queue reads correctly from the first frame and gains its total when
+        // there is one to give.
+        if (paths.Count > 1)
+        {
+            string[] measure = [.. paths];
+
+            Task.Run(() =>
+            {
+                double[]? durations = Durations.Of(measure);
+
+                // Only a real answer, and only if this is still the playback that asked. A
+                // failed measurement leaves what is there rather than replacing it with nothing,
+                // and a second `Enter` while the first measurement was in flight must not land
+                // the old queue's totals on the new one.
+                if (durations is not null && _files.SequenceEqual(measure))
+                {
+                    _durations = durations;
+                    _fileManager.Redraw();
+                }
+            });
+        }
 
         // The keyboard goes back with the playback it belonged to. Without this, a file reaching
         // its end would leave the keys pointed at a program that is no longer there.
@@ -416,11 +632,110 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
 
         _text = line[(bar + 1)..].Trim();
 
+        string[] fields = line[..bar].Split(';');
+
         _progress =
-            double.TryParse(line[..bar], NumberStyles.Float, CultureInfo.InvariantCulture,
+            double.TryParse(Field(fields, 0), NumberStyles.Float, CultureInfo.InvariantCulture,
                             out double percent)
                 ? Math.Clamp(percent / 100, 0, 1)
                 : null;
+
+        // Left where they were when mpv gives something unreadable, which it does between files:
+        // for a frame or two `playlist-pos` and `time-pos` can be blank, and a clock that dropped
+        // to zero for that frame would jump backwards on screen.
+        if (int.TryParse(Field(fields, 1), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                         out int index) && index >= 0)
+        {
+            _index = index;
+        }
+
+        if (double.TryParse(Field(fields, 2), NumberStyles.Float, CultureInfo.InvariantCulture,
+                            out double position) && position >= 0)
+        {
+            _position = position;
+        }
+
+        if (Field(fields, 3) is { Length: > 0 } speed)
+        {
+            _speed = speed;
+        }
+    }
+
+    /// <summary>One of the machine-readable fields, or empty where mpv sent fewer.</summary>
+    private static string Field(string[] fields, int at) =>
+        at < fields.Length ? fields[at].Trim() : string.Empty;
+
+    /// <summary>Seconds as a clock, in the shape mpv writes them.</summary>
+    /// <param name="seconds">A length or a position.</param>
+    /// <returns><c>HH:MM:SS</c>.</returns>
+    /// <remarks>
+    /// mpv's own <c>${duration}</c> is <c>HH:MM:SS</c>, and a queue's total sits beside figures it
+    /// wrote, so it is spelled the same way. Hours are kept even at nothing, because a total that
+    /// changed shape as it crossed an hour would move the rest of the line sideways.
+    /// </remarks>
+    internal static string Clock(double seconds)
+    {
+        TimeSpan span = TimeSpan.FromSeconds(Math.Max(seconds, 0));
+
+        return string.Create(CultureInfo.InvariantCulture,
+                             $"{(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}");
+    }
+
+    /// <summary>How far into the whole queue playback has got, in seconds.</summary>
+    /// <param name="durations">How long each file lasts, in playing order.</param>
+    /// <param name="index">The file being played, counted from zero.</param>
+    /// <param name="position">How far into that file, in seconds.</param>
+    /// <returns>Seconds from the start of the first file.</returns>
+    /// <remarks>
+    /// Everything before the current file counts in full, whatever mpv says about the current
+    /// one: a file that has been played is played whether or not the reading that says so
+    /// arrived. The index is clamped because mpv reports the playlist it has, and a queue whose
+    /// last file was deleted mid-play would otherwise index past the end of what was measured.
+    /// </remarks>
+    internal static double Elapsed(IReadOnlyList<double> durations, int index, double position)
+    {
+        int at = Math.Clamp(index, 0, Math.Max(durations.Count - 1, 0));
+        double before = 0;
+
+        for (int i = 0; i < at && i < durations.Count; i++)
+        {
+            before += durations[i];
+        }
+
+        return before + Math.Clamp(position, 0, at < durations.Count ? durations[at] : position);
+    }
+
+    /// <summary>The status line for a queue.</summary>
+    /// <param name="durations">How long each file lasts, in playing order.</param>
+    /// <param name="index">The file being played, counted from zero.</param>
+    /// <param name="position">How far into that file, in seconds.</param>
+    /// <param name="speed">The speed mpv reports.</param>
+    /// <returns>The line to show.</returns>
+    /// <remarks>
+    /// <para>
+    /// Composed here rather than left to mpv, which is the one thing in this plugin that is not
+    /// mpv's own wording — and unavoidably so: mpv has no notion of a total across a playlist, so
+    /// there is no format string that could ask it for one. The shape follows the format the
+    /// status line uses for a single file, so the two read as the same instrument: position, the
+    /// total, the percentage, then the speed.
+    /// </para>
+    /// <para>
+    /// Which file of how many is worth the four columns it costs. Without it a queue looks like
+    /// one long file, and there is nothing on screen to say that <c>pas</c> would stop four hours
+    /// of listening rather than forty minutes.
+    /// </para>
+    /// </remarks>
+    internal static string OverallLine(IReadOnlyList<double> durations, int index, double position,
+                                       string speed)
+    {
+        double total = durations.Sum();
+        double elapsed = Elapsed(durations, index, position);
+        int percent = total > 0 ? (int)Math.Round(elapsed / total * 100) : 0;
+        int at = Math.Clamp(index, 0, Math.Max(durations.Count - 1, 0)) + 1;
+
+        return string.Create(CultureInfo.InvariantCulture,
+                             $"{at}/{durations.Count}  {Clock(elapsed)} / {Clock(total)} " +
+                             $"({percent}%) {speed}x");
     }
 
     /// <summary>
@@ -539,6 +854,8 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         _text = null;
         _progress = null;
         _paused = false;
+        _files = [];
+        _durations = null;
 
         // The keyboard goes back with the playback it belonged to. Without this, a file reaching
         // its end would leave the keys pointed at a program that is no longer there.
@@ -698,19 +1015,30 @@ internal static class Current
 }
 
 /// <summary>Plays the selected audio file in the background.</summary>
-[Command("mka_play", Summary = "Play the selected audio file in the background.")]
+[Command("mka_play", Summary = "Play the selected audio files in the background.")]
 public sealed class MkaPlayCommand : CangerCommand
 {
     /// <inheritdoc />
+    /// <remarks>
+    /// The playable files of the selection, which is every marked file or the one under the
+    /// cursor. Asked for by name, so a selection holding other things plays the audio in it and
+    /// says nothing about the rest — unlike Enter, which declines a mixed selection outright
+    /// rather than quietly swallowing the files it cannot play.
+    /// </remarks>
     public override void Execute()
     {
-        if (FileManager.CurrentFile is not { IsDirectory: false } file)
+        string[] paths =
+            [.. FileManager.Selection
+                           .Where(file => !file.IsDirectory && Playable.Matches(file.Path))
+                           .Select(file => file.Path)];
+
+        if (paths.Length == 0)
         {
-            FileManager.Notify("mka_play: no file selected", isError: true);
+            FileManager.Notify("mka_play: nothing to play", isError: true);
             return;
         }
 
-        Current.For(FileManager).Start(file.Path);
+        Current.For(FileManager).Start(paths);
     }
 }
 
@@ -813,12 +1141,17 @@ public sealed class MkaPlugin : ICangerPlugin
 
         fileManager.FileOpeners.Add(paths =>
         {
-            if (paths.Count != 1 || !Playable.Matches(paths[0]))
+            // Every one of them, or none: a selection of audio plays as a queue, and a selection
+            // holding anything else is left to the ordinary rules. Claiming a mixed selection
+            // would mean silently dropping whatever is not audio, and refusing a selection of
+            // several was what sent them all to rifle — which opened mpv in the terminal, over
+            // the interface, which is what this plugin exists to avoid.
+            if (paths.Count == 0 || !paths.All(Playable.Matches))
             {
                 return false;
             }
 
-            Current.For(fileManager).Start(paths[0]);
+            Current.For(fileManager).Start(paths);
 
             return true;
         });

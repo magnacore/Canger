@@ -1,5 +1,49 @@
 # Canger — port status
 
+## A selection of audio plays as one queue
+
+Reported: selecting several `.mka` files and pressing Enter played them **in the terminal**, over
+the interface — the one thing this plugin exists to prevent. Asked for them to play through the
+plugin instead, with the whole queue's progress on the bar: two five-minute files should read as
+ten minutes.
+
+**Why they escaped.** The opener took `paths.Count != 1` as "not mine", so any selection of more
+than one fell through to rifle, which ran mpv in the foreground. It now claims a selection where
+**every** file is playable, and declines a mixed one — claiming that would mean silently dropping
+whatever is not audio. `mka_play`, asked for by name, plays the playable files of the selection and
+leaves the rest alone.
+
+**One mpv, not one per file.** The files go to mpv as a playlist, so `pap` holds all of it, `pas`
+stops all of it, the mode hands the keyboard to whatever is playing, and the gap between two parts
+is mpv's own rather than however long Canger takes to notice one ended.
+
+**Where the total comes from.** Not from mpv: it reports on the file it is playing and knows
+nothing of the lengths ahead, so a bar waiting on mpv would learn the total as it finished. The
+files are measured up front with `ffprobe`, falling back to `mediainfo` — in parallel, off the
+interface's thread, since forty parts measured one after another would keep the total off the
+screen. With neither tool, or with any one file unmeasurable, there is no honest total and the
+line stays the one mpv writes for the file playing now.
+
+**The line.** `1/2  00:06:00 / 00:10:00 (60%) 1.5x`, in the shape mpv's own format uses, so the two
+read as one instrument. It is the only text in this plugin that is not mpv's own wording, and
+unavoidably so — there is no format string that could ask mpv for a total across a playlist. The
+status format gained three machine-readable fields (`playlist-pos`, `time-pos`, `speed`); the speed
+is asked for in mpv's display spelling, because `${=speed}` reads as `1.500000x` on the bar, which
+is how it first appeared on screen.
+
+**Controls, five:** the opener back to one file fails 3; `Elapsed` forgetting the files already
+played fails 2; `Describe` ignoring the queue fails 1; `Progress` staying per-file fails 1; the
+status format without the new fields fails 1. All compiled. The wiring tests set the durations by
+reflection, because the arithmetic being right is a different question from the queue's clock
+being the one that reaches the bar — and it was right and unreachable for as long as it took to
+write that test.
+
+**Verified with real playback**, on silent files made for the purpose so nothing was audible: two
+five-minute files read `1/2  00:00:04 / 00:10:00 (1%) 1.5x`; `pap` showed `(paused)`; `pas`
+cleared it and left no mpv behind. A 4-second and a 6-second file crossed from
+`1/2 … 00:00:01 / 00:00:10 (19%)` to `2/2 … 00:00:07 / 00:00:10 (79%)`, which is the only way to
+see the playlist advance. A single file is unchanged: mpv's own line, no `n/m` in front of it.
+
 ## The activity badge moves in with the other flags
 
 Reported that badges belong at the right-hand end of the status bar, where `Mrk` and `VIS` are,
