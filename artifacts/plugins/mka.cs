@@ -219,13 +219,18 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// that file, and the speed — are what a queue's own clock is worked out from, and are asked
     /// for on every playback because asking only for a queue would mean two formats to keep in
     /// step. The speed is asked for in mpv's display spelling rather than raw, since nothing here
-    /// does arithmetic with it and <c>${=speed}</c> reads as <c>1.500000x</c> on the bar. The
-    /// volume is there for the same reason the mode adds it to the readable half: a queue shows
-    /// its own line instead of that one, and <c>8</c> and <c>9</c> changed the volume with nothing
-    /// on screen to show it — the mode's whole purpose being to adjust exactly that.
+    /// does arithmetic with it and <c>${=speed}</c> reads as <c>1.500000x</c> on the bar.
+    /// </para>
+    /// <para>
+    /// After those come the parts of the user's own format that only mpv can answer — a title, a
+    /// volume, a <c>${?pause==yes:…}</c> — each asked for separately so that a queue's line can
+    /// be built from the user's format with the queue's own figures in place of the file's. They
+    /// are rendered by mpv and spliced back in; nothing here tries to interpret what they mean.
     /// </remarks>
     private static string StatusFormat(string display) =>
-        Marker + "${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}|" + display;
+        Marker + "${=percent-pos};${playlist-pos};${=time-pos};${speed}" +
+        string.Concat(Passthrough(display).Select(expression => ";" + expression)) +
+        "|" + display;
 
     /// <summary>What is shown in front of the clock while playback is held.</summary>
     /// <remarks>
@@ -273,8 +278,21 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// <summary>The speed mpv reports, as it spells it.</summary>
     private string _speed = "1";
 
-    /// <summary>The volume mpv reports, as it spells it.</summary>
-    private string _volume = string.Empty;
+    /// <summary>What mpv made of the parts of the format only it can answer.</summary>
+    private string[] _rendered = [];
+
+    /// <summary>Those parts, in the order they are asked for and read back.</summary>
+    private string[] _passthrough = [];
+
+    /// <summary>
+    /// The format mpv is filling in, which is the user's own until the mode extends it.
+    /// </summary>
+    /// <remarks>
+    /// Kept apart from <see cref="_display"/>, which stays the format as the user wrote it: the
+    /// mode is built by extending that one and leaving it is what makes leaving the mode put the
+    /// line back.
+    /// </remarks>
+    private string _effective = DefaultStatusFormat;
 
     /// <summary>The format used where mpv's configuration names none.</summary>
     internal static string PlainStatusFormat => DefaultStatusFormat;
@@ -346,7 +364,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         // where there is not — which covers a single file, a queue still being measured, and one
         // holding something no tool here could measure.
         string text = _files.Length > 1 && _durations is { Length: > 1 } durations
-            ? OverallLine(durations, _index, _position, _speed, _handsOver ? _volume : null)
+            ? OverallLine(_effective, _rendered, durations, _index, _position, Rate(_speed))
             : _text;
 
         return _paused && !text.Contains("paused", StringComparison.OrdinalIgnoreCase)
@@ -464,6 +482,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         // message rides that same log level. What is left is three lines of start-up chatter on
         // standard output, which nothing looks at.
         _display = MpvConfiguration.StatusFormat();
+        UseFormat(_display);
 
         string command =
             $"mpv --no-video --idle=no --input-terminal=no " +
@@ -666,11 +685,38 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             _speed = speed;
         }
 
-        if (Field(fields, 4) is { Length: > 0 } volume)
+        // Only when as many arrived as were asked for. They differ for a frame or two after the
+        // format changes — entering the mode adds a field — and half a set spliced into a line
+        // would put the volume where the title goes.
+        if (fields.Length == FixedFields + _passthrough.Length)
         {
-            _volume = volume;
+            _rendered = fields[FixedFields..];
         }
     }
+
+    /// <summary>How many machine-readable fields are this side's own.</summary>
+    private const int FixedFields = 4;
+
+    /// <summary>Takes a format into use, and forgets what was read under the last one.</summary>
+    /// <param name="display">The format mpv is being asked to fill in.</param>
+    /// <remarks>
+    /// The three move together or not at all: which format is in force, which of its parts mpv
+    /// answers, and what it last answered. Setting one without the others is how a line comes to
+    /// be built from one format and the values of another.
+    /// </remarks>
+    private void UseFormat(string display)
+    {
+        _effective = display;
+        _passthrough = Passthrough(display);
+        _rendered = [];
+    }
+
+    /// <summary>The speed as a number, or 1 where mpv said something unreadable.</summary>
+    private static double Rate(string speed) =>
+        double.TryParse(speed, NumberStyles.Float, CultureInfo.InvariantCulture, out double rate)
+        && rate > 0
+            ? rate
+            : 1;
 
     /// <summary>One of the machine-readable fields, or empty where mpv sent fewer.</summary>
     private static string Field(string[] fields, int at) =>
@@ -716,50 +762,198 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         return before + Math.Clamp(position, 0, at < durations.Count ? durations[at] : position);
     }
 
-    /// <summary>The status line for a queue.</summary>
+    /// <summary>
+    /// The properties this side answers for a queue, in place of mpv's answers for one file.
+    /// </summary>
+    /// <param name="inner">The text between <c>${</c> and <c>}</c>.</param>
+    /// <returns>Whether the value comes from the queue rather than from mpv.</returns>
+    /// <remarks>
+    /// Every one of these is a figure mpv can only give for the file it is playing: the point of
+    /// a queue's line is that they cover all of it. Anything else — the speed, the volume, the
+    /// title, a conditional — means the same thing either way and is left to mpv, which is what
+    /// keeps this from becoming a second implementation of a format language.
+    /// </remarks>
+    internal static bool Answered(string inner)
+    {
+        string name = inner.StartsWith('=') ? inner[1..] : inner;
+
+        return name is "duration" or "time-pos" or "playback-time" or "time-remaining"
+                    or "playtime-remaining" or "percent-pos";
+    }
+
+    /// <summary>The parts of a format mpv has to render.</summary>
+    /// <param name="format">The user's status format.</param>
+    /// <returns>Each expression, braces and all, in the order it appears.</returns>
+    internal static string[] Passthrough(string format) =>
+        [.. Tokens(format).Where(token => token.IsExpression && !Answered(token.Text))
+                          .Select(token => "${" + token.Text + "}")];
+
+    /// <summary>Builds a queue's line from the user's own format.</summary>
+    /// <param name="format">The user's status format.</param>
+    /// <param name="rendered">What mpv made of the parts it was asked for, in order.</param>
+    /// <param name="elapsed">How far into the queue playback has got, in seconds.</param>
+    /// <param name="total">How long the whole queue lasts, in seconds.</param>
+    /// <param name="speed">The speed playback is running at.</param>
+    /// <returns>The line to show, without the position in the queue in front of it.</returns>
+    /// <remarks>
+    /// <para>
+    /// Asked for: a queue should read exactly as a single file does — the same fields, in the same
+    /// order, counting the same way — with only the totals made bigger. A line of this side's own
+    /// invention could not do that, and did not: it counted up where the user's format counts
+    /// down, because <c>playtime-remaining</c> is what their mpv.conf asks for and nothing here
+    /// was reading it.
+    /// </para>
+    /// <para>
+    /// So the format is theirs and only the figures are replaced. Anything mpv must answer was
+    /// asked of mpv and arrives in <paramref name="rendered"/>; a mismatch in how many arrived
+    /// means the format changed between the asking and the reading, and the caller keeps the
+    /// previous line rather than showing a torn one.
+    /// </para>
+    /// </remarks>
+    internal static string Render(string format, IReadOnlyList<string> rendered, double elapsed,
+                                  double total, double speed)
+    {
+        StringBuilder line = new();
+        int at = 0;
+
+        foreach ((bool isExpression, string text) in Tokens(format))
+        {
+            if (!isExpression)
+            {
+                line.Append(text);
+            }
+            else if (Answered(text))
+            {
+                line.Append(Value(text, elapsed, total, speed));
+            }
+            else if (at < rendered.Count)
+            {
+                line.Append(rendered[at++]);
+            }
+            else
+            {
+                at++;
+            }
+        }
+
+        return line.ToString().Trim();
+    }
+
+    /// <summary>One queue-wide figure, spelled as mpv spells it.</summary>
+    /// <remarks>
+    /// A leading <c>=</c> is mpv's way of asking for the raw number rather than the formatted one,
+    /// and is answered the same way here. <c>playtime-remaining</c> is divided by the speed
+    /// because that is what it means in mpv — how long the listening has left, not how much of
+    /// the recording.
+    /// </remarks>
+    private static string Value(string inner, double elapsed, double total, double speed)
+    {
+        bool raw = inner.StartsWith('=');
+        string name = raw ? inner[1..] : inner;
+        double remaining = Math.Max(total - elapsed, 0);
+        double rate = speed > 0 ? speed : 1;
+
+        double seconds = name switch
+        {
+            "duration" => total,
+            "time-pos" or "playback-time" => elapsed,
+            "time-remaining" => remaining,
+            "playtime-remaining" => remaining / rate,
+            _ => 0,
+        };
+
+        if (name == "percent-pos")
+        {
+            double percent = total > 0 ? elapsed / total * 100 : 0;
+
+            return raw
+                ? percent.ToString("0.######", CultureInfo.InvariantCulture)
+                : Math.Round(percent).ToString("0", CultureInfo.InvariantCulture);
+        }
+
+        return raw ? seconds.ToString("0.######", CultureInfo.InvariantCulture) : Clock(seconds);
+    }
+
+    /// <summary>Splits a format into its literal text and its <c>${…}</c> expressions.</summary>
+    /// <remarks>
+    /// Brace-matched rather than found by the next <c>}</c>, because mpv's conditionals nest —
+    /// <c>${?pause==yes:${speed}}</c> is one expression, and cutting it at the first closing brace
+    /// would hand mpv half of it and leave the rest as literal text on the bar.
+    /// </remarks>
+    private static IEnumerable<(bool IsExpression, string Text)> Tokens(string format)
+    {
+        int at = 0;
+
+        while (at < format.Length)
+        {
+            int open = format.IndexOf("${", at, StringComparison.Ordinal);
+
+            if (open < 0)
+            {
+                yield return (false, format[at..]);
+                yield break;
+            }
+
+            if (open > at)
+            {
+                yield return (false, format[at..open]);
+            }
+
+            int depth = 1;
+            int scan = open + 2;
+
+            while (scan < format.Length && depth > 0)
+            {
+                if (format[scan] == '}')
+                {
+                    depth--;
+                }
+                else if (format[scan] == '$' && scan + 1 < format.Length && format[scan + 1] == '{')
+                {
+                    depth++;
+                    scan++;
+                }
+
+                scan++;
+            }
+
+            // An unclosed expression is a format still being edited. Passed on as it stands, so
+            // the user sees their own text rather than nothing at all.
+            if (depth > 0)
+            {
+                yield return (false, format[open..]);
+                yield break;
+            }
+
+            yield return (true, format[(open + 2)..(scan - 1)]);
+            at = scan;
+        }
+    }
+
+    /// <summary>The status line for a queue: which file, then the user's own format.</summary>
+    /// <param name="format">The user's status format.</param>
+    /// <param name="rendered">What mpv made of the parts it was asked for, in order.</param>
     /// <param name="durations">How long each file lasts, in playing order.</param>
     /// <param name="index">The file being played, counted from zero.</param>
     /// <param name="position">How far into that file, in seconds.</param>
-    /// <param name="speed">The speed mpv reports.</param>
-    /// <param name="volume">
-    /// The volume to show, or <see langword="null"/> to leave it off.
-    /// </param>
+    /// <param name="speed">The speed playback is running at.</param>
     /// <returns>The line to show.</returns>
     /// <remarks>
-    /// <para>
-    /// Composed here rather than left to mpv, which is the one thing in this plugin that is not
-    /// mpv's own wording — and unavoidably so: mpv has no notion of a total across a playlist, so
-    /// there is no format string that could ask it for one. The shape follows the format the
-    /// status line uses for a single file, so the two read as the same instrument: position, the
-    /// total, the percentage, then the speed.
-    /// </para>
-    /// <para>
-    /// Which file of how many is worth the four columns it costs. Without it a queue looks like
-    /// one long file, and there is nothing on screen to say that <c>pas</c> would stop four hours
-    /// of listening rather than forty minutes.
-    /// </para>
-    /// <para>
-    /// The volume rides along only while the keyboard belongs to mpv, and in the same words the
-    /// mode adds to a single file's line. It was reported missing for a queue and it had to be:
-    /// the mode adds it to the format mpv fills in, and a queue shows this line instead of that
-    /// one, so <c>8</c> and <c>9</c> moved the volume with nothing on screen to say so.
-    /// </para>
+    /// Which file of how many is worth the four columns it costs, and is the one thing here that
+    /// a single file's line does not have. Without it a queue looks like one long file, and there
+    /// is nothing on screen to say that <c>pas</c> would stop four hours of listening rather than
+    /// forty minutes.
     /// </remarks>
-    internal static string OverallLine(IReadOnlyList<double> durations, int index, double position,
-                                       string speed, string? volume)
+    internal static string OverallLine(string format, IReadOnlyList<string> rendered,
+                                       IReadOnlyList<double> durations, int index, double position,
+                                       double speed)
     {
-        double total = durations.Sum();
-        double elapsed = Elapsed(durations, index, position);
-        int percent = total > 0 ? (int)Math.Round(elapsed / total * 100) : 0;
         int at = Math.Clamp(index, 0, Math.Max(durations.Count - 1, 0)) + 1;
 
-        string line = string.Create(CultureInfo.InvariantCulture,
-                                    $"{at}/{durations.Count}  {Clock(elapsed)} / {Clock(total)} " +
-                                    $"({percent}%) {speed}x");
-
-        return volume is { Length: > 0 }
-            ? string.Create(CultureInfo.InvariantCulture, $"{line}  vol {volume}%")
-            : line;
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{at}/{durations.Count}  " +
+            $"{Render(format, rendered, Elapsed(durations, index, position), durations.Sum(), speed)}");
     }
 
     /// <summary>
@@ -787,6 +981,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     {
         string display = DisplayFor(_display, _handsOver);
 
+        UseFormat(display);
         Send($$"""{"command":["set_property","term-status-msg","{{Escape(StatusFormat(display))}}"]}""");
     }
 

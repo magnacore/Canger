@@ -169,7 +169,7 @@ public sealed class ShippedMkaTests : IDisposable
         // mpv's own configuration names, so asserting a particular field here would make the test
         // depend on the mpv.conf of whoever runs it.
         Assert.Contains("--term-status-msg=", command, StringComparison.Ordinal);
-        Assert.Contains("canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}|",
+        Assert.Contains("canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed}",
                         command, StringComparison.Ordinal);
     }
 
@@ -364,54 +364,121 @@ public sealed class ShippedMkaTests : IDisposable
                 .GetField("_durations", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .SetValue(activity, durations);
 
+    /// <summary>The format these tests pretend the user's mpv.conf carries.</summary>
+    /// <remarks>
+    /// The reporter's own, which is the shape that matters: it counts <em>down</em>, and a queue
+    /// showing a line of Canger's own invention counted up instead.
+    /// </remarks>
+    private const string TheirFormat =
+        "${playtime-remaining} / ${duration} (${percent-pos}%) ${speed}x ${?pause==yes:(Paused)}";
+
     /// <summary>Starts a queue against a fake mpv saying where it has got to.</summary>
-    private FakeFileManager Queued(string reading)
+    /// <param name="reading">
+    /// What mpv has written: the four fields this side asks for, then one for each part of the
+    /// format only mpv can answer, then the readable half.
+    /// </param>
+    /// <param name="act">Anything to do while the format is still the one below.</param>
+    /// <remarks>
+    /// Against a known mpv.conf, because the fields that come back are one per <c>${…}</c> the
+    /// format leaves to mpv — so a test written against whatever configuration the machine
+    /// happens to have would be a test of that machine.
+    /// </remarks>
+    private void Queued(string reading, Action<FakeFileManager, IBackgroundActivity> act)
     {
-        FakeFileManager manager = Build();
-        Mark(manager, "book.mka", "part2.mka");
+        string home = Path.Join(_root, "their-mpv");
+        Directory.CreateDirectory(home);
+        File.WriteAllText(Path.Join(home, "mpv.conf"), $"term-status-msg=\"{TheirFormat}\"\n");
 
-        ((FakeFileManager.RecordingProcessRunner)manager.Runner).BackgroundResults["mpv"] =
-            new FakeFileManager.FakeBackgroundProcess
-            {
-                StepsBeforeExit = 10_000,
-                StandardOutput = reading,
-            };
+        string? previous = Environment.GetEnvironmentVariable("MPV_HOME");
+        Environment.SetEnvironmentVariable("MPV_HOME", home);
 
-        manager.Execute("open");
+        try
+        {
+            FakeFileManager manager = Build();
+            Mark(manager, "book.mka", "part2.mka");
 
-        return manager;
+            ((FakeFileManager.RecordingProcessRunner)manager.Runner).BackgroundResults["mpv"] =
+                new FakeFileManager.FakeBackgroundProcess
+                {
+                    StepsBeforeExit = 10_000,
+                    StandardOutput = reading,
+                };
+
+            manager.Execute("open");
+
+            act(manager, manager.BackgroundActivity!);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("MPV_HOME", previous);
+        }
     }
 
     [Fact]
     public void TheBarIsToldTheQueuesOwnClockOnceTheFilesAreMeasured()
     {
-        // A minute into the second of two five-minute files: six minutes of ten, and the bar
-        // three fifths of the way along — not a fifth of the way through part two.
-        FakeFileManager manager = Queued("canger-mka:20;1;60;1.5|00:01:00 / 00:05:00 (20%) 1.5x\r");
-        IBackgroundActivity activity = manager.BackgroundActivity!;
+        // A minute into the second of two five-minute files, at 1.5x: six minutes of ten played,
+        // so four minutes of listening left — two minutes forty at that speed, which is what
+        // their ${playtime-remaining} means. The bar three fifths along, not a fifth of the way
+        // through part two.
+        Queued("canger-mka:20;1;60;1.5;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
+        {
+            Measured(activity, [300d, 300d]);
 
-        Measured(activity, [300d, 300d]);
+            Assert.Equal("2/2  00:02:40 / 00:10:00 (60%) 1.5x", activity.Describe());
+            Assert.Equal(0.6, activity.Progress!.Value, 3);
+        });
+    }
 
-        Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x", activity.Describe());
-        Assert.Equal(0.6, activity.Progress!.Value, 3);
+    [Fact]
+    public void TheQueuesLineIsTheUsersOwnFormatWithTheQueuesFigures()
+    {
+        // Reported: the queue's clock counted up where a single file's counts down. It was a line
+        // of this side's own invention; it is now their format, field for field, with only the
+        // figures made to cover the queue. The one addition is which file of how many.
+        Queued("canger-mka:0;0;0;1;1;|00:00:00 / 00:05:00 (0%) 1x\r", (_, activity) =>
+        {
+            Measured(activity, [300d, 300d]);
+
+            // Ten minutes to go at the start of a ten-minute queue, counting down.
+            Assert.Equal("1/2  00:10:00 / 00:10:00 (0%) 1x", activity.Describe());
+        });
+    }
+
+    [Fact]
+    public void EveryPartOfTheFormatMpvMustAnswerIsAskedFor()
+    {
+        // The line splices mpv's answers back into the user's format, so each part it has to
+        // answer must be a field of its own in what mpv was asked to print. Nothing else notices
+        // if they are missing: a test's reading can carry fields nobody asked for, but a real mpv
+        // sends exactly what the format names, and a short reading is thrown away whole.
+        Queued("canger-mka:0;0;0;1;1;|00:00:00 / 00:05:00 (0%) 1x\r", (manager, _) =>
+            Assert.Contains(
+                "canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed}" +
+                ";${speed};${?pause==yes:(Paused)}|",
+                CommandFor(manager), StringComparison.Ordinal));
     }
 
     [Fact]
     public void TheQueuesLineShowsTheVolumeWhileTheKeyboardBelongsToMpv()
     {
         // Reported: in the mode, `8` and `9` moved the volume with nothing on screen to say so.
-        // The mode puts `${volume}` into the format mpv fills in — and a queue shows its own line
-        // instead of that one, so the figure never reached the bar. Same words as a single file's.
-        FakeFileManager manager =
-            Queued("canger-mka:20;1;60;1.5;70|00:01:00 / 00:05:00 (20%) 1.5x\r");
-        IBackgroundActivity activity = manager.BackgroundActivity!;
-        Measured(activity, [300d, 300d]);
+        // The mode adds `${volume}` to the format mpv fills in, and it reaches a queue's line the
+        // same way every other part of that format does — as one more thing mpv answered.
+        Queued("canger-mka:20;1;60;1.5;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (manager, activity) =>
+        {
+            Measured(activity, [300d, 300d]);
+            manager.Execute("mka_mode");
 
-        Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x", activity.Describe());
+            // The mode's format has a field more, and the reading has to grow with it or the
+            // line is built from values that belong to the format before it.
+            Read(activity, "canger-mka:20;1;60;1.5;1.5;;70|00:01:00 / 00:05:00 (20%) 1.5x  vol 70%\r");
 
-        manager.Execute("mka_mode");
-
-        Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x  vol 70%", activity.Describe());
+            // Three spaces before `vol`, because their format ends in a conditional that renders
+            // to nothing while playing and the mode's field is appended after it. mpv spells a
+            // single file's line the same way; matching it is the point.
+            Assert.Equal("2/2  00:02:40 / 00:10:00 (60%) 1.5x   vol 70%", activity.Describe());
+        });
     }
 
     [Fact]
@@ -419,11 +486,21 @@ public sealed class ShippedMkaTests : IDisposable
     {
         // With no tool to measure them there is no honest total, and mpv's own line for the file
         // playing is better than a made-up one.
-        FakeFileManager manager = Queued("canger-mka:20;1;60;1.5|00:01:00 / 00:05:00 (20%) 1.5x\r");
-        IBackgroundActivity activity = manager.BackgroundActivity!;
+        Queued("canger-mka:20;1;60;1.5;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
+        {
+            Assert.Equal("00:01:00 / 00:05:00 (20%) 1.5x", activity.Describe());
+            Assert.Equal(0.2, activity.Progress!.Value, 3);
+        });
+    }
 
-        Assert.Equal("00:01:00 / 00:05:00 (20%) 1.5x", activity.Describe());
-        Assert.Equal(0.2, activity.Progress!.Value, 3);
+    /// <summary>Feeds the plugin another reading from its fake mpv.</summary>
+    private static void Read(IBackgroundActivity activity, string reading)
+    {
+        object process = activity.GetType()
+                                 .GetField("_process", BindingFlags.Instance | BindingFlags.NonPublic)!
+                                 .GetValue(activity)!;
+
+        ((FakeFileManager.FakeBackgroundProcess)process).StandardOutput = reading;
     }
 
     /// <summary>Calls one of the plugin's own static methods.</summary>
@@ -467,8 +544,9 @@ public sealed class ShippedMkaTests : IDisposable
         double[] durations = [300d, 300d];
 
         Assert.Equal(360d, (double)Call("Playback", "Elapsed", durations, 1, 60d), 3);
-        Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x",
-                     Call("Playback", "OverallLine", durations, 1, 60d, "1.5", null!));
+        Assert.Equal("2/2  00:02:40 / 00:10:00 (60%) 1.5x",
+                     Call("Playback", "OverallLine", TheirFormat, new[] { "1.5", "" },
+                          durations, 1, 60d, 1.5d));
     }
 
     [Fact]
@@ -478,8 +556,9 @@ public sealed class ShippedMkaTests : IDisposable
         // not five minutes twice over.
         double[] durations = [300d, 300d];
 
-        Assert.Equal("1/2  00:00:00 / 00:10:00 (0%) 1x",
-                     Call("Playback", "OverallLine", durations, 0, 0d, "1", null!));
+        Assert.Equal("1/2  00:10:00 / 00:10:00 (0%) 1x",
+                     Call("Playback", "OverallLine", TheirFormat, new[] { "1", "" },
+                          durations, 0, 0d, 1d));
     }
 
     [Fact]

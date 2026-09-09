@@ -24,19 +24,38 @@ interface's thread, since forty parts measured one after another would keep the 
 screen. With neither tool, or with any one file unmeasurable, there is no honest total and the
 line stays the one mpv writes for the file playing now.
 
-**The line.** `1/2  00:06:00 / 00:10:00 (60%) 1.5x`, in the shape mpv's own format uses, so the two
-read as one instrument. It is the only text in this plugin that is not mpv's own wording, and
-unavoidably so — there is no format string that could ask mpv for a total across a playlist. The
-status format gained three machine-readable fields (`playlist-pos`, `time-pos`, `speed`); the speed
-is asked for in mpv's display spelling, because `${=speed}` reads as `1.500000x` on the bar, which
-is how it first appeared on screen.
+**The line is the user's own format.** The first attempt composed a line of Canger's own shape,
+and it was wrong in a way that showed immediately: it counted *up* where their `mpv.conf` asks for
+`${playtime-remaining}`, which counts down. Asked for the queue to read exactly as a single file
+does, plus the `1/2`.
 
-**Controls, five:** the opener back to one file fails 3; `Elapsed` forgetting the files already
+So the format is theirs and only the figures are replaced. The format is split into its literal
+text and its `${…}` expressions; the ones a queue changes the meaning of — `duration`,
+`time-pos`, `playback-time`, `time-remaining`, `playtime-remaining`, `percent-pos`, with or
+without mpv's `=` prefix — are answered here from the measured durations, and **everything else is
+asked of mpv** as a machine-readable field of its own and spliced back in. That covers the speed,
+the volume the mode adds, a title, and conditionals like `${?pause==yes:(Paused)}` without this
+plugin having to know what any of them mean — which is what keeps it from becoming a second
+implementation of mpv's format language. Expressions are brace-matched, because mpv's conditionals
+nest.
+
+Three things move together or not at all — which format is in force, which of its parts mpv
+answers, and what it last answered — and a reading whose field count does not match the format is
+dropped whole, which is what keeps the line from being built out of one format and another's
+values for the frame or two after the mode changes it.
+
+**Controls, eight:** the opener back to one file fails 3; `Elapsed` forgetting the files already
 played fails 2; `Describe` ignoring the queue fails 1; `Progress` staying per-file fails 1; the
-status format without the new fields fails 1. All compiled. The wiring tests set the durations by
-reflection, because the arithmetic being right is a different question from the queue's clock
-being the one that reaches the bar — and it was right and unreachable for as long as it took to
-write that test.
+status format without the new fields fails 1; a line of Canger's own shape again fails 5; nothing
+answered from the queue fails 5; and the parts mpv must answer never asked for fails 1. All
+compiled.
+
+That last one **failed nothing at first**, and is the useful one: the readings a test writes carry
+whatever fields it likes, so no test could tell whether the plugin had actually asked mpv for them
+— while a real mpv sends exactly what the format names, and a short reading is thrown away whole.
+A test now asserts the command line names every part mpv has to answer. The wiring tests set the
+durations by reflection, for the same class of reason: the arithmetic being right is a different
+question from the queue's clock being the one that reaches the bar.
 
 **The volume went missing with it.** Reported straight after: in the mode, `8` and `9` moved the
 volume with nothing on screen to say so. The mode works by adding `${volume}` to the format mpv
@@ -53,7 +72,9 @@ cleared it and left no mpv behind. A 4-second and a 6-second file crossed from
 `1/2 … 00:00:01 / 00:00:10 (19%)` to `2/2 … 00:00:07 / 00:00:10 (79%)`, which is the only way to
 see the playlist advance. A single file is unchanged: mpv's own line, no `n/m` in front of it. In
 the mode the line reads `1/2  00:00:06 / 00:10:00 (1%) 1.5x  vol 100%` beside the `MPV` badge, and
-the volume follows the keys and goes away with Escape.
+the volume follows the keys and goes away with Escape. Against the reporter's own `mpv.conf` the
+queue reads `1/2  00:06:37 / 00:10:00 (1%) 1.5x` and **counts down**, four seconds every three of
+wall clock, which is `playtime-remaining` over ten minutes of audio at 1.5x.
 
 ## The activity badge moves in with the other flags
 
