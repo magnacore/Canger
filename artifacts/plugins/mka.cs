@@ -229,16 +229,17 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// </remarks>
     private static string StatusFormat(string display) =>
         Marker + "${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}" +
+        ";${?pause==yes:1}${!pause==yes:0}" +
         string.Concat(Passthrough(display).Select(expression => ";" + expression)) +
         "|" + display;
 
     /// <summary>What is shown in front of the clock while playback is held.</summary>
     /// <remarks>
-    /// Added by this side rather than taken from mpv's own <c>${?pause==yes:…}</c>, which reads
-    /// better on paper and is useless in practice: a paused mpv writes nothing further, so the
-    /// last line to arrive is the one from just *before* the pause, and the word only turned up
-    /// once playback resumed — by which time it was wrong. This side of the socket knows the
-    /// answer the instant the command is sent.
+    /// Added by this side rather than relying on the user's format carrying
+    /// <c>${?pause==yes:…}</c>, since most do not. Whether mpv is paused is asked of mpv all the
+    /// same: it writes two or three status lines as it pauses and then stops, so the last line to
+    /// arrive is the one that says so. An earlier comment here claimed it wrote nothing further,
+    /// which is what led to this side keeping the state itself — measured, and wrong.
     ///
     /// Left off when the line already says it, so a format carrying its own
     /// <c>${?pause==yes:(Paused)}</c> does not end up saying it twice on the occasions mpv does
@@ -382,6 +383,10 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         string text = _files.Length > 1 && _durations is { Length: > 1 } durations
             ? OverallLine(_effective, _rendered, durations, _index, _position, Rate(_speed))
             : _text;
+
+        // mpv's answer where there is one; what its last reading said otherwise, which is all
+        // there is when no control socket came up.
+        _paused = AskPause() ?? _paused;
 
         text += VolumeSuffix(_effective, _volume,
                              DateTimeOffset.UtcNow - _volumeMoved < VolumeWindow);
@@ -583,11 +588,14 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             return;
         }
 
+        // A guess, and only until mpv answers: it writes a status line or two as it pauses, and
+        // whatever they say is what the bar shows. Kept because the answer takes a moment to
+        // arrive and the key should feel immediate.
         _paused = !_paused;
 
-        // Asked for explicitly, because a paused mpv stops writing and so stops waking the loop
-        // that redraws. Without this the word appears whenever something else happens to cause a
-        // frame, which may be minutes later.
+        // Asked for explicitly, because a paused mpv stops writing after those few lines and so
+        // stops waking the loop that redraws. Without this the word appears whenever something
+        // else happens to cause a frame, which may be minutes later.
         _fileManager.Redraw();
     }
 
@@ -633,52 +641,114 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// </remarks>
     private void Read(string output)
     {
-        // Searched back from the last separator rather than from the end, so that a part-line
-        // still being written does not hide the finished one in front of it. Looking for the last
-        // marker outright found the unfinished one and then gave up for want of a terminator,
-        // which left the clock on whatever it had shown before.
-        int terminator = output.LastIndexOfAny(['\r', '\n']);
+        // The newest whole reading, working backwards. Only terminated ones can be seen at all:
+        // the process is drained by the framework's line reader, which holds a line back until
+        // its terminator arrives — and mpv marks the end of a reading by beginning the next, so
+        // the one it writes as it pauses stays in that reader for as long as the pause lasts.
+        // That is why whether mpv is paused is asked over the socket rather than read from here.
+        int at = output.LastIndexOf(Marker, StringComparison.Ordinal);
 
-        if (terminator < 0)
+        while (at >= 0)
         {
-            return;
+            int start = at + Marker.Length;
+            int stop = output.IndexOfAny(['\r', '\n'], start);
+
+            if (stop >= 0 && Apply(output[start..stop].TrimEnd()))
+            {
+                return;
+            }
+
+            at = at == 0 ? -1 : output.LastIndexOf(Marker, at - 1, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>Asks mpv whether it is paused.</summary>
+    /// <returns>What mpv said, or <see langword="null"/> if it did not answer.</returns>
+    /// <remarks>
+    /// <para>
+    /// Asked rather than read, because the reading that would say so never arrives: mpv writes it
+    /// and then stops, and a line reader holds the last line until something terminates it. Every
+    /// other figure on the bar is a figure that only moves while playing, so this is the one that
+    /// has to be fetched.
+    /// </para>
+    /// <para>
+    /// It is asked on every frame instead of after the keys that might have caused it, for two
+    /// reasons: the keys are mpv's to interpret and it is mpv's <c>input.conf</c> that says which
+    /// ones pause, and a reply asked for in the same breath as a keypress can be answered before
+    /// the keypress is acted on — measured, and the reason this was reported as alternating in
+    /// the first place.
+    /// </para>
+    /// </remarks>
+    private bool? AskPause()
+    {
+        string? reply = Ask($$"""{"command":["get_property","pause"],"request_id":{{PauseRequest}}}""");
+
+        return reply is null ? null : PauseFrom(reply);
+    }
+
+    /// <summary>The request number this plugin puts on its questions.</summary>
+    private const int PauseRequest = 4711;
+
+    /// <summary>Reads mpv's answer to a <c>pause</c> question.</summary>
+    /// <param name="reply">Everything mpv sent back.</param>
+    /// <returns>The state, or <see langword="null"/> where the answer was not one.</returns>
+    /// <remarks>
+    /// mpv answers with one JSON object per line and may send events on the same connection, so
+    /// the answer is picked out by the number it was asked with rather than by being the only
+    /// thing there. Read by hand rather than with a parser: it is two fields of a known shape,
+    /// and a plugin that dragged in a JSON dependency for it would be a plugin nobody could copy.
+    /// </remarks>
+    internal static bool? PauseFrom(string reply)
+    {
+        foreach (string line in reply.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!line.Contains($"\"request_id\":{PauseRequest}", StringComparison.Ordinal) ||
+                !line.Contains("\"error\":\"success\"", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (line.Contains("\"data\":true", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (line.Contains("\"data\":false", StringComparison.Ordinal))
+            {
+                return false;
+            }
         }
 
-        int at = output.LastIndexOf(Marker, terminator, StringComparison.Ordinal);
+        return null;
+    }
 
-        if (at < 0)
-        {
-            return;
-        }
-
-        int start = at + Marker.Length;
-        int end = output.IndexOfAny(['\r', '\n'], start);
-
-        // Terminated, or not used. Anything after the final separator is a line still being
-        // written, and showing half of one is worse than showing the previous one for another
-        // frame. There is no need to reach for it: while playback is held, the reading from just
-        // before the pause is exactly what should be on screen, and the word "paused" in front of
-        // it comes from this side rather than from mpv.
-        //
-        // Not judged by what the line ends with, either. That was tried — the format used to end
-        // in ${speed}x, so a line ending in "x" was taken to be whole — and it stopped working
-        // the moment the format became the user's own, whose line ends in ${?pause==yes:(Paused)}.
-        if (end < 0)
-        {
-            return;
-        }
-
-        string line = output[start..end].TrimEnd();
+    /// <summary>Takes one reading, if it is a whole one.</summary>
+    /// <param name="line">Everything between the marker and the end of the line.</param>
+    /// <returns>Whether it was used.</returns>
+    /// <remarks>
+    /// Whole is judged by shape rather than by a terminator: the bar between the machine-readable
+    /// fields and the readable half has to be there, and there have to be as many fields as the
+    /// format in force asks for. A half-written line is short of one or the other, and a line
+    /// written under the previous format — the frame or two after the mode changes it — fails the
+    /// count and is passed over for the one before it.
+    /// </remarks>
+    private bool Apply(string line)
+    {
         int bar = line.IndexOf('|', StringComparison.Ordinal);
 
         if (bar < 0)
         {
-            return;
+            return false;
+        }
+
+        string[] fields = line[..bar].Split(';');
+
+        if (fields.Length != FixedFields + _passthrough.Length)
+        {
+            return false;
         }
 
         _text = line[(bar + 1)..].Trim();
-
-        string[] fields = line[..bar].Split(';');
 
         _progress =
             double.TryParse(Field(fields, 0), NumberStyles.Float, CultureInfo.InvariantCulture,
@@ -706,6 +776,15 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             _speed = speed;
         }
 
+        // mpv's own answer, which is the only one that knows. This side used to keep the state
+        // itself, toggled by `pap` — and in the mode `p` and `Space` go straight to mpv, which
+        // paused without this ever hearing. The word then depended on which of the two had been
+        // used last and alternated between right and wrong, as reported.
+        if (Field(fields, 5) is { Length: > 0 } paused)
+        {
+            _paused = paused == "1";
+        }
+
         if (Field(fields, 4) is { Length: > 0 } volume)
         {
             // Not the first reading: that is the volume playback started at, which nobody
@@ -718,17 +797,13 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             _volume = volume;
         }
 
-        // Only when as many arrived as were asked for. They differ for a frame or two after the
-        // format changes — entering the mode adds a field — and half a set spliced into a line
-        // would put the volume where the title goes.
-        if (fields.Length == FixedFields + _passthrough.Length)
-        {
-            _rendered = fields[FixedFields..];
-        }
+        _rendered = fields[FixedFields..];
+
+        return true;
     }
 
     /// <summary>How many machine-readable fields are this side's own.</summary>
-    private const int FixedFields = 5;
+    private const int FixedFields = 6;
 
     /// <summary>Takes a format into use, and forgets what was read under the last one.</summary>
     /// <param name="display">The format mpv is being asked to fill in.</param>
@@ -1114,6 +1189,45 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
                                        or ObjectDisposedException or ArgumentException)
         {
             return false;
+        }
+    }
+
+    /// <summary>Sends a command and returns what mpv said back.</summary>
+    /// <param name="json">The command, without its newline.</param>
+    /// <returns>The reply, or <see langword="null"/> where there was none.</returns>
+    /// <remarks>
+    /// Bounded by a receive timeout, because this runs on the thread that draws: an mpv that has
+    /// stopped answering must cost a frame, not the interface. A tenth of a second is two orders
+    /// of magnitude more than a local socket needs.
+    /// </remarks>
+    private string? Ask(string json)
+    {
+        if (_socket.Length == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            using Socket socket = new(AddressFamily.Unix, SocketType.Stream,
+                                      ProtocolType.Unspecified)
+            {
+                ReceiveTimeout = 100,
+                SendTimeout = 100,
+            };
+
+            socket.Connect(new UnixDomainSocketEndPoint(_socket));
+            socket.Send(Encoding.UTF8.GetBytes(json + "\n"));
+
+            byte[] buffer = new byte[4096];
+            int read = socket.Receive(buffer);
+
+            return read > 0 ? Encoding.UTF8.GetString(buffer, 0, read) : null;
+        }
+        catch (Exception e) when (e is SocketException or IOException
+                                       or ObjectDisposedException or ArgumentException)
+        {
+            return null;
         }
     }
 

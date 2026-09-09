@@ -57,6 +57,47 @@ A test now asserts the command line names every part mpv has to answer. The wiri
 durations by reflection, for the same class of reason: the arithmetic being right is a different
 question from the queue's clock being the one that reaches the bar.
 
+## Whether mpv is paused has to be asked, not read
+
+Reported: `p` and `Space` in the mode paused the audio and the word `(Paused)` appeared only
+sometimes — alternating within a single playback.
+
+Two things were wrong, and the second was hiding behind the first.
+
+**This side kept the state itself.** `_paused` was toggled by `pap` and by nothing else, so a key
+pressed in the mode went straight to mpv and paused it without this ever hearing. Whether the word
+appeared depended on which of the two had been used last. Fixed by asking mpv — but the obvious
+way to ask does not work either, which is the interesting half.
+
+**mpv's answer cannot be read from its status line.** It writes two or three readings as it pauses
+and then stops, and a reading is terminated by the beginning of the next — so the one that says it
+has paused is the last thing it writes and nothing follows it. Canger drains a background process
+with the framework's line reader, which holds a line back until its terminator arrives, so that
+reading is *still sitting in the reader* for as long as the pause lasts. An earlier attempt here
+accepted an unterminated tail and passed its tests against a fake whose output is a plain string;
+against a real mpv it changed nothing, because the tail never arrives. That attempt was reverted:
+a mechanism nothing can feed.
+
+**So it is asked over the control socket**, `get_property pause`, on each frame — with a bounded
+receive timeout, since this runs on the thread that draws. On each frame rather than after the
+keys that might have caused it, for two reasons: which keys pause is mpv's `input.conf` to say,
+not this plugin's to guess; and a reply asked for in the same breath as a keypress can be answered
+*before* the keypress is acted on. That was measured — `keypress SPACE` followed by
+`get_property pause` on one connection answered `false` — and it is why an attempt to fix this by
+querying after each key would have alternated too.
+
+What the last reading said remains the fallback, which is all there is when no control socket came
+up, and is what the tests exercise.
+
+**Controls:** mpv's answer ignored fails 1; the pause never asked for in the status format fails 1;
+a reading written under another format accepted fails 1; waiting for a terminator again fails 1.
+The first version of the pause test **passed with the defect put back**, because the reading it
+fed carried `(Paused)` in its readable half — so the word was on the line whether or not the state
+had been read at all. It now runs against a format that says nothing about pausing.
+
+**Verified in a real session**, all six states: `pap`, `p` in the mode and `Space` in the mode each
+show `(Paused)` when they pause and clear it when they resume, for a single file and for a queue.
+
 **The volume appears as it moves, and then goes.** Reported after the first attempt: entering the
 mode showed the volume and kept it there, in normal playback it never showed at all, and mpv in a
 terminal does neither — it shows the figure as it is changed and takes it away again. Asked for

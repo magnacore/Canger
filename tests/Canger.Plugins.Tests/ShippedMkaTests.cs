@@ -239,7 +239,8 @@ public sealed class ShippedMkaTests : IDisposable
         runner.BackgroundResults["mpv"] = new FakeFileManager.FakeBackgroundProcess
         {
             StepsBeforeExit = 10_000,
-            StandardOutput = "canger-mka:2|00:04:56 / 00:07:36 (2%) 1.5x (Paused)\r",
+            StandardOutput =
+                "canger-mka:2;0;60;1.5;100;1;1.5;(Paused)|00:04:56 / 00:07:36 (2%) 1.5x (Paused)\r",
         };
 
         manager.Execute("open");
@@ -383,11 +384,13 @@ public sealed class ShippedMkaTests : IDisposable
     /// format leaves to mpv — so a test written against whatever configuration the machine
     /// happens to have would be a test of that machine.
     /// </remarks>
-    private void Queued(string reading, Action<FakeFileManager, IBackgroundActivity> act)
+    private void Queued(string reading, Action<FakeFileManager, IBackgroundActivity> act,
+                        string format = TheirFormat)
     {
-        string home = Path.Join(_root, "their-mpv");
+        string home = Path.Join(_root, "their-mpv-" + format.Length.ToString(
+                                    System.Globalization.CultureInfo.InvariantCulture));
         Directory.CreateDirectory(home);
-        File.WriteAllText(Path.Join(home, "mpv.conf"), $"term-status-msg=\"{TheirFormat}\"\n");
+        File.WriteAllText(Path.Join(home, "mpv.conf"), $"term-status-msg=\"{format}\"\n");
 
         string? previous = Environment.GetEnvironmentVariable("MPV_HOME");
         Environment.SetEnvironmentVariable("MPV_HOME", home);
@@ -421,7 +424,7 @@ public sealed class ShippedMkaTests : IDisposable
         // so four minutes of listening left — two minutes forty at that speed, which is what
         // their ${playtime-remaining} means. The bar three fifths along, not a fifth of the way
         // through part two.
-        Queued("canger-mka:20;1;60;1.5;100;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
+        Queued("canger-mka:20;1;60;1.5;100;0;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
         {
             Measured(activity, [300d, 300d]);
 
@@ -436,7 +439,7 @@ public sealed class ShippedMkaTests : IDisposable
         // Reported: the queue's clock counted up where a single file's counts down. It was a line
         // of this side's own invention; it is now their format, field for field, with only the
         // figures made to cover the queue. The one addition is which file of how many.
-        Queued("canger-mka:0;0;0;1;100;1;|00:00:00 / 00:05:00 (0%) 1x\r", (_, activity) =>
+        Queued("canger-mka:0;0;0;1;100;0;1;|00:00:00 / 00:05:00 (0%) 1x\r", (_, activity) =>
         {
             Measured(activity, [300d, 300d]);
 
@@ -452,9 +455,10 @@ public sealed class ShippedMkaTests : IDisposable
         // answer must be a field of its own in what mpv was asked to print. Nothing else notices
         // if they are missing: a test's reading can carry fields nobody asked for, but a real mpv
         // sends exactly what the format names, and a short reading is thrown away whole.
-        Queued("canger-mka:0;0;0;1;100;1;|00:00:00 / 00:05:00 (0%) 1x\r", (manager, _) =>
+        Queued("canger-mka:0;0;0;1;100;0;1;|00:00:00 / 00:05:00 (0%) 1x\r", (manager, _) =>
             Assert.Contains(
                 "canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}" +
+                ";${?pause==yes:1}${!pause==yes:0}" +
                 ";${speed};${?pause==yes:(Paused)}|",
                 CommandFor(manager), StringComparison.Ordinal));
     }
@@ -466,7 +470,7 @@ public sealed class ShippedMkaTests : IDisposable
         // changed and then goes. Driven by the figure rather than by the keys, so it shows however
         // the volume was moved — and so a queue's line, which is built here, behaves as the
         // single file's, which is mpv's.
-        Queued("canger-mka:20;1;60;1.5;100;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r",
+        Queued("canger-mka:20;1;60;1.5;100;0;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r",
                (manager, activity) =>
         {
             Measured(activity, [300d, 300d]);
@@ -474,7 +478,7 @@ public sealed class ShippedMkaTests : IDisposable
             // The volume playback started at is not a change, and mpv would not announce it.
             Assert.DoesNotContain("vol", activity.Describe()!, StringComparison.Ordinal);
 
-            Read(activity, "canger-mka:20;1;60;1.5;98;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r");
+            Read(activity, "canger-mka:20;1;60;1.5;98;0;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r");
 
             Assert.Equal("2/2  00:02:40 / 00:10:00 (60%) 1.5x  vol 98%", activity.Describe());
 
@@ -490,12 +494,102 @@ public sealed class ShippedMkaTests : IDisposable
                 .GetField("_volumeMoved", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .SetValue(activity, when);
 
+    /// <summary>Plays one file against a known mpv.conf and a fake mpv saying what it is told.</summary>
+    /// <remarks>
+    /// The fields that come back are one per part of the format mpv must answer, so a test that
+    /// wrote a reading by hand against whatever mpv.conf the machine has would be a test of that
+    /// machine. <see cref="PlainFormat"/> leaves mpv one — the speed — so a whole reading is the
+    /// six this side asks for plus that.
+    /// </remarks>
+    private void Playing(string reading, Action<FakeFileManager, IBackgroundActivity> act,
+                         int stepsBeforeExit = 10_000)
+    {
+        string home = Path.Join(_root, "plain-mpv");
+        Directory.CreateDirectory(home);
+        File.WriteAllText(Path.Join(home, "mpv.conf"), $"term-status-msg=\"{PlainFormat}\"\n");
+
+        string? previous = Environment.GetEnvironmentVariable("MPV_HOME");
+        Environment.SetEnvironmentVariable("MPV_HOME", home);
+
+        try
+        {
+            FakeFileManager manager = Build();
+
+            ((FakeFileManager.RecordingProcessRunner)manager.Runner).BackgroundResults["mpv"] =
+                new FakeFileManager.FakeBackgroundProcess
+                {
+                    StepsBeforeExit = stepsBeforeExit,
+                    StandardOutput = reading,
+                };
+
+            manager.Execute("open");
+
+            act(manager, manager.BackgroundActivity!);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("MPV_HOME", previous);
+        }
+    }
+
+    /// <summary>A format that says nothing about pausing, as most do not.</summary>
+    private const string PlainFormat =
+        "${playtime-remaining} / ${duration} (${percent-pos}%) ${speed}x";
+
+    [Fact]
+    public void ThePauseComesFromMpvWhateverKeyCausedIt()
+    {
+        // Against a format that does not carry its own word for it — otherwise mpv writes
+        // "(Paused)" into the line itself and the test passes whether or not this side ever read
+        // the state, which is exactly how the first version of this test passed with the defect
+        // put back.
+        Queued("canger-mka:20;1;60;1.5;100;1;1.5|00:01:00 / 00:05:00 (20%) 1.5x\r",
+               (_, activity) =>
+        {
+            Measured(activity, [300d, 300d]);
+
+            Assert.StartsWith("(paused) ", activity.Describe()!, StringComparison.Ordinal);
+
+            Read(activity, "canger-mka:20;1;60;1.5;100;0;1.5|00:01:00 / 00:05:00 (20%) 1.5x\r");
+
+            Assert.DoesNotContain("aused", activity.Describe()!, StringComparison.Ordinal);
+        },
+        PlainFormat);
+    }
+
+    [Fact]
+    public void ThePauseIsSaidOnceWhereTheFormatSaysItToo()
+    {
+        // Reported: `p` and `Space` in the mode paused the audio, and the word appeared only
+        // sometimes — alternating within one playback. This side kept the state itself and only
+        // `pap` told it; keys in the mode go straight to mpv, which paused without this hearing.
+        // mpv writes two or three status lines as it pauses, so its own answer is the last thing
+        // to arrive and is what the bar shows.
+        Queued("canger-mka:20;1;60;1.5;100;1;1.5;(Paused)|00:01:00 / 00:05:00 (20%) 1.5x (Paused)\r",
+               (_, activity) =>
+        {
+            Measured(activity, [300d, 300d]);
+
+            Assert.Contains("(Paused)", activity.Describe()!, StringComparison.Ordinal);
+
+            // Said once, not twice: their format carries its own word for it on the lines mpv
+            // manages to write while paused.
+            Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(
+                                activity.Describe()!, "(?i)paused"));
+
+            Read(activity,
+                 "canger-mka:20;1;60;1.5;100;0;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r");
+
+            Assert.DoesNotContain("aused", activity.Describe()!, StringComparison.Ordinal);
+        });
+    }
+
     [Fact]
     public void AnUnmeasuredQueueShowsWhatMpvSaysAboutTheFilePlayingNow()
     {
         // With no tool to measure them there is no honest total, and mpv's own line for the file
         // playing is better than a made-up one.
-        Queued("canger-mka:20;1;60;1.5;100;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
+        Queued("canger-mka:20;1;60;1.5;100;0;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
         {
             Assert.Equal("00:01:00 / 00:05:00 (20%) 1.5x", activity.Describe());
             Assert.Equal(0.2, activity.Progress!.Value, 3);
@@ -866,76 +960,105 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
-    public void ItReadsTheLastReadingMpvWroteAndTheProgressWithIt()
+    public void ItReadsTheLastWholeReadingMpvWrote()
     {
         // mpv rewrites the line about eight times a second, separated by carriage returns. The
-        // newest *terminated* one is what is shown; a trailing part-line is left for the next
-        // frame, which is at most an eighth of a second behind and never half a clock.
-        FakeFileManager manager = Build();
-        FakeFileManager.RecordingProcessRunner runner =
-            (FakeFileManager.RecordingProcessRunner)manager.Runner;
-
-        runner.BackgroundResults["mpv"] = new FakeFileManager.FakeBackgroundProcess
+        // newest whole one is what is shown, and a trailing part-line is passed over for it.
+        Playing("canger-mka:1.5;0;9;1.5;100;0;1.5|00:00:09 / 00:10:00 (2%) 1.5x\r" +
+                "canger-mka:33.3333;0;200;1.5;100;0;1.5|00:03:20 / 00:10:00 (33%) 1.5x\r" +
+                "canger-mka:33.4;0;201;1.5",
+                (_, activity) =>
         {
-            StepsBeforeExit = 10_000,
-            StandardOutput =
-                "canger-mka:1.5|00:00:09 / 00:10:00 (2%) 1.5x\r" +
-                "canger-mka:33.3333|00:03:20 / 00:10:00 (33%) 1.5x\r" +
-                "canger-mka:33.4|00:03:21 / 00:10",
-        };
+            Assert.Equal("00:03:20 / 00:10:00 (33%) 1.5x", activity.Describe());
+            Assert.Equal(0.333333, activity.Progress!.Value, 5);
+        });
+    }
 
-        manager.Execute("open");
+    [Fact]
+    public void AnUnterminatedTailIsNotWaitedFor()
+    {
+        // It cannot arrive: the process is drained by a line reader, which holds a line until
+        // something terminates it, and mpv terminates a reading by beginning the next. The
+        // reading it writes as it pauses therefore never reaches this plugin at all — which is
+        // why the pause is asked for over the socket instead, and why nothing here tries to
+        // salvage a tail.
+        Playing("canger-mka:20;0;60;1.5;100;0;1.5|00:04:00 / 00:05:00 (20%) 1.5x\r" +
+                "canger-mka:99;0;299;1.5;100;1;1.5|00:00:01 / 00:05:00 (99%) 1.5x",
+                (_, activity) =>
+                    Assert.Equal("00:04:00 / 00:05:00 (20%) 1.5x", activity.Describe()));
+    }
 
-        IBackgroundActivity activity = Assert.IsAssignableFrom<IBackgroundActivity>(
-            manager.BackgroundActivity);
+    [Theory]
+    [InlineData("{\"data\":true,\"request_id\":4711,\"error\":\"success\"}", true)]
+    [InlineData("{\"data\":false,\"request_id\":4711,\"error\":\"success\"}", false)]
+    public void ThePauseIsReadFromMpvsAnswer(string reply, bool expected)
+    {
+        Assert.Equal(expected, Call("Playback", "PauseFrom", reply));
+    }
 
-        Assert.Equal("00:03:20 / 00:10:00 (33%) 1.5x", activity.Describe());
-        Assert.Equal(0.333333, activity.Progress!.Value, 5);
+    [Theory]
+    // Somebody else's question, answered on the same connection.
+    [InlineData("{\"data\":true,\"request_id\":0,\"error\":\"success\"}")]
+    // An event, which mpv sends unasked.
+    [InlineData("{\"event\":\"playback-restart\"}")]
+    // The question failed.
+    [InlineData("{\"data\":null,\"request_id\":4711,\"error\":\"property unavailable\"}")]
+    // Nothing at all.
+    [InlineData("")]
+    public void AnAnswerToSomethingElseIsNotTakenForOne(string reply)
+    {
+        // Taken for a "no" it would say playing while paused; taken for a "yes", the reverse.
+        Assert.Null(Call("Playback", "PauseFrom", reply));
+    }
+
+    [Fact]
+    public void TheAnswerIsFoundAmongTheEventsOnTheSameConnection()
+    {
+        const string Reply = "{\"event\":\"pause\"}\n" +
+                             "{\"data\":true,\"request_id\":4711,\"error\":\"success\"}\n";
+
+        Assert.Equal(true, Call("Playback", "PauseFrom", Reply));
     }
 
     [Fact]
     public void ItSaysNothingUntilMpvHasWrittenAWholeReading()
     {
-        // A line torn by a read boundary is passed over rather than shown half-formed.
-        FakeFileManager manager = Build();
-        FakeFileManager.RecordingProcessRunner runner =
-            (FakeFileManager.RecordingProcessRunner)manager.Runner;
+        // Whole is judged by shape — the bar is there and the fields are all present — so a line
+        // torn by a read boundary is passed over rather than shown half-formed.
+        Playing("canger-mka:33.3;0;200;1.5", (_, activity) => Assert.Null(activity.Describe()));
+    }
 
-        runner.BackgroundResults["mpv"] = new FakeFileManager.FakeBackgroundProcess
-        {
-            StepsBeforeExit = 10_000,
-            StandardOutput = "canger-mka:33.3|00:03:20 / 00:1",
-        };
-
-        manager.Execute("open");
-
-        Assert.Null(manager.BackgroundActivity!.Describe());
+    [Fact]
+    public void AReadingWrittenUnderAnotherFormatIsPassedOver()
+    {
+        // Whole means the fields the format in force asks for, not merely a bar somewhere in the
+        // line. mpv writes for a frame or two under the previous format after the mode changes it,
+        // and splicing those values into the new shape would put each of them where the next one
+        // belongs.
+        Playing("canger-mka:33.3|00:03:20 / 00:10:00 (33%) 1.5x\r",
+                (_, activity) => Assert.Null(activity.Describe()));
     }
 
     [Fact]
     public void ItTakesItselfOffTheBarWhenMpvHasFinished()
     {
-        FakeFileManager manager = Build();
-        FakeFileManager.RecordingProcessRunner runner =
-            (FakeFileManager.RecordingProcessRunner)manager.Runner;
-
-        FakeFileManager.FakeBackgroundProcess mpv = new()
+        Playing("canger-mka:100;0;600;1.5;100;0;1.5|00:10:00 / 00:10:00 (100%) 1.5x\r",
+                (manager, activity) =>
         {
-            StepsBeforeExit = 0,
-            StandardOutput = "canger-mka:100|00:10:00 / 00:10:00 (100%) 1.5x\r",
-        };
+            Assert.NotNull(activity.Describe());
 
-        runner.BackgroundResults["mpv"] = mpv;
-        manager.Execute("open");
+            // The fake reports it has ended only once something has waited on it, which is how it
+            // stands in for a file that has played to its end.
+            object process = activity.GetType()
+                                     .GetField("_process",
+                                               BindingFlags.Instance | BindingFlags.NonPublic)!
+                                     .GetValue(activity)!;
 
-        IBackgroundActivity activity = manager.BackgroundActivity!;
-        Assert.NotNull(activity.Describe());
+            ((FakeFileManager.FakeBackgroundProcess)process).WaitForExit(TimeSpan.Zero);
 
-        // The fake reports it has ended only once something has waited on it, which is how it
-        // stands in for a file that has played to its end.
-        mpv.WaitForExit(TimeSpan.Zero);
-        Assert.Null(activity.Describe());
-
-        Assert.Null(manager.BackgroundActivity);
+            Assert.Null(activity.Describe());
+            Assert.Null(manager.BackgroundActivity);
+        },
+        stepsBeforeExit: 0);
     }
 }
