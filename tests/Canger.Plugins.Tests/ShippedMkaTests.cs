@@ -169,7 +169,7 @@ public sealed class ShippedMkaTests : IDisposable
         // mpv's own configuration names, so asserting a particular field here would make the test
         // depend on the mpv.conf of whoever runs it.
         Assert.Contains("--term-status-msg=", command, StringComparison.Ordinal);
-        Assert.Contains("canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed}",
+        Assert.Contains("canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}",
                         command, StringComparison.Ordinal);
     }
 
@@ -421,7 +421,7 @@ public sealed class ShippedMkaTests : IDisposable
         // so four minutes of listening left — two minutes forty at that speed, which is what
         // their ${playtime-remaining} means. The bar three fifths along, not a fifth of the way
         // through part two.
-        Queued("canger-mka:20;1;60;1.5;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
+        Queued("canger-mka:20;1;60;1.5;100;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
         {
             Measured(activity, [300d, 300d]);
 
@@ -436,7 +436,7 @@ public sealed class ShippedMkaTests : IDisposable
         // Reported: the queue's clock counted up where a single file's counts down. It was a line
         // of this side's own invention; it is now their format, field for field, with only the
         // figures made to cover the queue. The one addition is which file of how many.
-        Queued("canger-mka:0;0;0;1;1;|00:00:00 / 00:05:00 (0%) 1x\r", (_, activity) =>
+        Queued("canger-mka:0;0;0;1;100;1;|00:00:00 / 00:05:00 (0%) 1x\r", (_, activity) =>
         {
             Measured(activity, [300d, 300d]);
 
@@ -452,41 +452,50 @@ public sealed class ShippedMkaTests : IDisposable
         // answer must be a field of its own in what mpv was asked to print. Nothing else notices
         // if they are missing: a test's reading can carry fields nobody asked for, but a real mpv
         // sends exactly what the format names, and a short reading is thrown away whole.
-        Queued("canger-mka:0;0;0;1;1;|00:00:00 / 00:05:00 (0%) 1x\r", (manager, _) =>
+        Queued("canger-mka:0;0;0;1;100;1;|00:00:00 / 00:05:00 (0%) 1x\r", (manager, _) =>
             Assert.Contains(
-                "canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed}" +
+                "canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}" +
                 ";${speed};${?pause==yes:(Paused)}|",
                 CommandFor(manager), StringComparison.Ordinal));
     }
 
     [Fact]
-    public void TheQueuesLineShowsTheVolumeWhileTheKeyboardBelongsToMpv()
+    public void TheVolumeAppearsWhenItMovesAndGoesWhenItStops()
     {
-        // Reported: in the mode, `8` and `9` moved the volume with nothing on screen to say so.
-        // The mode adds `${volume}` to the format mpv fills in, and it reaches a queue's line the
-        // same way every other part of that format does — as one more thing mpv answered.
-        Queued("canger-mka:20;1;60;1.5;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (manager, activity) =>
+        // What mpv does in a terminal, and what was asked for: the figure appears as it is
+        // changed and then goes. Driven by the figure rather than by the keys, so it shows however
+        // the volume was moved — and so a queue's line, which is built here, behaves as the
+        // single file's, which is mpv's.
+        Queued("canger-mka:20;1;60;1.5;100;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r",
+               (manager, activity) =>
         {
             Measured(activity, [300d, 300d]);
-            manager.Execute("mka_mode");
 
-            // The mode's format has a field more, and the reading has to grow with it or the
-            // line is built from values that belong to the format before it.
-            Read(activity, "canger-mka:20;1;60;1.5;1.5;;70|00:01:00 / 00:05:00 (20%) 1.5x  vol 70%\r");
+            // The volume playback started at is not a change, and mpv would not announce it.
+            Assert.DoesNotContain("vol", activity.Describe()!, StringComparison.Ordinal);
 
-            // Three spaces before `vol`, because their format ends in a conditional that renders
-            // to nothing while playing and the mode's field is appended after it. mpv spells a
-            // single file's line the same way; matching it is the point.
-            Assert.Equal("2/2  00:02:40 / 00:10:00 (60%) 1.5x   vol 70%", activity.Describe());
+            Read(activity, "canger-mka:20;1;60;1.5;98;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r");
+
+            Assert.Equal("2/2  00:02:40 / 00:10:00 (60%) 1.5x  vol 98%", activity.Describe());
+
+            Moved(activity, DateTimeOffset.UtcNow - TimeSpan.FromMinutes(1));
+
+            Assert.Equal("2/2  00:02:40 / 00:10:00 (60%) 1.5x", activity.Describe());
         });
     }
+
+    /// <summary>Says when the volume last moved, so a test need not wait for it to lapse.</summary>
+    private static void Moved(IBackgroundActivity activity, DateTimeOffset when) =>
+        activity.GetType()
+                .GetField("_volumeMoved", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(activity, when);
 
     [Fact]
     public void AnUnmeasuredQueueShowsWhatMpvSaysAboutTheFilePlayingNow()
     {
         // With no tool to measure them there is no honest total, and mpv's own line for the file
         // playing is better than a made-up one.
-        Queued("canger-mka:20;1;60;1.5;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
+        Queued("canger-mka:20;1;60;1.5;100;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r", (_, activity) =>
         {
             Assert.Equal("00:01:00 / 00:05:00 (20%) 1.5x", activity.Describe());
             Assert.Equal(0.2, activity.Progress!.Value, 3);
@@ -614,11 +623,36 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
-    public void TheModeAddsTheVolumeToTheLine()
+    public void TheModeDoesNotNailTheVolumeToTheLine()
     {
-        // Reported: pressing the volume keys changed it with nothing on screen to show it.
-        Assert.Contains("${volume}", DisplayFor("${time-pos} / ${duration}", handsOver: true),
-                        StringComparison.Ordinal);
+        // It did, and was reported: the figure sat there for as long as the mode lasted. mpv in a
+        // terminal shows it as it moves and then takes it away, and a format that never asked for
+        // it should read as its author wrote it.
+        Assert.DoesNotContain("${volume}", DisplayFor("${time-pos} / ${duration}", handsOver: true),
+                              StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheVolumeIsShownWhileItIsMoving()
+    {
+        Assert.Equal("  vol 98%",
+                     Call("Playback", "VolumeSuffix", "${time-pos} / ${duration}", "98", true));
+    }
+
+    [Fact]
+    public void TheVolumeGoesAwayAgainOnceItStops()
+    {
+        Assert.Equal(string.Empty,
+                     Call("Playback", "VolumeSuffix", "${time-pos} / ${duration}", "98", false));
+    }
+
+    [Fact]
+    public void AFormatThatShowsTheVolumeIsLeftToSayItItself()
+    {
+        // Their config asked for it always; mpv answers it, and saying it twice would be worse
+        // than not at all.
+        Assert.Equal(string.Empty,
+                     Call("Playback", "VolumeSuffix", "${time-pos}  vol ${volume}%", "98", true));
     }
 
     [Fact]
@@ -639,16 +673,6 @@ public sealed class ShippedMkaTests : IDisposable
         string mode = DisplayFor(Theirs, handsOver: true);
 
         Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(mode, @"\$\{speed\}"));
-    }
-
-    [Fact]
-    public void VolumeIsNotAddedToAFormatThatAlreadyShowsIt()
-    {
-        // Someone who wants the volume on the line at all times puts it in their own
-        // term-status-msg, which is the right place for it — and the mode must not then repeat it.
-        string mode = DisplayFor("${time-pos}  vol ${volume}%", handsOver: true);
-
-        Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(mode, @"\$\{volume\}"));
     }
 
     [Fact]

@@ -57,14 +57,32 @@ A test now asserts the command line names every part mpv has to answer. The wiri
 durations by reflection, for the same class of reason: the arithmetic being right is a different
 question from the queue's clock being the one that reaches the bar.
 
-**The volume went missing with it.** Reported straight after: in the mode, `8` and `9` moved the
+**The volume appears as it moves, and then goes.** Reported after the first attempt: entering the
+mode showed the volume and kept it there, in normal playback it never showed at all, and mpv in a
+terminal does neither — it shows the figure as it is changed and takes it away again. Asked for
+that, and for the format to decide: a `term-status-msg` naming `${volume}` shows it always,
+anything else shows it only when it moves.
+
+So the mode no longer touches the volume. It is a machine-readable field like the rest, and what
+puts it on the line is the **figure changing** — not the key that changed it, which means it shows
+however it was moved (`8` and `9`, mute, or something else on the machine), and the first reading
+after playback starts is not a change and says nothing. It stays for a second, which is mpv's own
+`osd-duration`. Controls: shown whether or not it moved fails 5; said twice on a format that
+already has it fails 1; the change never noticed fails 1.
+
+One thing to know, and it is the status bar's rule rather than this plugin's: where the bar has no
+room, the whole activity line is left out rather than truncated, because what is under the cursor
+is worth more than what is playing. The volume's nine columns can be what tips it over — at 120
+columns the single-file line went blank for the second the volume was up, and at 160 it read
+`00:03:14 / 00:05:00 (3%) 1.5x  vol 98%` as intended.
+
+**The volume went missing when the queue's line arrived.** Reported straight after: in the mode, `8` and `9` moved the
 volume with nothing on screen to say so. The mode works by adding `${volume}` to the format mpv
 fills in — and a queue shows its own line *instead* of that one, so the figure had nowhere to
-appear. It is now a fifth machine-readable field and rides on the queue's line while the keyboard
-belongs to mpv, in the same words a single file gets. A good example of the shape AGENT.md warns
-about, arrived at from the other end: not a mechanism nothing feeds, but a new line quietly cutting
-the feed to an old one. Controls: the volume never appended fails 1; the mode not passed to the
-line fails 1.
+appear. A good example of the shape AGENT.md warns about, arrived at from the other end: not a
+mechanism nothing feeds, but a new line quietly cutting the feed to an old one. It was fixed by
+carrying the volume on the queue's line, and then fixed properly by the change above, which
+removed the special case altogether.
 
 **Verified with real playback**, on silent files made for the purpose so nothing was audible: two
 five-minute files read `1/2  00:00:04 / 00:10:00 (1%) 1.5x`; `pap` showed `(paused)`; `pas`

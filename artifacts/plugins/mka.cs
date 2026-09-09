@@ -228,7 +228,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// are rendered by mpv and spliced back in; nothing here tries to interpret what they mean.
     /// </remarks>
     private static string StatusFormat(string display) =>
-        Marker + "${=percent-pos};${playlist-pos};${=time-pos};${speed}" +
+        Marker + "${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}" +
         string.Concat(Passthrough(display).Select(expression => ";" + expression)) +
         "|" + display;
 
@@ -277,6 +277,22 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
 
     /// <summary>The speed mpv reports, as it spells it.</summary>
     private string _speed = "1";
+
+    /// <summary>The volume mpv last reported, or empty before it has said.</summary>
+    private string _volume = string.Empty;
+
+    /// <summary>When that figure last changed.</summary>
+    /// <remarks>
+    /// The volume is shown because it moved, not because a mode is on — which is how mpv behaves
+    /// in a terminal, where the figure appears as it is changed and then goes away again. Watching
+    /// the figure rather than the keys means it shows however it was changed: <c>8</c> and
+    /// <c>9</c>, mute, or something else on the machine moving it.
+    /// </remarks>
+    private DateTimeOffset _volumeMoved = DateTimeOffset.MinValue;
+
+    /// <summary>How long the volume stays on the line after it moves.</summary>
+    /// <remarks>mpv's own <c>osd-duration</c> default, so the two behave alike.</remarks>
+    private static readonly TimeSpan VolumeWindow = TimeSpan.FromSeconds(1);
 
     /// <summary>What mpv made of the parts of the format only it can answer.</summary>
     private string[] _rendered = [];
@@ -366,6 +382,9 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         string text = _files.Length > 1 && _durations is { Length: > 1 } durations
             ? OverallLine(_effective, _rendered, durations, _index, _position, Rate(_speed))
             : _text;
+
+        text += VolumeSuffix(_effective, _volume,
+                             DateTimeOffset.UtcNow - _volumeMoved < VolumeWindow);
 
         return _paused && !text.Contains("paused", StringComparison.OrdinalIgnoreCase)
             ? PausedPrefix + text
@@ -506,6 +525,8 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         _index = 0;
         _position = 0;
         _speed = "1";
+        _volume = string.Empty;
+        _volumeMoved = DateTimeOffset.MinValue;
 
         // Measured off the interface's thread, because ffprobe on forty files takes longer than a
         // frame and the audio should not wait on arithmetic. Until the answer lands the status
@@ -685,6 +706,18 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             _speed = speed;
         }
 
+        if (Field(fields, 4) is { Length: > 0 } volume)
+        {
+            // Not the first reading: that is the volume playback started at, which nobody
+            // changed and which mpv would not announce either.
+            if (_volume.Length > 0 && !string.Equals(volume, _volume, StringComparison.Ordinal))
+            {
+                _volumeMoved = DateTimeOffset.UtcNow;
+            }
+
+            _volume = volume;
+        }
+
         // Only when as many arrived as were asked for. They differ for a frame or two after the
         // format changes — entering the mode adds a field — and half a set spliced into a line
         // would put the volume where the title goes.
@@ -695,7 +728,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     }
 
     /// <summary>How many machine-readable fields are this side's own.</summary>
-    private const int FixedFields = 4;
+    private const int FixedFields = 5;
 
     /// <summary>Takes a format into use, and forgets what was read under the last one.</summary>
     /// <param name="display">The format mpv is being asked to fill in.</param>
@@ -710,6 +743,29 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         _passthrough = Passthrough(display);
         _rendered = [];
     }
+
+    /// <summary>What to add to the line to show the volume, if anything.</summary>
+    /// <param name="format">The format in force, which may already show it.</param>
+    /// <param name="volume">The volume mpv reports.</param>
+    /// <param name="moved">Whether it has changed within the last moment.</param>
+    /// <returns>The text to append, or empty.</returns>
+    /// <remarks>
+    /// <para>
+    /// A format that names the volume is answered by mpv and needs nothing here: someone who
+    /// wants the figure on the line at all times says so in their own <c>mpv.conf</c>, and this
+    /// must not say it twice.
+    /// </para>
+    /// <para>
+    /// Otherwise it appears as it moves and then goes, which is what mpv does in a terminal. It
+    /// was pinned to the line for as long as the mode lasted, which is neither what mpv does nor
+    /// what the format asked for.
+    /// </para>
+    /// </remarks>
+    internal static string VolumeSuffix(string format, string volume, bool moved) =>
+        moved && volume.Length > 0 &&
+        !format.Contains("volume", StringComparison.OrdinalIgnoreCase)
+            ? "  vol " + volume + "%"
+            : string.Empty;
 
     /// <summary>The speed as a number, or 1 where mpv said something unreadable.</summary>
     private static double Rate(string speed) =>
@@ -1009,11 +1065,6 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         }
 
         string line = display;
-
-        if (!line.Contains("volume", StringComparison.OrdinalIgnoreCase))
-        {
-            line += "  vol ${volume}%";
-        }
 
         if (!line.Contains("speed", StringComparison.OrdinalIgnoreCase))
         {
