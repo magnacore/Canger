@@ -219,10 +219,13 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// that file, and the speed — are what a queue's own clock is worked out from, and are asked
     /// for on every playback because asking only for a queue would mean two formats to keep in
     /// step. The speed is asked for in mpv's display spelling rather than raw, since nothing here
-    /// does arithmetic with it and <c>${=speed}</c> reads as <c>1.500000x</c> on the bar.
+    /// does arithmetic with it and <c>${=speed}</c> reads as <c>1.500000x</c> on the bar. The
+    /// volume is there for the same reason the mode adds it to the readable half: a queue shows
+    /// its own line instead of that one, and <c>8</c> and <c>9</c> changed the volume with nothing
+    /// on screen to show it — the mode's whole purpose being to adjust exactly that.
     /// </remarks>
     private static string StatusFormat(string display) =>
-        Marker + "${=percent-pos};${playlist-pos};${=time-pos};${speed}|" + display;
+        Marker + "${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}|" + display;
 
     /// <summary>What is shown in front of the clock while playback is held.</summary>
     /// <remarks>
@@ -269,6 +272,9 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
 
     /// <summary>The speed mpv reports, as it spells it.</summary>
     private string _speed = "1";
+
+    /// <summary>The volume mpv reports, as it spells it.</summary>
+    private string _volume = string.Empty;
 
     /// <summary>The format used where mpv's configuration names none.</summary>
     internal static string PlainStatusFormat => DefaultStatusFormat;
@@ -340,7 +346,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         // where there is not — which covers a single file, a queue still being measured, and one
         // holding something no tool here could measure.
         string text = _files.Length > 1 && _durations is { Length: > 1 } durations
-            ? OverallLine(durations, _index, _position, _speed)
+            ? OverallLine(durations, _index, _position, _speed, _handsOver ? _volume : null)
             : _text;
 
         return _paused && !text.Contains("paused", StringComparison.OrdinalIgnoreCase)
@@ -659,6 +665,11 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         {
             _speed = speed;
         }
+
+        if (Field(fields, 4) is { Length: > 0 } volume)
+        {
+            _volume = volume;
+        }
     }
 
     /// <summary>One of the machine-readable fields, or empty where mpv sent fewer.</summary>
@@ -710,6 +721,9 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// <param name="index">The file being played, counted from zero.</param>
     /// <param name="position">How far into that file, in seconds.</param>
     /// <param name="speed">The speed mpv reports.</param>
+    /// <param name="volume">
+    /// The volume to show, or <see langword="null"/> to leave it off.
+    /// </param>
     /// <returns>The line to show.</returns>
     /// <remarks>
     /// <para>
@@ -724,18 +738,28 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// one long file, and there is nothing on screen to say that <c>pas</c> would stop four hours
     /// of listening rather than forty minutes.
     /// </para>
+    /// <para>
+    /// The volume rides along only while the keyboard belongs to mpv, and in the same words the
+    /// mode adds to a single file's line. It was reported missing for a queue and it had to be:
+    /// the mode adds it to the format mpv fills in, and a queue shows this line instead of that
+    /// one, so <c>8</c> and <c>9</c> moved the volume with nothing on screen to say so.
+    /// </para>
     /// </remarks>
     internal static string OverallLine(IReadOnlyList<double> durations, int index, double position,
-                                       string speed)
+                                       string speed, string? volume)
     {
         double total = durations.Sum();
         double elapsed = Elapsed(durations, index, position);
         int percent = total > 0 ? (int)Math.Round(elapsed / total * 100) : 0;
         int at = Math.Clamp(index, 0, Math.Max(durations.Count - 1, 0)) + 1;
 
-        return string.Create(CultureInfo.InvariantCulture,
-                             $"{at}/{durations.Count}  {Clock(elapsed)} / {Clock(total)} " +
-                             $"({percent}%) {speed}x");
+        string line = string.Create(CultureInfo.InvariantCulture,
+                                    $"{at}/{durations.Count}  {Clock(elapsed)} / {Clock(total)} " +
+                                    $"({percent}%) {speed}x");
+
+        return volume is { Length: > 0 }
+            ? string.Create(CultureInfo.InvariantCulture, $"{line}  vol {volume}%")
+            : line;
     }
 
     /// <summary>

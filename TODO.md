@@ -38,11 +38,22 @@ reflection, because the arithmetic being right is a different question from the 
 being the one that reaches the bar — and it was right and unreachable for as long as it took to
 write that test.
 
+**The volume went missing with it.** Reported straight after: in the mode, `8` and `9` moved the
+volume with nothing on screen to say so. The mode works by adding `${volume}` to the format mpv
+fills in — and a queue shows its own line *instead* of that one, so the figure had nowhere to
+appear. It is now a fifth machine-readable field and rides on the queue's line while the keyboard
+belongs to mpv, in the same words a single file gets. A good example of the shape AGENT.md warns
+about, arrived at from the other end: not a mechanism nothing feeds, but a new line quietly cutting
+the feed to an old one. Controls: the volume never appended fails 1; the mode not passed to the
+line fails 1.
+
 **Verified with real playback**, on silent files made for the purpose so nothing was audible: two
 five-minute files read `1/2  00:00:04 / 00:10:00 (1%) 1.5x`; `pap` showed `(paused)`; `pas`
 cleared it and left no mpv behind. A 4-second and a 6-second file crossed from
 `1/2 … 00:00:01 / 00:00:10 (19%)` to `2/2 … 00:00:07 / 00:00:10 (79%)`, which is the only way to
-see the playlist advance. A single file is unchanged: mpv's own line, no `n/m` in front of it.
+see the playlist advance. A single file is unchanged: mpv's own line, no `n/m` in front of it. In
+the mode the line reads `1/2  00:00:06 / 00:10:00 (1%) 1.5x  vol 100%` beside the `MPV` badge, and
+the volume follows the keys and goes away with Escape.
 
 ## The activity badge moves in with the other flags
 

@@ -169,7 +169,7 @@ public sealed class ShippedMkaTests : IDisposable
         // mpv's own configuration names, so asserting a particular field here would make the test
         // depend on the mpv.conf of whoever runs it.
         Assert.Contains("--term-status-msg=", command, StringComparison.Ordinal);
-        Assert.Contains("canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed}|",
+        Assert.Contains("canger-mka:${=percent-pos};${playlist-pos};${=time-pos};${speed};${volume}|",
                         command, StringComparison.Ordinal);
     }
 
@@ -397,6 +397,24 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
+    public void TheQueuesLineShowsTheVolumeWhileTheKeyboardBelongsToMpv()
+    {
+        // Reported: in the mode, `8` and `9` moved the volume with nothing on screen to say so.
+        // The mode puts `${volume}` into the format mpv fills in — and a queue shows its own line
+        // instead of that one, so the figure never reached the bar. Same words as a single file's.
+        FakeFileManager manager =
+            Queued("canger-mka:20;1;60;1.5;70|00:01:00 / 00:05:00 (20%) 1.5x\r");
+        IBackgroundActivity activity = manager.BackgroundActivity!;
+        Measured(activity, [300d, 300d]);
+
+        Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x", activity.Describe());
+
+        manager.Execute("mka_mode");
+
+        Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x  vol 70%", activity.Describe());
+    }
+
+    [Fact]
     public void AnUnmeasuredQueueShowsWhatMpvSaysAboutTheFilePlayingNow()
     {
         // With no tool to measure them there is no honest total, and mpv's own line for the file
@@ -450,7 +468,7 @@ public sealed class ShippedMkaTests : IDisposable
 
         Assert.Equal(360d, (double)Call("Playback", "Elapsed", durations, 1, 60d), 3);
         Assert.Equal("2/2  00:06:00 / 00:10:00 (60%) 1.5x",
-                     Call("Playback", "OverallLine", durations, 1, 60d, "1.5"));
+                     Call("Playback", "OverallLine", durations, 1, 60d, "1.5", null!));
     }
 
     [Fact]
@@ -461,7 +479,7 @@ public sealed class ShippedMkaTests : IDisposable
         double[] durations = [300d, 300d];
 
         Assert.Equal("1/2  00:00:00 / 00:10:00 (0%) 1x",
-                     Call("Playback", "OverallLine", durations, 0, 0d, "1"));
+                     Call("Playback", "OverallLine", durations, 0, 0d, "1", null!));
     }
 
     [Fact]
