@@ -391,7 +391,7 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         text += VolumeSuffix(_effective, _volume,
                              DateTimeOffset.UtcNow - _volumeMoved < VolumeWindow);
 
-        return _paused && !text.Contains("paused", StringComparison.OrdinalIgnoreCase)
+        return _paused && WantsThePausedPrefix(_effective, text)
             ? PausedPrefix + text
             : text;
     }
@@ -661,6 +661,28 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             at = at == 0 ? -1 : output.LastIndexOf(Marker, at - 1, StringComparison.Ordinal);
         }
     }
+
+    /// <summary>Whether this side should say that playback is held.</summary>
+    /// <param name="format">The format in force.</param>
+    /// <param name="text">The line as it stands.</param>
+    /// <returns>Whether to put the word in front of it.</returns>
+    /// <remarks>
+    /// <para>
+    /// A format that asks about <c>pause</c> already says it, in the place its author chose. This
+    /// side saying it too made the word appear in front for a frame and then jump to the back as
+    /// the reading carrying it arrived — reported, and fairly: one word that moves reads as two
+    /// faults.
+    /// </para>
+    /// <para>
+    /// Decided from the format rather than from whether the line happens to contain the word,
+    /// because those differ exactly when it matters: mpv answers this side over the socket the
+    /// instant the pause happens, while the reading that spells it out is a frame behind. Judging
+    /// by the text meant saying it, and then unsaying it.
+    /// </para>
+    /// </remarks>
+    internal static bool WantsThePausedPrefix(string format, string text) =>
+        !format.Contains("pause", StringComparison.OrdinalIgnoreCase) &&
+        !text.Contains("paused", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Asks mpv whether it is paused.</summary>
     /// <returns>What mpv said, or <see langword="null"/> if it did not answer.</returns>

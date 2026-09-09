@@ -558,6 +558,22 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
+    public void TheWordDoesNotAppearInFrontOfAFormatThatSaysItItself()
+    {
+        // Reported: it showed in front for a moment and then jumped to the back. This is that
+        // moment — mpv has answered the socket that it is held, while the reading on screen is
+        // the one from just before and does not carry their `${?pause==yes:(Paused)}` yet. Their
+        // format says where the word goes; this side must not say it anywhere else meanwhile.
+        Queued("canger-mka:20;1;60;1.5;100;1;1.5;|00:01:00 / 00:05:00 (20%) 1.5x\r",
+               (_, activity) =>
+        {
+            Measured(activity, [300d, 300d]);
+
+            Assert.DoesNotContain("aused", activity.Describe()!, StringComparison.Ordinal);
+        });
+    }
+
+    [Fact]
     public void ThePauseIsSaidOnceWhereTheFormatSaysItToo()
     {
         // Reported: `p` and `Space` in the mode paused the audio, and the word appeared only

@@ -98,6 +98,19 @@ had been read at all. It now runs against a format that says nothing about pausi
 **Verified in a real session**, all six states: `pap`, `p` in the mode and `Space` in the mode each
 show `(Paused)` when they pause and clear it when they resume, for a single file and for a queue.
 
+**Then the word jumped.** Reported next: it appeared in front of the line and immediately moved to
+the back. Both indicators were firing in turn — this side's own prefix went on the instant the
+socket answered, and dropped again a frame later when the reading carrying their own
+`${?pause==yes:(Paused)}` arrived and the line already said it. Whether to add the prefix is now
+decided from the **format** rather than from whether the line happens to contain the word, because
+those two differ exactly when it matters: the socket answers at once and the reading spelling it
+out is a frame behind. A format that asks about `pause` says it in the place its author chose, and
+this side says nothing. Same rule as the volume, one paragraph up.
+
+The cost is that the word arrives with the reading rather than instantly — measured at under a
+second, against a jump that was instant and wrong. Control: the prefix added regardless of the
+format fails 1.
+
 **The volume appears as it moves, and then goes.** Reported after the first attempt: entering the
 mode showed the volume and kept it there, in normal playback it never showed at all, and mpv in a
 terminal does neither — it shows the figure as it is changed and takes it away again. Asked for
