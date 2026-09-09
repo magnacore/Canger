@@ -33,7 +33,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 2166 |
+| Tests | 2205 |
 
 Eleven things go deliberately beyond ranger:
 
@@ -362,11 +362,14 @@ Three seams on `IFileManager` exist for plugins that do more than add a command:
 | `BackgroundActivity` | A line in the status bar with an optional progress bar, for work that is running but is not a queued task. It shares the bar rather than replacing it, so permissions, free space and position stay visible. A `Badge` names a state instead — a short word picked out among `Mrk`, `VIS` and `FROZEN` at the right-hand end, shown whenever it is given, whether or not there is a line. |
 | `KeyGrab` | Take the keyboard ahead of the browser's bindings for a while, and hand it back — for passing keys to a program Canger is running rather than to Canger. Only the browser: the console, pager, task view and device list keep their own keys. |
 
-Worked examples are in `artifacts/plugins/`. `archives.cs` and `zoxide.cs` add commands;
-`mka.cs` plays audio in the background through mpv and uses all three seams at once — it claims
-audio files, shows mpv's own status format with a progress bar, and `pam` hands the keyboard to
-mpv until Escape takes it back. Several files selected play as one queue: the same status line the user's own `mpv.conf` asks
-for, with the figures covering the whole queue and which file of how many in front of it.
+Worked examples live in the repository under `artifacts/plugins/`, which the packages do not
+carry: `archives.cs` and `zoxide.cs` add commands, and `mka.cs` plays audio in the background
+through mpv and uses all three seams at once. It claims audio files, puts mpv's own status line on
+the bar with a progress bar behind it, and `pam` hands the keyboard to mpv until Escape takes it
+back. Several files selected play as one queue — the same status line, with the figures covering
+the whole queue and which file of how many in front of them — which is worth reading if you are
+writing something similar, because a queue's totals are the one thing mpv cannot be asked for and
+the plugin has to work them out and splice them into the user's own format.
 
 Three flags exist for inspecting what a full-screen interface would hide, and are the quickest way
 to answer "why does this not work":
