@@ -365,7 +365,8 @@ Three seams on `IFileManager` exist for plugins that do more than add a command:
 Worked examples are in `artifacts/plugins/`. `archives.cs` and `zoxide.cs` add commands;
 `mka.cs` plays audio in the background through mpv and uses all three seams at once — it claims
 audio files, shows mpv's own status format with a progress bar, and `pam` hands the keyboard to
-mpv until Escape takes it back.
+mpv until Escape takes it back. Several files selected play as one queue: the same status line the user's own `mpv.conf` asks
+for, with the figures covering the whole queue and which file of how many in front of it.
 
 Three flags exist for inspecting what a full-screen interface would hide, and are the quickest way
 to answer "why does this not work":
