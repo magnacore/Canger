@@ -1,5 +1,50 @@
 # Canger — port status
 
+## The activity line is shortened rather than dropped
+
+Noticed while measuring how long `(Paused)` takes to appear: at 120 columns it never appeared at
+all — the **whole activity line vanished**, clock and percentage with it, at the moment playback
+was held. Holding adds `(Paused)` to the line, the line outgrows the room between the two blocks,
+and the bar's rule was to leave it out rather than truncate it. A bar with no activity line is
+exactly what nothing playing looks like, so the interface said something untrue and gave no hint
+why.
+
+**Cut in the middle, not at the end.** The line only outgrows its room because something was added
+to the *end* of it — the paused word, or the volume while it is being changed — so cutting the end
+throws away the very thing that made it too long and the thing that just happened. The head is the
+position and the total, which is where the eye goes.
+
+**Whole words from each end.** Cutting at whatever column the arithmetic lands on was built first
+and read badly: it left `sed)` and `00:1` on the bar, which read as different words rather than as
+shortened ones. Taking whole words from each end costs a few unused columns and can never leave a
+fragment. Where nothing whole fits at one end — one long word, or a short line whose first word is
+long — it falls back to a cut by column, which still shows both ends.
+
+**Not scrolled.** A marquee would show all of it, and was considered: a status bar is glanced at
+rather than read, so motion in the corner of the eye is paid for continuously to deliver something
+wanted occasionally. It would also cost ten redraws a second, all night, for a line that changes
+once a second.
+
+**The floor was set by measurement, not taste.** Fourteen columns, being a clock, the mark, and
+something after it. Sixteen was tried first and a hundred-column terminal then showed no clock at
+all while playing — the same complaint in miniature.
+
+**Controls:** dropping the line when it does not fit fails 1 — the test that drives the bar rather
+than the rule, which is the half that was actually broken; keeping only the head fails 9; cutting
+by column rather than by whole words fails 6.
+
+**Measured across widths**, with the mpv mode on and playback held:
+
+```
+168 (the reporter's)  full line, and the full line plus (Paused)
+120                   00:03:17 / 00:05:00 (1%) 1.5x  ->  00:03:17 /~1.5x (Paused)
+100                   00:03:17 /~1.5x                ->  nothing, once the MPV badge takes five columns
+ 90                   nothing either way
+```
+
+The order of sacrifice is deliberate: the full line, then a shortened one, then nothing — and the
+mode badge outranks the line, because it says where the next keystroke is going.
+
 ## The key that opens the mpv mode also closes it
 
 Asked for after the mode moved to a single key (`<F5> mka_mode`): pressing it again did nothing,

@@ -191,19 +191,152 @@ public sealed class StatusBar(IColorScheme colorScheme) : Widget
             return;
         }
 
-        // Measured as it will be drawn, not by character count: a CJK title is twice as wide as
-        // its length suggests, and the left block would be overwritten by the difference.
-        int width = new WideString(text).Width + 2;
+        // The columns between the two blocks, less the gap each side. The left block describes the
+        // file under the cursor and is never shortened for this.
+        string shown = Fit(text, limit - after - 3);
 
-        // Left out rather than truncated, and left out rather than written over the file under
-        // the cursor: on a narrow terminal what is under the cursor is worth more than what is
-        // playing.
-        if (limit - width < after + 1)
+        if (shown.Length == 0)
         {
             return;
         }
 
-        screen.Write(limit - width, Bounds.Y, text, baseStyle);
+        // Measured as it will be drawn, not by character count: a CJK title is twice as wide as
+        // its length suggests, and the left block would be overwritten by the difference.
+        int width = new WideString(shown).Width + 2;
+
+        screen.Write(limit - width, Bounds.Y, shown, baseStyle);
+    }
+
+    /// <summary>The narrowest activity line worth drawing at all.</summary>
+    /// <remarks>
+    /// Chosen from what has to survive: a clock of <c>00:03:17</c>, the mark, and something after
+    /// it — fourteen columns. Below that the line stops being a sentence, and the file under the
+    /// cursor is worth more than a stub. It was set higher at first, and a terminal of a hundred
+    /// columns then showed no clock at all while playing, which is the same complaint this change
+    /// exists to answer.
+    /// </remarks>
+    private const int SmallestActivity = 14;
+
+    /// <summary>Fits an activity line into the room there is, keeping both of its ends.</summary>
+    /// <param name="text">The line as the activity wrote it.</param>
+    /// <param name="width">Columns available between the two blocks.</param>
+    /// <returns>What to draw, or an empty string for nothing.</returns>
+    /// <remarks>
+    /// <para>
+    /// This line used to be left out altogether when it did not fit, which was reported as the
+    /// clock disappearing on pause: holding playback adds <c>(Paused)</c> to it, the line grows
+    /// past the room there is, and the whole thing — position, total, percentage — vanished at
+    /// the moment the user acted. Nothing on screen said why, and a bar with no activity line is
+    /// exactly what nothing playing looks like.
+    /// </para>
+    /// <para>
+    /// Cut in the middle rather than at the end, which is the part that matters here: a line only
+    /// outgrows its room because something was <em>added</em> to the end of it — the paused word,
+    /// the volume while it is being changed — so cutting the end throws away the very thing that
+    /// made it too long, and the thing that just happened. The head is the position and the
+    /// total, which is what the eye goes to; between them sit the percentage and the speed, which
+    /// are the least urgent and the easiest to infer.
+    /// </para>
+    /// <para>
+    /// Whole words from each end rather than a cut at whatever column the arithmetic lands on.
+    /// Cutting by column was tried and reads badly: it leaves fragments like <c>sed)</c> and
+    /// <c>00:1</c>, which read as different words rather than as shortened ones. Taking whole
+    /// words costs a few unused columns and never produces a fragment.
+    /// </para>
+    /// <para>
+    /// Not scrolled, though a marquee would show all of it: a status bar is glanced at rather
+    /// than read, and motion in the corner of the eye is paid for continuously to deliver
+    /// something wanted occasionally. It would also cost ten redraws a second, all night, for a
+    /// line that changes once a second.
+    /// </para>
+    /// </remarks>
+    internal static string Fit(string text, int width)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        WideString line = new(text);
+
+        if (width <= 0 || (width < SmallestActivity && line.Width > width))
+        {
+            return string.Empty;
+        }
+
+        if (line.Width <= width)
+        {
+            return text;
+        }
+
+        IReadOnlyList<string> items = Words(text);
+
+        // The mark costs a column, and the tail takes no more than half of what is left: it
+        // carries the state, which is short, and whatever it does not need goes to the head.
+        int budget = width - 1;
+        int taken = 0;
+        int from = items.Count;
+
+        while (from > 0 && taken + new WideString(items[from - 1]).Width <= budget / 2)
+        {
+            from--;
+            taken += new WideString(items[from]).Width;
+        }
+
+        // A gap at the front of the tail would read as an indent, not as a space between words.
+        while (from < items.Count && items[from].Trim().Length == 0)
+        {
+            taken -= new WideString(items[from]).Width;
+            from++;
+        }
+
+        int spare = budget - taken;
+        int to = 0;
+
+        while (to < items.Count && new WideString(items[to]).Width <= spare)
+        {
+            spare -= new WideString(items[to]).Width;
+            to++;
+        }
+
+        while (to > 0 && items[to - 1].Trim().Length == 0)
+        {
+            to--;
+        }
+
+        // Nothing whole fits at one end or the other — one long word, or a short line with a long
+        // first word. Keeping half a sentence is worse than shortening the whole of it, so it is
+        // cut by column instead, which still shows both ends.
+        if (to == 0 || from == items.Count)
+        {
+            int keep = budget / 2;
+
+            return line.Slice(0, budget - keep) + Mark + line.Slice(line.Width - keep, keep);
+        }
+
+        return string.Concat(items.Take(to)) + Mark + string.Concat(items.Skip(from));
+    }
+
+    /// <summary>What the line is cut with, as the listing marks a shortened name.</summary>
+    private const string Mark = "~";
+
+    /// <summary>Splits a line into its words and the gaps between them, in order.</summary>
+    private static IReadOnlyList<string> Words(string text)
+    {
+        List<string> items = [];
+        int at = 0;
+
+        while (at < text.Length)
+        {
+            bool blank = char.IsWhiteSpace(text[at]);
+            int start = at;
+
+            while (at < text.Length && char.IsWhiteSpace(text[at]) == blank)
+            {
+                at++;
+            }
+
+            items.Add(text[start..at]);
+        }
+
+        return items;
     }
 
     /// <summary>Draws permissions, ownership, size and time for the file under the cursor.</summary>
