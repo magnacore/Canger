@@ -1,5 +1,36 @@
 # Canger — port status
 
+## The key that opens the mpv mode also closes it
+
+Asked for after the mode moved to a single key (`<F5> mka_mode`): pressing it again did nothing,
+because the grab swallows every key it has no mpv name for so the browser never saw it. Escape was
+the only way out.
+
+**What was considered and rejected**: letting every unnamed key fall through to the browser. That
+would have made `<F5>` toggle, but it would equally have made the reporter's `<F10> exit` quit
+Canger and `<F4> edit` open an editor over the terminal, from one keystroke meant for mpv. A mode
+is worth having only if what it does is predictable — "keys go to mpv; the key that opened it, or
+Escape, leaves" is one sentence, where "some of Canger's keys also work, depending which command
+they happen to be bound to" is not. Passing the plugin's own `mka_pause` and `mka_stop` keys
+through was rejected on the same ground and buys nothing: mpv pauses with `p` or space and stops
+with `q` while the mode is on.
+
+**No core change was needed.** `IFileManager.KeyMaps` is already exposed and `Browser.Enumerate()`
+gives every sequence with the command it names, so the plugin reads the user's own binding.
+
+**Read as the mode opens, not once at startup**, which answers the question that came with the
+request: rebind `mka_mode` to something else and the new key both opens and closes it, while the
+old one goes back to whatever it is bound to. Control: bindings read once and remembered fails 1.
+
+**Single keys only.** A chord's first key would have to be held back from mpv to see whether the
+rest of it followed, and the binding before `<F5>` was `pam` — whose first key is mpv's own pause.
+Breaking pausing to support an exit would be a poor trade, so a chord keeps Escape. Control: chords
+treated as exits fails 1.
+
+**Controls, three in all**, the third being the mode key not closing the mode, which fails 2.
+Verified in a real session against the reporter's own `<F5>`: F5 shows the badge, Backspace takes
+1.5x to 1x, F5 again clears the badge without the browser also acting on it.
+
 ## Backspace reaches mpv, and the number it arrives as is not the obvious one
 
 Reported: in mpv, Backspace resets the playback speed to normal; in the plugin's mpv mode it did

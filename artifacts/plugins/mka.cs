@@ -279,6 +279,9 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// <summary>The speed mpv reports, as it spells it.</summary>
     private string _speed = "1";
 
+    /// <summary>The keys that leave the mode, besides Escape.</summary>
+    private IReadOnlySet<int> _exitKeys = new HashSet<int>();
+
     /// <summary>The volume mpv last reported, or empty before it has said.</summary>
     private string _volume = string.Empty;
 
@@ -396,6 +399,43 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             : text;
     }
 
+    /// <summary>The single keys bound to this mode, which therefore also leave it.</summary>
+    /// <param name="keyMaps">The browser's bindings.</param>
+    /// <param name="command">The command that turns the mode on.</param>
+    /// <returns>Each key that should close what it opened.</returns>
+    /// <remarks>
+    /// <para>
+    /// A mode key that does not undo itself is a papercut every time it is used, and the key is
+    /// the user's to choose — so it is read from their bindings rather than named here. Whatever
+    /// <c>mka_mode</c> is bound to closes the mode as well as opening it.
+    /// </para>
+    /// <para>
+    /// Single keys only, and not because a chord is hard: the first key of a chord would have to
+    /// be held back from mpv to see whether the rest follows, and the commonest binding for this
+    /// mode was <c>pam</c> — whose first key is mpv's own pause. A mode that broke pausing to
+    /// support its own exit would be a poor trade. A chord keeps Escape, which always works.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlySet<int> ExitKeys(KeyMaps keyMaps, string command)
+    {
+        HashSet<int> keys = [];
+
+        foreach ((IReadOnlyList<int> sequence, string bound) in keyMaps.Browser.Enumerate())
+        {
+            // The command as bound may carry arguments; the first word is what it names.
+            string named = bound.Split(' ', StringSplitOptions.RemoveEmptyEntries) is [string first, ..]
+                ? first
+                : bound;
+
+            if (sequence.Count == 1 && string.Equals(named, command, StringComparison.Ordinal))
+            {
+                keys.Add(sequence[0]);
+            }
+        }
+
+        return keys;
+    }
+
     /// <summary>
     /// Hands the keyboard to mpv, or takes it back.
     /// </summary>
@@ -415,6 +455,12 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         _handsOver = !_handsOver;
         _fileManager.KeyGrab = _handsOver ? this : null;
 
+        // Read as the mode opens rather than kept, so rebinding the key takes effect at once and
+        // a mode that is off holds nothing.
+        _exitKeys = _handsOver
+            ? ExitKeys(_fileManager.KeyMaps, "mka_mode")
+            : new HashSet<int>();
+
         ShowWhatTheModeIsFor();
         _fileManager.Redraw();
     }
@@ -423,7 +469,9 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// <remarks>
     /// <para>
     /// Escape is the way out and is never forwarded, so the keyboard cannot be lost: whatever mpv
-    /// would do with it matters less than always being able to take the keys back.
+    /// would do with it matters less than always being able to take the keys back. Whatever key
+    /// the user bound the mode to leaves it as well, since a mode key that does not undo itself
+    /// is a surprise every time — see <see cref="ExitKeys"/> for why only a single key does.
     /// </para>
     /// <para>
     /// Everything else goes to mpv by name, through its <c>keypress</c> command, so what a key
@@ -443,13 +491,18 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             return false;
         }
 
-        if (key == KeyCodes.Escape || !IsActive)
+        if (key == KeyCodes.Escape || _exitKeys.Contains(key) || !IsActive)
         {
+            bool asked = key == KeyCodes.Escape || _exitKeys.Contains(key);
+
             _handsOver = false;
             _fileManager.KeyGrab = null;
+            _exitKeys = new HashSet<int>();
             ShowWhatTheModeIsFor();
 
-            return key == KeyCodes.Escape;
+            // Taken, so the browser does not also act on it: the key that closed the mode is the
+            // same key that opened it, and running its binding again would open it straight back.
+            return asked;
         }
 
         if (MpvKeys.NameOf(key) is { } name)

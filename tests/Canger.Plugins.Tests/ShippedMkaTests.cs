@@ -319,6 +319,74 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
+    public void TheKeyThatOpensTheModeAlsoClosesIt()
+    {
+        // A mode key that does not undo itself is a surprise every time it is pressed.
+        FakeFileManager manager = Playing(Build());
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 5], "mka_mode");
+
+        manager.Execute("mka_mode");
+        Assert.NotNull(manager.KeyGrab);
+
+        Assert.True(Grab(manager).Handle(KeyCodes.FirstFunctionKey + 5));
+
+        Assert.Null(manager.KeyGrab);
+    }
+
+    [Fact]
+    public void ItIsWhicheverKeyIsBoundNow()
+    {
+        // Asked directly: rebinding the mode later must move the exit with it. The bindings are
+        // read as the mode opens rather than remembered, so the key that opens it is always the
+        // key that closes it — and the old one goes back to doing whatever it is bound to.
+        FakeFileManager manager = Playing(Build());
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 5], "mka_mode");
+        manager.Execute("mka_mode");
+        manager.Execute("mka_mode");
+
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 2], "mka_mode");
+        manager.Execute("mka_mode");
+
+        Assert.NotNull(manager.KeyGrab);
+        Assert.True(Grab(manager).Handle(KeyCodes.FirstFunctionKey + 2));
+        Assert.Null(manager.KeyGrab);
+    }
+
+    [Fact]
+    public void AChordKeepsEscapeAndNothingElse()
+    {
+        // `pam` was the binding before F5, and its first key is mpv's own pause. Treating a chord
+        // as an exit would mean holding `p` back from mpv to see whether `am` followed, so a
+        // chord does not close the mode — Escape does, as it always has.
+        FakeFileManager manager = Playing(Build());
+        manager.KeyMaps.Browser.Bind([(int)'p', (int)'a', (int)'m'], "mka_mode");
+        manager.Execute("mka_mode");
+
+        // Forwarded to mpv, which is what pauses.
+        Assert.True(Grab(manager).Handle((int)'p'));
+        Assert.NotNull(manager.KeyGrab);
+
+        Assert.True(Grab(manager).Handle(KeyCodes.Escape));
+        Assert.Null(manager.KeyGrab);
+    }
+
+    [Fact]
+    public void AnotherCommandsKeyIsStillSwallowed()
+    {
+        // The rule stays one sentence: in the mode, keys go to mpv, and the key that opened it —
+        // or Escape — leaves. Letting every unbound-in-mpv key through to the browser would put
+        // `<F10> exit` one keystroke away while the user is listening.
+        FakeFileManager manager = Playing(Build());
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 5], "mka_mode");
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 10], "exit");
+        manager.Execute("mka_mode");
+
+        Assert.True(Grab(manager).Handle(KeyCodes.FirstFunctionKey + 10));
+
+        Assert.NotNull(manager.KeyGrab);
+    }
+
+    [Fact]
     public void TheModeIsOffAgainWhenNothingHoldsTheKeyboard()
     {
         FakeFileManager manager = Playing(Build());
