@@ -1495,6 +1495,36 @@ public sealed class MkaStopCommand : CangerCommand
 internal static class MpvKeys
 {
     /// <summary>What mpv calls the keys that are not printable characters.</summary>
+    /// <remarks>
+    /// <para>
+    /// Every name here was checked against mpv rather than remembered: its <c>keypress</c> command
+    /// answers with an error for a name it does not know, so asking it is one round trip and the
+    /// alternative is a key that silently does nothing. Two plausible spellings are wrong —
+    /// <c>BACKSPACE</c> and <c>PGDOWN</c> are both rejected, where <c>BS</c> and <c>PGDWN</c> are
+    /// accepted.
+    /// </para>
+    /// <para>
+    /// The table was six keys long and Backspace was not among them, which was reported: in mpv
+    /// it resets the speed to normal, and in the mode it did nothing at all. A key the browser
+    /// hands over and this does not name is swallowed by the grab and goes nowhere, so the list
+    /// being short is not a smaller feature — it is a key that appears broken.
+    /// </para>
+    /// <para>
+    /// Backspace is named three times over because it arrives as three different numbers, and
+    /// naming only the obvious one fixes nothing: a key that is not an escape sequence reaches
+    /// Canger as its own byte, so the terminal's Backspace is <c>127</c> — ranger calls that
+    /// <c>&lt;backspace2&gt;</c> and its own configuration says "there are multiple ways to
+    /// express backspaces… to be sure, use both" (<c>config/cc.conf</c>, and ranger's
+    /// <c>rc.conf</c> before it). <see cref="KeyCodes.Backspace"/> is the curses number, which
+    /// arrives only where something has already translated it, and <c>8</c> is Ctrl+H, which the
+    /// same configuration copies onto Backspace. The first version of this fix named the curses
+    /// number alone, passed its test, and changed nothing on screen.
+    /// </para>
+    /// <para>
+    /// Escape is deliberately absent: it is the way out of the mode and is never forwarded,
+    /// whatever mpv would have done with it.
+    /// </para>
+    /// </remarks>
     private static readonly Dictionary<int, string> Named = new()
     {
         [KeyCodes.Left] = "LEFT",
@@ -1503,7 +1533,20 @@ internal static class MpvKeys
         [KeyCodes.Down] = "DOWN",
         [KeyCodes.Space] = "SPACE",
         [KeyCodes.Enter] = "ENTER",
+        [KeyCodes.Backspace] = "BS",
+        [127] = "BS",
+        [8] = "BS",
+        [KeyCodes.Tab] = "TAB",
+        [KeyCodes.Delete] = "DEL",
+        [KeyCodes.Insert] = "INS",
+        [KeyCodes.Home] = "HOME",
+        [KeyCodes.End] = "END",
+        [KeyCodes.PageUp] = "PGUP",
+        [KeyCodes.PageDown] = "PGDWN",
     };
+
+    /// <summary>The names this sends, for checking against mpv itself.</summary>
+    internal static IEnumerable<string> Names => Named.Values;
 
     /// <summary>mpv's name for a key, or <see langword="null"/> where it has none.</summary>
     /// <param name="key">The key, as <see cref="KeyCodes"/> numbers them.</param>

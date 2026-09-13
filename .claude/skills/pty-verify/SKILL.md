@@ -76,6 +76,14 @@ first line onto the end of it. `Screen` saves and restores it now.
 An eighth, when running ranger for comparison: unset `RANGER_LEVEL` or ranger starts with a
 "nested instance" warning over the screen. `Session` clears it.
 
+A ninth, from the command line rather than the harness: **`--send` translates `\r` and `\e` and
+nothing else.** `--send '\x7f'` therefore types a backslash, an `x`, a `7` and an `f` — four keys,
+straight into whatever chord the configuration has on them — where the intent was one DEL byte.
+Two rounds were spent concluding that a fix had not worked when what had not worked was the
+sending of the key. For any other byte use the shell's own quoting: `--send $'\177'`,
+`--send $'\010'`. If a key does nothing, prove the key arrived before touching the code that
+handles it.
+
 ## Two things that are not traps but cost time anyway
 
 - **`canger.sh` runs the last `./build.sh publish`, not your working tree.** Publish first or you

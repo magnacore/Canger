@@ -1,5 +1,39 @@
 # Canger — port status
 
+## Backspace reaches mpv, and the number it arrives as is not the obvious one
+
+Reported: in mpv, Backspace resets the playback speed to normal; in the plugin's mpv mode it did
+nothing. The mode forwards keys by name, and the table of names had six entries — Backspace was
+not one of them, so the grab swallowed the key and sent nothing.
+
+**The names are mpv's, so they were asked of mpv.** Its `keypress` command answers with an error
+for a name it does not know, which makes the whole table checkable in one round trip each: `BS`,
+`TAB`, `DEL`, `INS`, `HOME`, `END`, `PGUP`, `PGDWN` are accepted, while two plausible spellings —
+`BACKSPACE` and `PGDOWN` — are rejected. A test now asks mpv the same question about every name
+the plugin sends, and skips where mpv is not installed. Control: one name changed to `BACKSPACE`
+fails it.
+
+**The first fix named `KeyCodes.Backspace` and changed nothing.** A key that is not an escape
+sequence reaches Canger as its own byte, so the terminal's Backspace arrives as **127**, not as
+the curses number 263. That is ranger's `<backspace2>`, and both ranger's `rc.conf` and Canger's
+`cc.conf` bind it alongside `<backspace>` with the note "there are multiple ways to express
+backspaces… to be sure, use both" — so nothing else was broken, but the plugin's table named the
+one number that never arrives. It now names 127, 8 (Ctrl+H, which the same configuration copies
+onto Backspace) and 263. The decoder's side of it is pinned in `InputDecoderTests` so the premise
+cannot drift.
+
+**Controls:** the byte codes removed, leaving the curses number — which is the version that passed
+its own test while doing nothing on screen — fails 2; Backspace unnamed altogether fails 3.
+
+**Verified in a real session:** `1.5x` to `1x` on Backspace, with the time remaining jumping from
+00:03:15 to 00:04:50 because the same audio takes longer at 1×.
+
+**Two instrument faults cost most of the time here**, both now in `pty-verify`: `--send` translates
+only `\r` and `\e`, so `--send '\x7f'` typed four characters instead of one DEL byte and the fix
+looked dead twice over; and the user's own configuration renames a file to `… #seen` and creates a
+folder when it is played, so a fixture opened with Enter is gone by the next run. Start Canger on
+the file itself and drive the plugin by `:command` rather than by chord.
+
 ## A selection of audio plays as one queue
 
 Reported: selecting several `.mka` files and pressing Enter played them **in the terminal**, over
