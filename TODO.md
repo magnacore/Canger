@@ -1,5 +1,115 @@
 # Canger — port status
 
+## The activity line is shortened rather than dropped
+
+Noticed while measuring how long `(Paused)` takes to appear: at 120 columns it never appeared at
+all — the **whole activity line vanished**, clock and percentage with it, at the moment playback
+was held. Holding adds `(Paused)` to the line, the line outgrows the room between the two blocks,
+and the bar's rule was to leave it out rather than truncate it. A bar with no activity line is
+exactly what nothing playing looks like, so the interface said something untrue and gave no hint
+why.
+
+**Cut in the middle, not at the end.** The line only outgrows its room because something was added
+to the *end* of it — the paused word, or the volume while it is being changed — so cutting the end
+throws away the very thing that made it too long and the thing that just happened. The head is the
+position and the total, which is where the eye goes.
+
+**Whole words from each end.** Cutting at whatever column the arithmetic lands on was built first
+and read badly: it left `sed)` and `00:1` on the bar, which read as different words rather than as
+shortened ones. Taking whole words from each end costs a few unused columns and can never leave a
+fragment. Where nothing whole fits at one end — one long word, or a short line whose first word is
+long — it falls back to a cut by column, which still shows both ends.
+
+**Not scrolled.** A marquee would show all of it, and was considered: a status bar is glanced at
+rather than read, so motion in the corner of the eye is paid for continuously to deliver something
+wanted occasionally. It would also cost ten redraws a second, all night, for a line that changes
+once a second.
+
+**The floor was set by measurement, not taste.** Fourteen columns, being a clock, the mark, and
+something after it. Sixteen was tried first and a hundred-column terminal then showed no clock at
+all while playing — the same complaint in miniature.
+
+**Controls:** dropping the line when it does not fit fails 1 — the test that drives the bar rather
+than the rule, which is the half that was actually broken; keeping only the head fails 9; cutting
+by column rather than by whole words fails 6.
+
+**Measured across widths**, with the mpv mode on and playback held:
+
+```
+168 (the reporter's)  full line, and the full line plus (Paused)
+120                   00:03:17 / 00:05:00 (1%) 1.5x  ->  00:03:17 /~1.5x (Paused)
+100                   00:03:17 /~1.5x                ->  nothing, once the MPV badge takes five columns
+ 90                   nothing either way
+```
+
+The order of sacrifice is deliberate: the full line, then a shortened one, then nothing — and the
+mode badge outranks the line, because it says where the next keystroke is going.
+
+## The key that opens the mpv mode also closes it
+
+Asked for after the mode moved to a single key (`<F5> mka_mode`): pressing it again did nothing,
+because the grab swallows every key it has no mpv name for so the browser never saw it. Escape was
+the only way out.
+
+**What was considered and rejected**: letting every unnamed key fall through to the browser. That
+would have made `<F5>` toggle, but it would equally have made the reporter's `<F10> exit` quit
+Canger and `<F4> edit` open an editor over the terminal, from one keystroke meant for mpv. A mode
+is worth having only if what it does is predictable — "keys go to mpv; the key that opened it, or
+Escape, leaves" is one sentence, where "some of Canger's keys also work, depending which command
+they happen to be bound to" is not. Passing the plugin's own `mka_pause` and `mka_stop` keys
+through was rejected on the same ground and buys nothing: mpv pauses with `p` or space and stops
+with `q` while the mode is on.
+
+**No core change was needed.** `IFileManager.KeyMaps` is already exposed and `Browser.Enumerate()`
+gives every sequence with the command it names, so the plugin reads the user's own binding.
+
+**Read as the mode opens, not once at startup**, which answers the question that came with the
+request: rebind `mka_mode` to something else and the new key both opens and closes it, while the
+old one goes back to whatever it is bound to. Control: bindings read once and remembered fails 1.
+
+**Single keys only.** A chord's first key would have to be held back from mpv to see whether the
+rest of it followed, and the binding before `<F5>` was `pam` — whose first key is mpv's own pause.
+Breaking pausing to support an exit would be a poor trade, so a chord keeps Escape. Control: chords
+treated as exits fails 1.
+
+**Controls, three in all**, the third being the mode key not closing the mode, which fails 2.
+Verified in a real session against the reporter's own `<F5>`: F5 shows the badge, Backspace takes
+1.5x to 1x, F5 again clears the badge without the browser also acting on it.
+
+## Backspace reaches mpv, and the number it arrives as is not the obvious one
+
+Reported: in mpv, Backspace resets the playback speed to normal; in the plugin's mpv mode it did
+nothing. The mode forwards keys by name, and the table of names had six entries — Backspace was
+not one of them, so the grab swallowed the key and sent nothing.
+
+**The names are mpv's, so they were asked of mpv.** Its `keypress` command answers with an error
+for a name it does not know, which makes the whole table checkable in one round trip each: `BS`,
+`TAB`, `DEL`, `INS`, `HOME`, `END`, `PGUP`, `PGDWN` are accepted, while two plausible spellings —
+`BACKSPACE` and `PGDOWN` — are rejected. A test now asks mpv the same question about every name
+the plugin sends, and skips where mpv is not installed. Control: one name changed to `BACKSPACE`
+fails it.
+
+**The first fix named `KeyCodes.Backspace` and changed nothing.** A key that is not an escape
+sequence reaches Canger as its own byte, so the terminal's Backspace arrives as **127**, not as
+the curses number 263. That is ranger's `<backspace2>`, and both ranger's `rc.conf` and Canger's
+`cc.conf` bind it alongside `<backspace>` with the note "there are multiple ways to express
+backspaces… to be sure, use both" — so nothing else was broken, but the plugin's table named the
+one number that never arrives. It now names 127, 8 (Ctrl+H, which the same configuration copies
+onto Backspace) and 263. The decoder's side of it is pinned in `InputDecoderTests` so the premise
+cannot drift.
+
+**Controls:** the byte codes removed, leaving the curses number — which is the version that passed
+its own test while doing nothing on screen — fails 2; Backspace unnamed altogether fails 3.
+
+**Verified in a real session:** `1.5x` to `1x` on Backspace, with the time remaining jumping from
+00:03:15 to 00:04:50 because the same audio takes longer at 1×.
+
+**Two instrument faults cost most of the time here**, both now in `pty-verify`: `--send` translates
+only `\r` and `\e`, so `--send '\x7f'` typed four characters instead of one DEL byte and the fix
+looked dead twice over; and the user's own configuration renames a file to `… #seen` and creates a
+folder when it is played, so a fixture opened with Enter is gone by the next run. Start Canger on
+the file itself and drive the plugin by `:command` rather than by chord.
+
 ## A selection of audio plays as one queue
 
 Reported: selecting several `.mka` files and pressing Enter played them **in the terminal**, over

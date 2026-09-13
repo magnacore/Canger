@@ -279,6 +279,9 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// <summary>The speed mpv reports, as it spells it.</summary>
     private string _speed = "1";
 
+    /// <summary>The keys that leave the mode, besides Escape.</summary>
+    private IReadOnlySet<int> _exitKeys = new HashSet<int>();
+
     /// <summary>The volume mpv last reported, or empty before it has said.</summary>
     private string _volume = string.Empty;
 
@@ -396,6 +399,43 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             : text;
     }
 
+    /// <summary>The single keys bound to this mode, which therefore also leave it.</summary>
+    /// <param name="keyMaps">The browser's bindings.</param>
+    /// <param name="command">The command that turns the mode on.</param>
+    /// <returns>Each key that should close what it opened.</returns>
+    /// <remarks>
+    /// <para>
+    /// A mode key that does not undo itself is a papercut every time it is used, and the key is
+    /// the user's to choose — so it is read from their bindings rather than named here. Whatever
+    /// <c>mka_mode</c> is bound to closes the mode as well as opening it.
+    /// </para>
+    /// <para>
+    /// Single keys only, and not because a chord is hard: the first key of a chord would have to
+    /// be held back from mpv to see whether the rest follows, and the commonest binding for this
+    /// mode was <c>pam</c> — whose first key is mpv's own pause. A mode that broke pausing to
+    /// support its own exit would be a poor trade. A chord keeps Escape, which always works.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlySet<int> ExitKeys(KeyMaps keyMaps, string command)
+    {
+        HashSet<int> keys = [];
+
+        foreach ((IReadOnlyList<int> sequence, string bound) in keyMaps.Browser.Enumerate())
+        {
+            // The command as bound may carry arguments; the first word is what it names.
+            string named = bound.Split(' ', StringSplitOptions.RemoveEmptyEntries) is [string first, ..]
+                ? first
+                : bound;
+
+            if (sequence.Count == 1 && string.Equals(named, command, StringComparison.Ordinal))
+            {
+                keys.Add(sequence[0]);
+            }
+        }
+
+        return keys;
+    }
+
     /// <summary>
     /// Hands the keyboard to mpv, or takes it back.
     /// </summary>
@@ -415,6 +455,12 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
         _handsOver = !_handsOver;
         _fileManager.KeyGrab = _handsOver ? this : null;
 
+        // Read as the mode opens rather than kept, so rebinding the key takes effect at once and
+        // a mode that is off holds nothing.
+        _exitKeys = _handsOver
+            ? ExitKeys(_fileManager.KeyMaps, "mka_mode")
+            : new HashSet<int>();
+
         ShowWhatTheModeIsFor();
         _fileManager.Redraw();
     }
@@ -423,7 +469,9 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
     /// <remarks>
     /// <para>
     /// Escape is the way out and is never forwarded, so the keyboard cannot be lost: whatever mpv
-    /// would do with it matters less than always being able to take the keys back.
+    /// would do with it matters less than always being able to take the keys back. Whatever key
+    /// the user bound the mode to leaves it as well, since a mode key that does not undo itself
+    /// is a surprise every time — see <see cref="ExitKeys"/> for why only a single key does.
     /// </para>
     /// <para>
     /// Everything else goes to mpv by name, through its <c>keypress</c> command, so what a key
@@ -443,13 +491,18 @@ internal sealed class Playback : IBackgroundActivity, IKeyGrab
             return false;
         }
 
-        if (key == KeyCodes.Escape || !IsActive)
+        if (key == KeyCodes.Escape || _exitKeys.Contains(key) || !IsActive)
         {
+            bool asked = key == KeyCodes.Escape || _exitKeys.Contains(key);
+
             _handsOver = false;
             _fileManager.KeyGrab = null;
+            _exitKeys = new HashSet<int>();
             ShowWhatTheModeIsFor();
 
-            return key == KeyCodes.Escape;
+            // Taken, so the browser does not also act on it: the key that closed the mode is the
+            // same key that opened it, and running its binding again would open it straight back.
+            return asked;
         }
 
         if (MpvKeys.NameOf(key) is { } name)
@@ -1495,6 +1548,36 @@ public sealed class MkaStopCommand : CangerCommand
 internal static class MpvKeys
 {
     /// <summary>What mpv calls the keys that are not printable characters.</summary>
+    /// <remarks>
+    /// <para>
+    /// Every name here was checked against mpv rather than remembered: its <c>keypress</c> command
+    /// answers with an error for a name it does not know, so asking it is one round trip and the
+    /// alternative is a key that silently does nothing. Two plausible spellings are wrong —
+    /// <c>BACKSPACE</c> and <c>PGDOWN</c> are both rejected, where <c>BS</c> and <c>PGDWN</c> are
+    /// accepted.
+    /// </para>
+    /// <para>
+    /// The table was six keys long and Backspace was not among them, which was reported: in mpv
+    /// it resets the speed to normal, and in the mode it did nothing at all. A key the browser
+    /// hands over and this does not name is swallowed by the grab and goes nowhere, so the list
+    /// being short is not a smaller feature — it is a key that appears broken.
+    /// </para>
+    /// <para>
+    /// Backspace is named three times over because it arrives as three different numbers, and
+    /// naming only the obvious one fixes nothing: a key that is not an escape sequence reaches
+    /// Canger as its own byte, so the terminal's Backspace is <c>127</c> — ranger calls that
+    /// <c>&lt;backspace2&gt;</c> and its own configuration says "there are multiple ways to
+    /// express backspaces… to be sure, use both" (<c>config/cc.conf</c>, and ranger's
+    /// <c>rc.conf</c> before it). <see cref="KeyCodes.Backspace"/> is the curses number, which
+    /// arrives only where something has already translated it, and <c>8</c> is Ctrl+H, which the
+    /// same configuration copies onto Backspace. The first version of this fix named the curses
+    /// number alone, passed its test, and changed nothing on screen.
+    /// </para>
+    /// <para>
+    /// Escape is deliberately absent: it is the way out of the mode and is never forwarded,
+    /// whatever mpv would have done with it.
+    /// </para>
+    /// </remarks>
     private static readonly Dictionary<int, string> Named = new()
     {
         [KeyCodes.Left] = "LEFT",
@@ -1503,7 +1586,20 @@ internal static class MpvKeys
         [KeyCodes.Down] = "DOWN",
         [KeyCodes.Space] = "SPACE",
         [KeyCodes.Enter] = "ENTER",
+        [KeyCodes.Backspace] = "BS",
+        [127] = "BS",
+        [8] = "BS",
+        [KeyCodes.Tab] = "TAB",
+        [KeyCodes.Delete] = "DEL",
+        [KeyCodes.Insert] = "INS",
+        [KeyCodes.Home] = "HOME",
+        [KeyCodes.End] = "END",
+        [KeyCodes.PageUp] = "PGUP",
+        [KeyCodes.PageDown] = "PGDWN",
     };
+
+    /// <summary>The names this sends, for checking against mpv itself.</summary>
+    internal static IEnumerable<string> Names => Named.Values;
 
     /// <summary>mpv's name for a key, or <see langword="null"/> where it has none.</summary>
     /// <param name="key">The key, as <see cref="KeyCodes"/> numbers them.</param>

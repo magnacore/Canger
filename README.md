@@ -33,7 +33,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 2205 |
+| Tests | 2229 |
 
 Eleven things go deliberately beyond ranger:
 
@@ -105,6 +105,13 @@ Eleven things go deliberately beyond ranger:
   and a line is run directly when it safely can be, rather than always through `sh -c`, so passing
   two and a half thousand filenames to a program does not fail on Linux's 131 072-byte limit for a
   single argument.
+- **The status bar shortens rather than hides.** A background activity — audio playing, a
+  conversion running — writes a line between the file details and the free-space block. When that
+  line outgrows the room, it is cut in the middle on whole-word boundaries, keeping the position
+  at its head and the state at its tail, rather than being left out altogether. Ranger has no
+  counterpart to compare against; the point is that a bar with no line on it is exactly what
+  nothing playing looks like, so dropping the line tells the user something untrue at the moment
+  they acted.
 - **Previews wrap between words.** With `wrap_plaintext_previews` on, ranger cuts each line at
   whatever character the pane's width lands on, so a wrapped paragraph comes out split through
   the middle of words — unrecognisable enough that the setting reads as not working. Canger
@@ -366,10 +373,12 @@ Worked examples live in the repository under `artifacts/plugins/`, which the pac
 carry: `archives.cs` and `zoxide.cs` add commands, and `mka.cs` plays audio in the background
 through mpv and uses all three seams at once. It claims audio files, puts mpv's own status line on
 the bar with a progress bar behind it, and `pam` hands the keyboard to mpv until Escape takes it
-back. Several files selected play as one queue — the same status line, with the figures covering
-the whole queue and which file of how many in front of them — which is worth reading if you are
-writing something similar, because a queue's totals are the one thing mpv cannot be asked for and
-the plugin has to work them out and splice them into the user's own format.
+back — and whatever key that mode is bound to closes it again, read from your own bindings rather
+than named in the plugin. Several files selected play as one queue — the same status line, with
+the figures covering the whole queue and which file of how many in front of them — which is worth
+reading if you are writing something similar, because a queue's totals are the one thing mpv
+cannot be asked for and the plugin has to work them out and splice them into the user's own
+format.
 
 Three flags exist for inspecting what a full-screen interface would hide, and are the quickest way
 to answer "why does this not work":

@@ -18,6 +18,19 @@ public class InputDecoderTests
         Assert.Equal([(int)'h', (int)'j', (int)'k'], Keys(Decode("hjk")));
 
     [Fact]
+    public void Feed_ReportsBackspaceAsTheByteItArrivesAs()
+    {
+        // Not as KeyCodes.Backspace, which is the curses number. A key that is not an escape
+        // sequence is reported as its own byte, so anything matching on Backspace has to match
+        // 127 — ranger calls it `<backspace2>` and the shipped configuration binds both, saying
+        // "there are multiple ways to express backspaces… to be sure, use both". Written down
+        // here because a fix that named only the curses number passed its own test and did
+        // nothing at all when a key was pressed.
+        Assert.Equal([127], Keys(Decode("\u007f")));
+        Assert.Equal([8], Keys(Decode("\u0008")));
+    }
+
+    [Fact]
     public void Feed_ReportsControlKeys()
     {
         // Ctrl-A arrives as byte 1, which is exactly what <C-a> binds to, so the decoder and

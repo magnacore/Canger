@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Diagnostics;
+using System.Net.Sockets;
 using System.Reflection;
+using System.Text;
 using Canger.Core.Commands;
 using Canger.Core.Processes;
 using Canger.Core.Input;
@@ -316,6 +319,74 @@ public sealed class ShippedMkaTests : IDisposable
     }
 
     [Fact]
+    public void TheKeyThatOpensTheModeAlsoClosesIt()
+    {
+        // A mode key that does not undo itself is a surprise every time it is pressed.
+        FakeFileManager manager = Playing(Build());
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 5], "mka_mode");
+
+        manager.Execute("mka_mode");
+        Assert.NotNull(manager.KeyGrab);
+
+        Assert.True(Grab(manager).Handle(KeyCodes.FirstFunctionKey + 5));
+
+        Assert.Null(manager.KeyGrab);
+    }
+
+    [Fact]
+    public void ItIsWhicheverKeyIsBoundNow()
+    {
+        // Asked directly: rebinding the mode later must move the exit with it. The bindings are
+        // read as the mode opens rather than remembered, so the key that opens it is always the
+        // key that closes it — and the old one goes back to doing whatever it is bound to.
+        FakeFileManager manager = Playing(Build());
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 5], "mka_mode");
+        manager.Execute("mka_mode");
+        manager.Execute("mka_mode");
+
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 2], "mka_mode");
+        manager.Execute("mka_mode");
+
+        Assert.NotNull(manager.KeyGrab);
+        Assert.True(Grab(manager).Handle(KeyCodes.FirstFunctionKey + 2));
+        Assert.Null(manager.KeyGrab);
+    }
+
+    [Fact]
+    public void AChordKeepsEscapeAndNothingElse()
+    {
+        // `pam` was the binding before F5, and its first key is mpv's own pause. Treating a chord
+        // as an exit would mean holding `p` back from mpv to see whether `am` followed, so a
+        // chord does not close the mode — Escape does, as it always has.
+        FakeFileManager manager = Playing(Build());
+        manager.KeyMaps.Browser.Bind([(int)'p', (int)'a', (int)'m'], "mka_mode");
+        manager.Execute("mka_mode");
+
+        // Forwarded to mpv, which is what pauses.
+        Assert.True(Grab(manager).Handle((int)'p'));
+        Assert.NotNull(manager.KeyGrab);
+
+        Assert.True(Grab(manager).Handle(KeyCodes.Escape));
+        Assert.Null(manager.KeyGrab);
+    }
+
+    [Fact]
+    public void AnotherCommandsKeyIsStillSwallowed()
+    {
+        // The rule stays one sentence: in the mode, keys go to mpv, and the key that opened it —
+        // or Escape — leaves. Letting every unbound-in-mpv key through to the browser would put
+        // `<F10> exit` one keystroke away while the user is listening.
+        FakeFileManager manager = Playing(Build());
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 5], "mka_mode");
+        manager.KeyMaps.Browser.Bind([KeyCodes.FirstFunctionKey + 10], "exit");
+        manager.Execute("mka_mode");
+
+        Assert.True(Grab(manager).Handle(KeyCodes.FirstFunctionKey + 10));
+
+        Assert.NotNull(manager.KeyGrab);
+    }
+
+    [Fact]
     public void TheModeIsOffAgainWhenNothingHoldsTheKeyboard()
     {
         FakeFileManager manager = Playing(Build());
@@ -620,6 +691,127 @@ public sealed class ShippedMkaTests : IDisposable
                                  .GetValue(activity)!;
 
         ((FakeFileManager.FakeBackgroundProcess)process).StandardOutput = reading;
+    }
+
+    [Theory]
+    // What a terminal actually sends, which is the one that matters: a key that is not an escape
+    // sequence arrives as its own byte. Naming only the curses number below fixed nothing, and the
+    // first version of this test passed while the key still did nothing on screen.
+    [InlineData(127)]
+    // Ctrl+H, which the shipped configuration copies onto Backspace, as ranger's does.
+    [InlineData(8)]
+    // The curses number, for anything that has already translated the key.
+    [InlineData(KeyCodes.Backspace)]
+    public void BackspaceIsHandedToMpvHoweverItArrives(int key)
+    {
+        // Reported: in mpv, Backspace resets the speed to normal; in the mode it did nothing.
+        // A key this does not name is swallowed by the grab and goes nowhere.
+        Assert.Equal("BS", Call("MpvKeys", "NameOf", key));
+    }
+
+    [Fact]
+    public void APrintableKeyIsSentAsItself()
+    {
+        Assert.Equal("9", Call("MpvKeys", "NameOf", (int)'9'));
+    }
+
+    [Fact]
+    public void EscapeIsNeverHandedOver()
+    {
+        // The way out of the mode. Whatever mpv would do with it matters less than always being
+        // able to take the keys back.
+        Assert.Null(Call("MpvKeys", "NameOf", KeyCodes.Escape));
+    }
+
+    [Fact]
+    public void MpvKnowsEveryNameThisSends()
+    {
+        // The names are mpv's, not this plugin's, and two plausible spellings are wrong: mpv
+        // rejects BACKSPACE and PGDOWN where it accepts BS and PGDWN. Asking mpv is one round
+        // trip per name and the alternative is a key that silently does nothing — which is how
+        // the defect above reached a user. `keypress` answers with an error for a name it does
+        // not know, which makes the whole table checkable.
+        Assert.SkipUnless(Canger.Core.Processes.Executables.Exists("mpv"), "mpv is not installed");
+
+        string[] names = [.. (IEnumerable<string>)CallProperty("MpvKeys", "Names")];
+
+        Assert.NotEmpty(names);
+
+        foreach (string name in names)
+        {
+            Assert.True(MpvAccepts(name), $"mpv does not know the key name {name}");
+        }
+    }
+
+    /// <summary>Whether mpv's own input layer knows a key by that name.</summary>
+    private static bool MpvAccepts(string name)
+    {
+        string socket = Path.Join(Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR") ?? "/tmp",
+                                  $"canger-keys-{Environment.ProcessId}.sock");
+
+        try
+        {
+            File.Delete(socket);
+        }
+        catch (IOException)
+        {
+            // A leftover from a killed run; mpv will report if it cannot bind.
+        }
+
+        using Process? mpv = Process.Start(new ProcessStartInfo("mpv")
+        {
+            ArgumentList = { "--no-video", "--idle=yes", "--input-terminal=no",
+                             $"--input-ipc-server={socket}" },
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        });
+
+        Assert.NotNull(mpv);
+
+        try
+        {
+            // mpv creates the socket a moment after starting.
+            for (int wait = 0; wait < 50 && !File.Exists(socket); wait++)
+            {
+                Thread.Sleep(100);
+            }
+
+            using Socket client = new(AddressFamily.Unix, SocketType.Stream,
+                                      ProtocolType.Unspecified) { ReceiveTimeout = 2000 };
+
+            client.Connect(new UnixDomainSocketEndPoint(socket));
+            client.Send(Encoding.UTF8.GetBytes(
+                $$"""{"command":["keypress","{{name}}"],"request_id":7}""" + "\n"));
+
+            byte[] buffer = new byte[4096];
+            string reply = Encoding.UTF8.GetString(buffer, 0, client.Receive(buffer));
+
+            return reply.Contains("\"request_id\":7", StringComparison.Ordinal) &&
+                   reply.Contains("\"error\":\"success\"", StringComparison.Ordinal);
+        }
+        finally
+        {
+            mpv.Kill(entireProcessTree: true);
+            mpv.WaitForExit(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    /// <summary>Reads one of the plugin's own static properties.</summary>
+    private static object CallProperty(string type, string property)
+    {
+        string plugins = PluginDirectory();
+        Assert.SkipWhen(plugins.Length == 0, "the repository layout was not found");
+
+        CompilationResult compiled =
+            new ScriptCompiler().Compile("mka", [Path.Join(plugins, "mka.cs")]);
+
+        Assert.True(compiled.Succeeded, string.Join("; ", compiled.Diagnostics));
+
+        return compiled.Assembly!.GetType(type)!
+                       .GetProperty(property, BindingFlags.Static | BindingFlags.NonPublic |
+                                              BindingFlags.Public)!
+                       .GetValue(null)!;
     }
 
     /// <summary>Calls one of the plugin's own static methods.</summary>
