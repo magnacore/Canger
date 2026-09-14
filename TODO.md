@@ -1,5 +1,36 @@
 # Canger — port status
 
+## The previous-directory mark follows ranger's rule, not every step
+
+Reported as a difference from ranger in the behaviour of <code>`</code>.
+
+**Ranger sets that mark in three places and nowhere else**: a `cd`, entering a bookmark, and
+quitting (`core/actions.py:594-609`, `:916-926`, `core/fm.py:547`). The give-away is the signature
+— `enter_dir(self, path, remember=False, history=True)` — so `fm.cd` remembers while `fm.enter_dir`
+and `thistab.enter_dir`, which is what ordinary movement uses, do not. The mark is therefore a way
+back to the place a jump started from, and it survives any amount of walking about.
+
+**Canger set it on every tab move**, through a `Tab.Left` event whose only subscriber wrote the
+bookmark. Stepping into a folder and back out overwrote the mark with the last step, so
+<code>`</code> came to mean "up one" rather than "back to where I jumped from".
+
+`cd` and `enter_bookmark` now record it themselves, and only when the directory really changed, as
+ranger does. Quitting still records the final directory, which was already right.
+
+**The event is gone rather than left unsubscribed.** Nothing else used it, and a public event that
+exists to be wired to the thing just removed is an invitation to wire it back. Removing it makes
+that a compile error instead — which is what stands in for a control here, because the wiring lived
+in `Browser`, which cannot be built without a terminal, so no unit test can see it. Putting the
+subscription back now fails with `'Tab' does not contain a definition for 'Left'`.
+
+**Controls on the half that is testable:** `cd` not recording fails 5; entering a bookmark not
+recording fails 2. Both compiled.
+
+**Verified in a real session** against the reporter's own configuration, since `h` and `l` are not
+bound there and `<LEFT>`/`<RIGHT>` are: `:cd beta` then <code>``</code> returns to alpha and again
+to beta; and walking up with `<LEFT>` between them leaves the mark alone — it still goes to alpha,
+where before it would have gone to beta.
+
 ## The activity line is shortened rather than dropped
 
 Noticed while measuring how long `(Paused)` takes to appear: at 120 columns it never appeared at
