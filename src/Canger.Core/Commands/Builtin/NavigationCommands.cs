@@ -139,7 +139,18 @@ public sealed class ChangeDirectoryCommand : CangerCommand
             return;
         }
 
+        // Remembered here rather than on every move, which is ranger's rule: `fm.cd` enters with
+        // `remember=True` while `fm.enter_dir` and ordinary movement do not
+        // (`core/actions.py:594-609`). Only when the directory really changes, so `cd .` does not
+        // set the mark to where you already are.
+        string from = FileManager.CurrentDirectory.Path;
+
         FileManager.CurrentTab.Enter(target);
+
+        if (!string.Equals(from, FileManager.CurrentDirectory.Path, StringComparison.Ordinal))
+        {
+            FileManager.Bookmarks.RememberPrevious(from);
+        }
     }
 
     /// <summary>
