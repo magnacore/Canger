@@ -21,10 +21,13 @@ namespace Canger.TestSupport;
 /// </remarks>
 public sealed class FakeFileManager : IFileManager
 {
-    /// <summary>Creates a file manager over an in-memory tree.</summary>
-    /// <param name="fileSystem">The tree.</param>
+    /// <summary>Creates a file manager over a tree.</summary>
+    /// <param name="fileSystem">
+    /// The tree — usually an <see cref="InMemoryFileSystem"/>, but any will do, which is what
+    /// lets a test drive a command that writes real files.
+    /// </param>
     /// <param name="startPath">Where the first tab opens.</param>
-    public FakeFileManager(InMemoryFileSystem fileSystem, string startPath = "/home")
+    public FakeFileManager(IFileSystem fileSystem, string startPath = "/home")
     {
         FileSystem = fileSystem;
         Directories = new DirectoryCache(fileSystem);

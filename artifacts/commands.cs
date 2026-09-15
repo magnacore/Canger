@@ -5,8 +5,8 @@
 // Substitute your own before using these commands.
 // Manuj's ranger commands, ported to C#.
 //
-// 48 commands: 29 generated from ranger-settings/commands.py by
-// tools/port-ranger-commands.py, and 19 written by hand below because they do more than run one
+// 49 commands: 29 generated from ranger-settings/commands.py by
+// tools/port-ranger-commands.py, and 20 written by hand below because they do more than run one
 // shell command — the choosers, the tab and selection work, anything whose arguments are computed
 // rather than typed, and anything that decides *which* files the tool runs on.
 //
@@ -1150,5 +1150,159 @@ public sealed class TextSplitCommand : CangerCommand
             : "shell text-split-tui %s");
 
         FileManager.ChangeMode("normal");
+    }
+}
+
+/// <summary>Copies a template into this folder, under a name nothing is using.</summary>
+/// <remarks>
+/// <para>
+/// The keys that make a note, a document, a spreadsheet or a notebook used to run
+/// <c>cp --backup=numbered</c>, which does the opposite of what the shortcut is for: coreutils
+/// renames the <em>existing</em> file to <c>notes.md.~1~</c> and gives the new one the plain name.
+/// A second press therefore shuffled the note taken a minute ago out of the way, and its backups
+/// sort nowhere near it and no longer open in anything, the extension having moved.
+/// </para>
+/// <para>
+/// The new file takes the free name instead: <c>notes.md</c>, then <c>notes_0.md</c>,
+/// <c>notes_1.md</c> — <c>SafePath.MakeUniqueKeepingExtension</c>, which is the function
+/// <c>:paste_ext</c> names for the same job, so there is no second numbering scheme to learn and
+/// none of that logic lives here.
+/// </para>
+/// <para>
+/// A folder is a template too — a project skeleton, with its empty <c>logs/</c> and its
+/// executable <c>run.sh</c> — and is copied whole. It is numbered as a folder rather than as a
+/// file, since a dot in a folder's name is part of the name: <c>project.v2</c> is followed by
+/// <c>project.v2_0</c>, where splitting at the dot would have made <c>project_0.v2</c>.
+/// </para>
+/// <para>
+/// Not routed through the paste machinery itself, though it was asked for and would have been
+/// the fuller reuse. Pasting works from the copy buffer, so anything here would first have to put
+/// the template into it — and that throws away whatever the user had copied. A shortcut for
+/// making a note should not empty the clipboard.
+/// </para>
+/// </remarks>
+[Command("file_template", Summary = "Copy a template here: file_template <path>")]
+public sealed class FileTemplateCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        if (Rest(1) is not { Length: > 0 } argument)
+        {
+            FileManager.Notify("file_template: which template?", isError: true);
+            return;
+        }
+
+        string source = Canger.Core.FileSystem.UserPath.Expand(argument.Trim());
+
+        if (!FileManager.FileSystem.Exists(source))
+        {
+            FileManager.Notify($"file_template: no such template: {source}", isError: true);
+            return;
+        }
+
+        // A trailing slash is natural to type for a folder and would otherwise leave the name
+        // empty, so the template would be copied to the directory itself.
+        string name = Path.GetFileName(source.TrimEnd('/'));
+        bool folder = FileManager.FileSystem.GetStatus(source) is { IsDirectory: true };
+        string wanted = Path.Join(FileManager.CurrentDirectory.Path, name);
+
+        // Two schemes for two kinds of thing, both Canger's own rather than this command's.
+        // A file keeps its extension on the end, as `:paste_ext` leaves it; a folder has no
+        // extension to keep, and a dot in its name is part of the name — `project.v2` becomes
+        // `project.v2_0`, where splitting at the dot would have made `project_0.v2`.
+        string target = folder
+            ? Canger.Core.FileOperations.SafePath.MakeUnique(FileManager.FileSystem, wanted)
+            : Canger.Core.FileOperations.SafePath.MakeUniqueKeepingExtension(
+                  FileManager.FileSystem, wanted);
+
+        try
+        {
+            // Copied here rather than through `cp`, so that it exists by the time the cursor is
+            // asked to go to it. A template is kilobytes; the reflink the old binding asked for
+            // saves nothing at that size. A template folder that is not small is better pasted:
+            // `pp` puts the work on the task queue, with progress and a way to cancel it.
+            if (folder)
+            {
+                CopyTree(source, target);
+            }
+            else
+            {
+                File.Copy(source, target, overwrite: false);
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            FileManager.Notify($"file_template: {e.Message}", isError: true);
+            return;
+        }
+
+        FileManager.ReloadCurrentDirectory();
+
+        // On the new file, which is almost always the next thing to be opened or renamed.
+        if (FileManager.CurrentTab.Current.Entries
+                       .FirstOrDefault(e => string.Equals(e.Path, target, StringComparison.Ordinal))
+            is { } made)
+        {
+            FileManager.CurrentTab.MoveCursorTo(made);
+        }
+
+        FileManager.Notify(Path.GetFileName(target));
+    }
+
+    /// <summary>Copies a folder and everything in it.</summary>
+    /// <param name="source">The template folder.</param>
+    /// <param name="target">Where it is going, which does not exist yet.</param>
+    /// <remarks>
+    /// Written out rather than handed to <c>cp -r</c> so the copy is finished when the command
+    /// is, which is what lets the cursor be put on it. Empty folders are kept — a skeleton's
+    /// empty <c>logs/</c> is part of the skeleton — and a symbolic link inside one is copied as
+    /// the file it points at, which is the usual intent for a template and the only thing
+    /// <see cref="File.Copy(string, string, bool)"/> can do.
+    /// </remarks>
+    private static void CopyTree(string source, string target)
+    {
+        DirectoryInfo from = new(source);
+
+        Directory.CreateDirectory(target);
+        Copy(from, new DirectoryInfo(target));
+
+        foreach (FileSystemInfo entry in from.EnumerateFileSystemInfos())
+        {
+            string destination = Path.Join(target, entry.Name);
+
+            if (entry is DirectoryInfo)
+            {
+                CopyTree(entry.FullName, destination);
+            }
+            else
+            {
+                // No mode to put back: File.Copy carries a file's permissions with it, measured
+                // by taking this out and watching an executable stay executable.
+                File.Copy(entry.FullName, destination, overwrite: false);
+            }
+        }
+    }
+
+    /// <summary>Gives a copied folder the permissions of the one it came from.</summary>
+    /// <param name="from">The folder that was copied.</param>
+    /// <param name="to">The copy.</param>
+    /// <remarks>
+    /// Only folders need this. <see cref="File.Copy(string, string, bool)"/> carries a file's
+    /// permissions along with it — measured, by removing this and watching an executable stay
+    /// executable — while <see cref="Directory.CreateDirectory(string)"/> makes a folder with
+    /// whatever the umask says, so a template folder kept private came back world-readable.
+    /// </remarks>
+    private static void Copy(FileSystemInfo from, FileSystemInfo to)
+    {
+        try
+        {
+            to.UnixFileMode = from.UnixFileMode;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                       or PlatformNotSupportedException)
+        {
+            // A filesystem that will not carry the bits — the copy is still the copy.
+        }
     }
 }

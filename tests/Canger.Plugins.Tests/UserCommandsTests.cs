@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using Canger.Core.Commands;
+using Canger.Core.FileSystem;
 using Canger.TestSupport;
 
 namespace Canger.Plugins.Tests;
@@ -69,6 +70,108 @@ public sealed class UserCommandsTests : IDisposable
         host.LoadFrom(_root);
 
         return (host, registry);
+    }
+
+    [Fact]
+    public void ATemplateIsCopiedUnderAFreeName()
+    {
+        // Reported: the keys that make a note ran `cp --backup=numbered`, which renames the file
+        // already there to `notes.md.~1~` and gives the new one the plain name — so the note
+        // written a minute ago was shuffled aside, under a name that sorts nowhere near it and
+        // opens in nothing.
+        //
+        // Driven against a real directory because the command copies with File.Copy, and because
+        // the question worth asking is what ends up on disk. The numbering is not this command's
+        // to get right — it asks `SafePath.MakeUniqueKeepingExtension`, the same function
+        // `:paste_ext` uses, which has its own tests; what is pinned here is that it asks.
+        string artifacts = Artifacts();
+        Assert.SkipWhen(artifacts.Length == 0, "the repository layout was not found");
+
+        File.Copy(Path.Join(artifacts, "commands.cs"), Path.Join(_root, "commands.cs"));
+
+        string work = Path.Join(_root, "work");
+        Directory.CreateDirectory(work);
+
+        string template = Path.Join(_root, "notes.md");
+        File.WriteAllText(template, "# notes\n");
+
+        FakeFileManager manager = new(LocalFileSystem.Instance, work);
+        PluginHost host = new(manager.Commands, null, new ScriptCompiler());
+        host.LoadFrom(_root);
+
+        Assert.True(Assert.Single(host.Loads).Succeeded, "the ported commands.cs did not compile");
+
+        manager.Execute($"file_template {template}");
+        manager.Execute($"file_template {template}");
+        manager.Execute($"file_template {template}");
+
+        Assert.True(File.Exists(Path.Join(work, "notes.md")), "the first copy is missing");
+        Assert.True(File.Exists(Path.Join(work, "notes_0.md")), "the second took another name");
+        Assert.True(File.Exists(Path.Join(work, "notes_1.md")), "the third took another name");
+
+        // Nothing was pushed aside to make room, which is the whole point.
+        Assert.Empty(Directory.GetFiles(work, "*~*"));
+        Assert.Equal(3, Directory.GetFiles(work).Length);
+    }
+
+    [Fact]
+    public void ATemplateFolderIsCopiedWholeAndNumberedAsAFolder()
+    {
+        // Reported: pointing the key at a template folder failed with "access denied", File.Copy
+        // being for files. A skeleton is a template like any other.
+        string artifacts = Artifacts();
+        Assert.SkipWhen(artifacts.Length == 0, "the repository layout was not found");
+
+        File.Copy(Path.Join(artifacts, "commands.cs"), Path.Join(_root, "commands.cs"));
+
+        string work = Path.Join(_root, "work");
+        Directory.CreateDirectory(work);
+
+        // A dot in the name, because a folder has no extension to keep: the whole name is the
+        // name, and `project.v2` must not come back as `project_0.v2`.
+        string template = Path.Join(_root, "project.v2");
+        Directory.CreateDirectory(Path.Join(template, "bin"));
+        File.SetUnixFileMode(Path.Join(template, "bin"),
+                             UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                             UnixFileMode.UserExecute);
+        Directory.CreateDirectory(Path.Join(template, "logs"));
+        File.WriteAllText(Path.Join(template, "README.md"), "# project\n");
+        File.WriteAllText(Path.Join(template, "bin", "run.sh"), "#!/bin/sh\necho hello\n");
+        File.SetUnixFileMode(Path.Join(template, "bin", "run.sh"),
+                             UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                             UnixFileMode.UserExecute | UnixFileMode.GroupRead |
+                             UnixFileMode.OtherRead);
+
+        FakeFileManager manager = new(LocalFileSystem.Instance, work);
+        PluginHost host = new(manager.Commands, null, new ScriptCompiler());
+        host.LoadFrom(_root);
+
+        Assert.True(Assert.Single(host.Loads).Succeeded, "the ported commands.cs did not compile");
+
+        manager.Execute($"file_template {template}");
+        manager.Execute($"file_template {template}");
+
+        Assert.True(Directory.Exists(Path.Join(work, "project.v2")), "the folder is missing");
+        Assert.True(Directory.Exists(Path.Join(work, "project.v2_0")),
+                    "the second copy took another name");
+
+        // Everything in it, including the folder left empty on purpose.
+        Assert.Equal("# project\n", File.ReadAllText(Path.Join(work, "project.v2", "README.md")));
+        Assert.True(Directory.Exists(Path.Join(work, "project.v2", "logs")),
+                    "an empty folder was dropped");
+
+        // A folder's own permissions too: `Directory.CreateDirectory` makes one with whatever the
+        // umask says, so a template folder kept private comes back world-readable unless the mode
+        // is carried over deliberately.
+        Assert.False(File.GetUnixFileMode(Path.Join(work, "project.v2", "bin"))
+                         .HasFlag(UnixFileMode.OtherRead),
+                     "the copied folder is readable by others, the template was not");
+
+        // A skeleton whose script arrives without its executable bit is a skeleton that does not
+        // run, and nothing on screen would say why.
+        Assert.True(File.GetUnixFileMode(Path.Join(work, "project.v2_0", "bin", "run.sh"))
+                        .HasFlag(UnixFileMode.UserExecute),
+                    "the copy of run.sh is not executable");
     }
 
     [Fact]
