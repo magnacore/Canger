@@ -5,8 +5,8 @@
 // Substitute your own before using these commands.
 // Manuj's ranger commands, ported to C#.
 //
-// 48 commands: 29 generated from ranger-settings/commands.py by
-// tools/port-ranger-commands.py, and 19 written by hand below because they do more than run one
+// 49 commands: 29 generated from ranger-settings/commands.py by
+// tools/port-ranger-commands.py, and 20 written by hand below because they do more than run one
 // shell command — the choosers, the tab and selection work, anything whose arguments are computed
 // rather than typed, and anything that decides *which* files the tool runs on.
 //
