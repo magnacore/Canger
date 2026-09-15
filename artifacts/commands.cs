@@ -1152,3 +1152,111 @@ public sealed class TextSplitCommand : CangerCommand
         FileManager.ChangeMode("normal");
     }
 }
+
+/// <summary>Copies a template into this folder, under a name nothing is using.</summary>
+/// <remarks>
+/// <para>
+/// The keys that make a note, a document, a spreadsheet or a notebook used to run
+/// <c>cp --backup=numbered</c>, which does the opposite of what the shortcut is for: coreutils
+/// renames the <em>existing</em> file to <c>notes.md.~1~</c> and gives the new one the plain name.
+/// A second press therefore shuffled the note taken a minute ago out of the way, and its backups
+/// sort nowhere near it and no longer open in anything, the extension having moved.
+/// </para>
+/// <para>
+/// The new file takes the free name instead: <c>notes.md</c>, then <c>notes_1.md</c>,
+/// <c>notes_2.md</c>. Nothing already written is touched, the extension stays where it belongs,
+/// and the numbers sort in the order they were made.
+/// </para>
+/// <para>
+/// Counting from one, which is what was asked for and what reads as a sequence. Canger's own
+/// duplicate naming — <c>:paste_ext</c>, and ranger's before it — counts from zero, so a pasted
+/// copy is <c>notes_0.md</c>. They are different acts and can afford different numbering; a
+/// template is the first of a series rather than a copy of something.
+/// </para>
+/// </remarks>
+[Command("file_template", Summary = "Copy a template here: file_template <path>")]
+public sealed class FileTemplateCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        if (Rest(1) is not { Length: > 0 } argument)
+        {
+            FileManager.Notify("file_template: which template?", isError: true);
+            return;
+        }
+
+        string source = Canger.Core.FileSystem.UserPath.Expand(argument.Trim());
+
+        if (!FileManager.FileSystem.Exists(source))
+        {
+            FileManager.Notify($"file_template: no such template: {source}", isError: true);
+            return;
+        }
+
+        string directory = FileManager.CurrentDirectory.Path;
+        string target = FreeName(FileManager.FileSystem, directory, Path.GetFileName(source));
+
+        try
+        {
+            // Copied here rather than through `cp`, so that the file exists by the time the
+            // cursor is asked to go to it. A template is kilobytes; the reflink the old binding
+            // asked for saves nothing at that size.
+            File.Copy(source, target, overwrite: false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            FileManager.Notify($"file_template: {e.Message}", isError: true);
+            return;
+        }
+
+        FileManager.ReloadCurrentDirectory();
+
+        // On the new file, which is almost always the next thing to be opened or renamed.
+        if (FileManager.CurrentTab.Current.Entries
+                       .FirstOrDefault(e => string.Equals(e.Path, target, StringComparison.Ordinal))
+            is { } made)
+        {
+            FileManager.CurrentTab.MoveCursorTo(made);
+        }
+
+        FileManager.Notify(Path.GetFileName(target));
+    }
+
+    /// <summary>The first name in a folder that nothing is using.</summary>
+    /// <param name="fileSystem">Used to test what is there.</param>
+    /// <param name="directory">Where the file is going.</param>
+    /// <param name="name">The template's own name.</param>
+    /// <returns>A full path nothing occupies.</returns>
+    /// <remarks>
+    /// The number goes before the extension, so <c>notes_1.md</c> is still markdown and still
+    /// sorts beside <c>notes.md</c>. A name with no extension, or one that is all extension like
+    /// <c>.gitignore</c>, simply takes the number at the end.
+    /// </remarks>
+    internal static string FreeName(Canger.Core.FileSystem.IFileSystem fileSystem,
+                                    string directory, string name)
+    {
+        string plain = Path.Join(directory, name);
+
+        if (!fileSystem.ExistsNoFollow(plain))
+        {
+            return plain;
+        }
+
+        int dot = name.LastIndexOf('.');
+        string stem = dot <= 0 ? name : name[..dot];
+        string extension = dot <= 0 ? string.Empty : name[dot..];
+
+        for (int number = 1; number < int.MaxValue; number++)
+        {
+            string candidate = Path.Join(directory, $"{stem}_{number}{extension}");
+
+            if (!fileSystem.ExistsNoFollow(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new InvalidOperationException($"no free name for {name} in {directory}");
+    }
+}
