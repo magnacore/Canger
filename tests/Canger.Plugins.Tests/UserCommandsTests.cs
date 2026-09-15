@@ -115,6 +115,66 @@ public sealed class UserCommandsTests : IDisposable
     }
 
     [Fact]
+    public void ATemplateFolderIsCopiedWholeAndNumberedAsAFolder()
+    {
+        // Reported: pointing the key at a template folder failed with "access denied", File.Copy
+        // being for files. A skeleton is a template like any other.
+        string artifacts = Artifacts();
+        Assert.SkipWhen(artifacts.Length == 0, "the repository layout was not found");
+
+        File.Copy(Path.Join(artifacts, "commands.cs"), Path.Join(_root, "commands.cs"));
+
+        string work = Path.Join(_root, "work");
+        Directory.CreateDirectory(work);
+
+        // A dot in the name, because a folder has no extension to keep: the whole name is the
+        // name, and `project.v2` must not come back as `project_0.v2`.
+        string template = Path.Join(_root, "project.v2");
+        Directory.CreateDirectory(Path.Join(template, "bin"));
+        File.SetUnixFileMode(Path.Join(template, "bin"),
+                             UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                             UnixFileMode.UserExecute);
+        Directory.CreateDirectory(Path.Join(template, "logs"));
+        File.WriteAllText(Path.Join(template, "README.md"), "# project\n");
+        File.WriteAllText(Path.Join(template, "bin", "run.sh"), "#!/bin/sh\necho hello\n");
+        File.SetUnixFileMode(Path.Join(template, "bin", "run.sh"),
+                             UnixFileMode.UserRead | UnixFileMode.UserWrite |
+                             UnixFileMode.UserExecute | UnixFileMode.GroupRead |
+                             UnixFileMode.OtherRead);
+
+        FakeFileManager manager = new(LocalFileSystem.Instance, work);
+        PluginHost host = new(manager.Commands, null, new ScriptCompiler());
+        host.LoadFrom(_root);
+
+        Assert.True(Assert.Single(host.Loads).Succeeded, "the ported commands.cs did not compile");
+
+        manager.Execute($"file_template {template}");
+        manager.Execute($"file_template {template}");
+
+        Assert.True(Directory.Exists(Path.Join(work, "project.v2")), "the folder is missing");
+        Assert.True(Directory.Exists(Path.Join(work, "project.v2_0")),
+                    "the second copy took another name");
+
+        // Everything in it, including the folder left empty on purpose.
+        Assert.Equal("# project\n", File.ReadAllText(Path.Join(work, "project.v2", "README.md")));
+        Assert.True(Directory.Exists(Path.Join(work, "project.v2", "logs")),
+                    "an empty folder was dropped");
+
+        // A folder's own permissions too: `Directory.CreateDirectory` makes one with whatever the
+        // umask says, so a template folder kept private comes back world-readable unless the mode
+        // is carried over deliberately.
+        Assert.False(File.GetUnixFileMode(Path.Join(work, "project.v2", "bin"))
+                         .HasFlag(UnixFileMode.OtherRead),
+                     "the copied folder is readable by others, the template was not");
+
+        // A skeleton whose script arrives without its executable bit is a skeleton that does not
+        // run, and nothing on screen would say why.
+        Assert.True(File.GetUnixFileMode(Path.Join(work, "project.v2_0", "bin", "run.sh"))
+                        .HasFlag(UnixFileMode.UserExecute),
+                    "the copy of run.sh is not executable");
+    }
+
+    [Fact]
     public void TheCommandsFileCompilesAndRegistersEveryCommand()
     {
         string artifacts = Artifacts();
