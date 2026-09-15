@@ -167,10 +167,23 @@ public sealed class BrowserColumn(IColorScheme colorScheme) : Widget
     }
 
     /// <summary>Draws a short message in place of a listing.</summary>
+    /// <param name="screen">Where to draw.</param>
+    /// <param name="text">The message.</param>
+    /// <param name="context">What colours it.</param>
+    /// <remarks>
+    /// The colour goes on the words and nothing else. Ranger erases the column and writes the
+    /// message into it (<c>gui/widgets/browsercolumn.py:199, 286-289</c>), so <c>empty</c> is a
+    /// five-character label; Canger painted the whole row, which turned it into a band across the
+    /// pane in any scheme that gives the context a background — reported as the word looking
+    /// cramped against the edge, which it did, being the left end of a bar rather than a word.
+    /// The row behind it is still cleared, since something else may have drawn there.
+    /// </remarks>
     private void DrawNotice(ScreenBuffer screen, string text, StyleContext context)
     {
+        CellStyle background = colorScheme.Resolve(StyleContext.Of(ContextKey.InBrowser));
         CellStyle style = colorScheme.Resolve(context);
-        screen.Fill(Bounds.X, Bounds.Y, Bounds.Width, 1, style);
+
+        screen.Fill(Bounds.X, Bounds.Y, Bounds.Width, 1, background);
         screen.Write(Bounds.X, Bounds.Y, new WideString(text).Truncate(Bounds.Width), style);
     }
 
