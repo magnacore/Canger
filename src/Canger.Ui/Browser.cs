@@ -284,11 +284,6 @@ public sealed class Browser : IFileManager, IDisposable
 
         ApplySettingsToDirectory();
 
-        foreach (Tab tab in _tabs.Values)
-        {
-            tab.Left += (_, from) => Bookmarks.RememberPrevious(from);
-        }
-
         _terminal.Resized += (_, size) =>
         {
             _screen.Resize(size.Width, size.Height);
@@ -925,9 +920,6 @@ public sealed class Browser : IFileManager, IDisposable
     public bool Execute(string line, int? quantifier = null, IReadOnlyList<int>? wildcards = null) =>
         _dispatcher.Execute(line, quantifier, wildcards);
 
-    /// <summary>Records where the user is leaving, for the previous-directory bookmark.</summary>
-    /// <param name="from">The directory being left.</param>
-    public void RememberPreviousDirectory(string from) => Bookmarks.RememberPrevious(from);
 
     /// <inheritdoc />
     /// <remarks>

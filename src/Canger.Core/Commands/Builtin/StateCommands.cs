@@ -31,7 +31,17 @@ public sealed class EnterBookmarkCommand : CangerCommand
             return;
         }
 
+        // Where the jump started from, so that pressing the key again comes back. Ranger does the
+        // same and only when the destination differs (`core/actions.py:916-926`), which is what
+        // keeps `` from overwriting the mark with the place it is about to leave anyway.
+        string from = FileManager.CurrentDirectory.Path;
+
         FileManager.CurrentTab.Enter(destination);
+
+        if (!string.Equals(from, FileManager.CurrentDirectory.Path, StringComparison.Ordinal))
+        {
+            FileManager.Bookmarks.RememberPrevious(from);
+        }
     }
 }
 

@@ -119,6 +119,14 @@ public sealed class Bookmarks(IFileSystem fileSystem, string path)
     /// Records where the user just came from, under the previous-directory key.
     /// </summary>
     /// <param name="directory">The directory being left.</param>
+    /// <remarks>
+    /// Called from the three places ranger calls it and no others: a <c>cd</c>, entering a
+    /// bookmark, and quitting (<c>core/actions.py:594-609</c> and <c>:916-926</c>,
+    /// <c>core/fm.py:547</c>). Ordinary movement deliberately does not — <c>fm.enter_dir</c>
+    /// defaults to <c>remember=False</c> there — because the mark is a way back to the place a
+    /// jump started from, and walking in and out of folders would overwrite it with the last
+    /// step. Canger set it on every tab move at first, which is how that difference was reported.
+    /// </remarks>
     public void RememberPrevious(string directory)
     {
         ArgumentException.ThrowIfNullOrEmpty(directory);

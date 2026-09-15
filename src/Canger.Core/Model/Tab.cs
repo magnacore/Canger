@@ -175,9 +175,6 @@ public sealed class Tab
     /// </remarks>
     public IFileFilter? LastSearch { get; set; }
 
-    /// <summary>Raised with the directory being left, whenever the tab moves.</summary>
-    public event EventHandler<string>? Left;
-
     /// <summary>
     /// Moves the tab to a directory.
     /// </summary>
@@ -247,15 +244,6 @@ public sealed class Tab
 
         if (recordHistory)
         {
-            // The previous location is announced so the file manager can hold it under the
-            // previous-directory bookmark, which is how pressing that key twice returns you to
-            // where you started.
-            if (previous is { Length: > 0 } &&
-                !string.Equals(previous, directory.Path, StringComparison.Ordinal))
-            {
-                Left?.Invoke(this, previous);
-            }
-
             History.Add(directory.Path);
         }
 

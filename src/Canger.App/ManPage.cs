@@ -94,6 +94,29 @@ public static class ManPage
                    moves between them, and
                    .B ~
                    switches to a view showing every tab side by side rather than one path.
+                   .SS Bookmarks
+                   .B m<key>
+                   points a letter or digit at the directory you are in, and
+                   .BR '<key> " or " `<key>
+                   goes there;
+                   .B um<key>
+                   takes it away. The key on its own,
+                   .BR ' ,
+                   lists them.
+                   .PP
+                   One mark is kept for you:
+                   .B '
+                   holds the directory you were in before your last
+                   .BR cd ,
+                   before your last jump to a bookmark, or when you last quit. So
+                   .B ''
+                   returns you to where you jumped from, and pressing it again takes you back.
+                   Walking about with the arrows or
+                   .B h
+                   and
+                   .B l
+                   deliberately leaves it alone, which is what keeps it pointing at the place you
+                   came from rather than at the last folder you stepped out of.
                    .SS Copying
                    .BR yy " copies and " dd " cuts; " pp
                    pastes. Both take a direction, so
