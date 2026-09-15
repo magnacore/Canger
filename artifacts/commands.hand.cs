@@ -789,15 +789,16 @@ public sealed class TextSplitCommand : CangerCommand
 /// sort nowhere near it and no longer open in anything, the extension having moved.
 /// </para>
 /// <para>
-/// The new file takes the free name instead: <c>notes.md</c>, then <c>notes_1.md</c>,
-/// <c>notes_2.md</c>. Nothing already written is touched, the extension stays where it belongs,
-/// and the numbers sort in the order they were made.
+/// The new file takes the free name instead: <c>notes.md</c>, then <c>notes_0.md</c>,
+/// <c>notes_1.md</c> — <c>SafePath.MakeUniqueKeepingExtension</c>, which is the function
+/// <c>:paste_ext</c> names for the same job, so there is no second numbering scheme to learn and
+/// none of that logic lives here.
 /// </para>
 /// <para>
-/// Counting from one, which is what was asked for and what reads as a sequence. Canger's own
-/// duplicate naming — <c>:paste_ext</c>, and ranger's before it — counts from zero, so a pasted
-/// copy is <c>notes_0.md</c>. They are different acts and can afford different numbering; a
-/// template is the first of a series rather than a copy of something.
+/// Not routed through the paste machinery itself, though it was asked for and would have been
+/// the fuller reuse. Pasting works from the copy buffer, so anything here would first have to put
+/// the template into it — and that throws away whatever the user had copied. A shortcut for
+/// making a note should not empty the clipboard.
 /// </para>
 /// </remarks>
 [Command("file_template", Summary = "Copy a template here: file_template <path>")]
@@ -820,8 +821,11 @@ public sealed class FileTemplateCommand : CangerCommand
             return;
         }
 
-        string directory = FileManager.CurrentDirectory.Path;
-        string target = FreeName(FileManager.FileSystem, directory, Path.GetFileName(source));
+        // The same naming `:paste_ext` uses, from the same function, so a template and a pasted
+        // copy are numbered alike and there is one rule to learn rather than two.
+        string target = Canger.Core.FileOperations.SafePath.MakeUniqueKeepingExtension(
+            FileManager.FileSystem,
+            Path.Join(FileManager.CurrentDirectory.Path, Path.GetFileName(source)));
 
         try
         {
@@ -847,42 +851,5 @@ public sealed class FileTemplateCommand : CangerCommand
         }
 
         FileManager.Notify(Path.GetFileName(target));
-    }
-
-    /// <summary>The first name in a folder that nothing is using.</summary>
-    /// <param name="fileSystem">Used to test what is there.</param>
-    /// <param name="directory">Where the file is going.</param>
-    /// <param name="name">The template's own name.</param>
-    /// <returns>A full path nothing occupies.</returns>
-    /// <remarks>
-    /// The number goes before the extension, so <c>notes_1.md</c> is still markdown and still
-    /// sorts beside <c>notes.md</c>. A name with no extension, or one that is all extension like
-    /// <c>.gitignore</c>, simply takes the number at the end.
-    /// </remarks>
-    internal static string FreeName(Canger.Core.FileSystem.IFileSystem fileSystem,
-                                    string directory, string name)
-    {
-        string plain = Path.Join(directory, name);
-
-        if (!fileSystem.ExistsNoFollow(plain))
-        {
-            return plain;
-        }
-
-        int dot = name.LastIndexOf('.');
-        string stem = dot <= 0 ? name : name[..dot];
-        string extension = dot <= 0 ? string.Empty : name[dot..];
-
-        for (int number = 1; number < int.MaxValue; number++)
-        {
-            string candidate = Path.Join(directory, $"{stem}_{number}{extension}");
-
-            if (!fileSystem.ExistsNoFollow(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        throw new InvalidOperationException($"no free name for {name} in {directory}");
     }
 }
