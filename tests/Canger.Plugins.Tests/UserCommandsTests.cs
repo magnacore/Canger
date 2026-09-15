@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 using Canger.Core.Commands;
+using Canger.Core.FileSystem;
 using Canger.TestSupport;
 
 namespace Canger.Plugins.Tests;
@@ -69,6 +70,48 @@ public sealed class UserCommandsTests : IDisposable
         host.LoadFrom(_root);
 
         return (host, registry);
+    }
+
+    [Fact]
+    public void ATemplateIsCopiedUnderAFreeName()
+    {
+        // Reported: the keys that make a note ran `cp --backup=numbered`, which renames the file
+        // already there to `notes.md.~1~` and gives the new one the plain name — so the note
+        // written a minute ago was shuffled aside, under a name that sorts nowhere near it and
+        // opens in nothing.
+        //
+        // Driven against a real directory because the command copies with File.Copy, and because
+        // the question worth asking is what ends up on disk. The numbering is not this command's
+        // to get right — it asks `SafePath.MakeUniqueKeepingExtension`, the same function
+        // `:paste_ext` uses, which has its own tests; what is pinned here is that it asks.
+        string artifacts = Artifacts();
+        Assert.SkipWhen(artifacts.Length == 0, "the repository layout was not found");
+
+        File.Copy(Path.Join(artifacts, "commands.cs"), Path.Join(_root, "commands.cs"));
+
+        string work = Path.Join(_root, "work");
+        Directory.CreateDirectory(work);
+
+        string template = Path.Join(_root, "notes.md");
+        File.WriteAllText(template, "# notes\n");
+
+        FakeFileManager manager = new(LocalFileSystem.Instance, work);
+        PluginHost host = new(manager.Commands, null, new ScriptCompiler());
+        host.LoadFrom(_root);
+
+        Assert.True(Assert.Single(host.Loads).Succeeded, "the ported commands.cs did not compile");
+
+        manager.Execute($"file_template {template}");
+        manager.Execute($"file_template {template}");
+        manager.Execute($"file_template {template}");
+
+        Assert.True(File.Exists(Path.Join(work, "notes.md")), "the first copy is missing");
+        Assert.True(File.Exists(Path.Join(work, "notes_0.md")), "the second took another name");
+        Assert.True(File.Exists(Path.Join(work, "notes_1.md")), "the third took another name");
+
+        // Nothing was pushed aside to make room, which is the whole point.
+        Assert.Empty(Directory.GetFiles(work, "*~*"));
+        Assert.Equal(3, Directory.GetFiles(work).Length);
     }
 
     [Fact]

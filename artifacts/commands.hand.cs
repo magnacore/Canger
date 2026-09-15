@@ -778,3 +778,78 @@ public sealed class TextSplitCommand : CangerCommand
         FileManager.ChangeMode("normal");
     }
 }
+
+/// <summary>Copies a template into this folder, under a name nothing is using.</summary>
+/// <remarks>
+/// <para>
+/// The keys that make a note, a document, a spreadsheet or a notebook used to run
+/// <c>cp --backup=numbered</c>, which does the opposite of what the shortcut is for: coreutils
+/// renames the <em>existing</em> file to <c>notes.md.~1~</c> and gives the new one the plain name.
+/// A second press therefore shuffled the note taken a minute ago out of the way, and its backups
+/// sort nowhere near it and no longer open in anything, the extension having moved.
+/// </para>
+/// <para>
+/// The new file takes the free name instead: <c>notes.md</c>, then <c>notes_0.md</c>,
+/// <c>notes_1.md</c> — <c>SafePath.MakeUniqueKeepingExtension</c>, which is the function
+/// <c>:paste_ext</c> names for the same job, so there is no second numbering scheme to learn and
+/// none of that logic lives here.
+/// </para>
+/// <para>
+/// Not routed through the paste machinery itself, though it was asked for and would have been
+/// the fuller reuse. Pasting works from the copy buffer, so anything here would first have to put
+/// the template into it — and that throws away whatever the user had copied. A shortcut for
+/// making a note should not empty the clipboard.
+/// </para>
+/// </remarks>
+[Command("file_template", Summary = "Copy a template here: file_template <path>")]
+public sealed class FileTemplateCommand : CangerCommand
+{
+    /// <inheritdoc />
+    public override void Execute()
+    {
+        if (Rest(1) is not { Length: > 0 } argument)
+        {
+            FileManager.Notify("file_template: which template?", isError: true);
+            return;
+        }
+
+        string source = Canger.Core.FileSystem.UserPath.Expand(argument.Trim());
+
+        if (!FileManager.FileSystem.Exists(source))
+        {
+            FileManager.Notify($"file_template: no such template: {source}", isError: true);
+            return;
+        }
+
+        // The same naming `:paste_ext` uses, from the same function, so a template and a pasted
+        // copy are numbered alike and there is one rule to learn rather than two.
+        string target = Canger.Core.FileOperations.SafePath.MakeUniqueKeepingExtension(
+            FileManager.FileSystem,
+            Path.Join(FileManager.CurrentDirectory.Path, Path.GetFileName(source)));
+
+        try
+        {
+            // Copied here rather than through `cp`, so that the file exists by the time the
+            // cursor is asked to go to it. A template is kilobytes; the reflink the old binding
+            // asked for saves nothing at that size.
+            File.Copy(source, target, overwrite: false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            FileManager.Notify($"file_template: {e.Message}", isError: true);
+            return;
+        }
+
+        FileManager.ReloadCurrentDirectory();
+
+        // On the new file, which is almost always the next thing to be opened or renamed.
+        if (FileManager.CurrentTab.Current.Entries
+                       .FirstOrDefault(e => string.Equals(e.Path, target, StringComparison.Ordinal))
+            is { } made)
+        {
+            FileManager.CurrentTab.MoveCursorTo(made);
+        }
+
+        FileManager.Notify(Path.GetFileName(target));
+    }
+}
