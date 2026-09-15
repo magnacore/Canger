@@ -1,5 +1,27 @@
 # Canger — port status
 
+## The empty notice is a word, not a band
+
+Asked whether the <c>empty</c> in an empty column should have a space in front of it: it sat
+flush against the left edge with a bright background behind it and looked cramped.
+
+**It was not a padding question.** Ranger erases the column and writes the word into it
+(`gui/widgets/browsercolumn.py:199`, `:286-289`), so the `empty` colour lands on five characters.
+Canger filled the whole row with that colour, which in any scheme giving the context a background
+turned a label into a band across the pane — and the word was then the left end of a band, which is
+exactly what looked wrong. Padding it would have decorated the symptom.
+
+The colour now stops with the word, as ranger's does, for all three notices — `...`,
+`not accessible` and `empty`. The row behind is still cleared, since something else may have drawn
+there on an earlier frame and half a filename beside the word would read as a listing that had not
+finished loading.
+
+**Controls:** the whole row coloured again fails 1; nothing cleared behind it fails 1.
+
+**Measured in a real session** rather than judged by eye, using the harness's `style_at`: the five
+cells of the word carry `0;41` in the reporter's scheme and the sixth carries nothing, where before
+the background ran to the edge of the pane.
+
 ## The previous-directory mark follows ranger's rule, not every step
 
 Reported as a difference from ranger in the behaviour of <code>`</code>.
