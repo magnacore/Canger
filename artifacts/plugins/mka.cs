@@ -38,12 +38,34 @@ internal static class Playable
     /// The extensions Enter should hand to mpv rather than to rifle.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Matroska audio is what this was asked for. The others are here because they are the same
     /// kind of thing — a long single file listened to over days — and because a rule that covers
-    /// one and not its neighbours is a rule nobody can remember.
+    /// one and not its neighbours is a rule nobody can remember. The list was nine long and did
+    /// not have <c>.aac</c> in it, which was reported: <c>.m4a</c> was there, and that is usually
+    /// the same encoding in an MP4 container, so the container played in the background while the
+    /// bare stream went to the terminal.
+    /// </para>
+    /// <para>
+    /// Alphabetical, so a gap shows. Deliberately absent: <c>.mid</c>, which mpv renders silently
+    /// unless a soundfont is configured — no sound with a clock ticking beside it is worse than
+    /// handing the file to rifle — and <c>.mpc</c>, which is Musepack audio but is also what
+    /// ImageMagick calls its cache files, so claiming it would play something that is not music.
+    /// Playlists are left alone too: an <c>.m3u</c> is a text file people edit as often as play.
+    /// </para>
+    /// <para>
+    /// Not decided by asking <c>file</c> for the type, which would be exact and never out of
+    /// date. The opener is consulted on every plain Enter, including on directories and text, and
+    /// a process per keystroke is a price the whole interface would pay for one plugin's
+    /// tidiness.
+    /// </para>
     /// </remarks>
     internal static readonly string[] Extensions =
-        [".mka", ".opus", ".m4b", ".m4a", ".flac", ".ogg", ".oga", ".mp3", ".wav"];
+    [
+        ".aac", ".ac3", ".aif", ".aiff", ".ape", ".au", ".dsf", ".dts", ".flac", ".m4a", ".m4b",
+        ".mka", ".mp2", ".mp3", ".oga", ".ogg", ".opus", ".ra", ".spx", ".tta", ".wav", ".wma",
+        ".wv",
+    ];
 
     /// <summary>Whether Enter on this name should start playback.</summary>
     /// <param name="name">The file's name.</param>
