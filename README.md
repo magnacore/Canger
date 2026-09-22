@@ -33,7 +33,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | View modes | miller, multipane |
 | VCS backends | git, hg, svn, bzr |
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
-| Tests | 2240 |
+| Tests | 2253 |
 
 Eleven things go deliberately beyond ranger:
 
