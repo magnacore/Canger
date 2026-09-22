@@ -111,6 +111,49 @@ public sealed class ShippedMkaTests : IDisposable
     private static string CommandFor(FakeFileManager manager) =>
         Assert.Single(((FakeFileManager.RecordingProcessRunner)manager.Runner).Requests).Command;
 
+    [Theory]
+    // Reported missing, and the one the reporter has eleven of. `.m4a` was already here and is
+    // usually the same encoding in an MP4 container, so the container played in the background
+    // while the bare stream went to the terminal.
+    [InlineData("song.aac")]
+    [InlineData("book.mka")]
+    [InlineData("talk.opus")]
+    [InlineData("album.flac")]
+    [InlineData("recording.wma")]
+    [InlineData("scan.AAC")]
+    public void AudioIsClaimed(string name)
+    {
+        Assert.True((bool)Call("Playable", "Matches", name), $"{name} was not claimed");
+    }
+
+    [Theory]
+    // Video, which belongs to rifle: playing the soundtrack in the background and leaving the
+    // picture behind is nobody's intent.
+    [InlineData("film.mkv")]
+    [InlineData("clip.mp4")]
+    // mpv renders MIDI silently unless a soundfont is configured, and silence with a clock
+    // ticking beside it is worse than handing the file on.
+    [InlineData("tune.mid")]
+    // Musepack audio, but also what ImageMagick calls its cache files.
+    [InlineData("cache.mpc")]
+    // A playlist is a text file people edit as often as they play.
+    [InlineData("list.m3u")]
+    [InlineData("notes.md")]
+    public void EverythingElseIsLeftToRifle(string name)
+    {
+        Assert.False((bool)Call("Playable", "Matches", name), $"{name} was claimed");
+    }
+
+    [Fact]
+    public void TheListIsInOrderSoAGapShows()
+    {
+        // The list is read by eye when something is missing, which is how `.aac` came to be
+        // absent for a month. Out of order it cannot be read that way.
+        string[] extensions = [.. (IEnumerable<string>)CallProperty("Playable", "Extensions")];
+
+        Assert.Equal([.. extensions.Order(StringComparer.Ordinal)], extensions);
+    }
+
     [Fact]
     public void EnterOnAudioStartsMpvWithoutAWindowOrTheKeyboard()
     {
@@ -808,10 +851,13 @@ public sealed class ShippedMkaTests : IDisposable
 
         Assert.True(compiled.Succeeded, string.Join("; ", compiled.Diagnostics));
 
-        return compiled.Assembly!.GetType(type)!
-                       .GetProperty(property, BindingFlags.Static | BindingFlags.NonPublic |
-                                              BindingFlags.Public)!
-                       .GetValue(null)!;
+        Type found = compiled.Assembly!.GetType(type)!;
+        const BindingFlags Where = BindingFlags.Static | BindingFlags.NonPublic |
+                                   BindingFlags.Public;
+
+        // Either shape: a list of formats reads better as a field, a computed one as a property.
+        return found.GetProperty(property, Where)?.GetValue(null)
+               ?? found.GetField(property, Where)!.GetValue(null)!;
     }
 
     /// <summary>Calls one of the plugin's own static methods.</summary>

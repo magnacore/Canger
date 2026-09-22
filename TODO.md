@@ -1,5 +1,33 @@
 # Canger — port status
 
+## The audio plugin plays `.aac`, and the list that says so is now pinned
+
+Asked whether leaving `.aac` out was intended. It was not: `.m4a` was already there, and that is
+usually the same encoding in an MP4 container, so the container played in the background while the
+bare stream went to rifle and opened over the interface.
+
+**Measured before choosing what to add**, since a list should follow what exists rather than what
+comes to mind. Counting audio files under the reporter's tree: `mka 4275, mp3 3882, opus 431,
+flac 157, ogg 117, m4a 11, aac 11, wav 1, mid 1` — every one covered but `.aac` and `.mid`.
+
+The list is now alphabetical and covers the formats that are unambiguously audio and that mpv
+plays: aac, ac3, aif, aiff, ape, au, dsf, dts, flac, m4a, m4b, mka, mp2, mp3, oga, ogg, opus, ra,
+spx, tta, wav, wma, wv. Alphabetical so a gap can be seen by eye, which is how this one was found —
+and a test now fails if the order is lost.
+
+**Deliberately absent**, each for a reason worth writing down: `.mid`, which mpv renders silently
+without a soundfont, and silence with a clock ticking beside it is worse than handing the file to
+rifle; `.mpc`, which is Musepack but is also ImageMagick's cache format; and playlists, an `.m3u`
+being a text file people edit as often as play.
+
+**Not decided by asking `file` for the type**, which would be exact and never out of date. The
+opener is consulted on every plain Enter, including on folders and text, so that would be a
+process per keystroke — the whole interface paying for one plugin's tidiness.
+
+**Controls:** `.aac` missing again fails 2; video claimed as well fails 3; the list shuffled fails
+1. Verified in a real session: Enter on a `.aac` and on a `.wma` both play in the background with
+the clock on the bar, where before they took the terminal.
+
 ## The empty notice is a word, not a band
 
 Asked whether the <c>empty</c> in an empty column should have a space in front of it: it sat
