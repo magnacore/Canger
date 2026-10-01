@@ -131,11 +131,19 @@ public sealed class TitleBar(IColorScheme colorScheme) : Widget
 
         // The selected filename is drawn in the plain title colour so it stands apart from the
         // path it sits at the end of.
-        if (selected.Length > 0 && written > selected.Length)
+        //
+        // Measured in cells, not characters, because the line is. A name holding one fullwidth
+        // character — `Larridin： …`, the colon a download keeps where the filesystem will not
+        // take one — is a cell wider than it is long, so counting characters began the colour a
+        // cell late and ended it a cell early: the first letter of the name wore the colour of
+        // the path, and only for names with such a character in them.
+        int nameWidth = CellWidth.Of(selected);
+
+        if (nameWidth > 0 && written > nameWidth)
         {
             CellStyle fileStyle = colorScheme.Resolve(
                 StyleContext.Of(ContextKey.InTitlebar, ContextKey.File));
-            screen.Recolor(x + written - selected.Length, Bounds.Y, selected.Length, fileStyle);
+            screen.Recolor(x + written - nameWidth, Bounds.Y, nameWidth, fileStyle);
         }
     }
 
