@@ -35,7 +35,7 @@ here=$(dirname "$self")
 # otherwise quietly land in front of the other three.
 path_prefix=""
 
-for directory in "${HOME}/.local/bin" /usr/local/bin /sbin
+for directory in "${HOME}/.local/bin" /usr/local/bin /sbin /opt/anaconda3/envs/dotnet/lib/dotnet
 do
     case ":${PATH}:" in
         *":${directory}:"*) ;;
