@@ -5,7 +5,7 @@
 // Substitute your own before using these commands.
 // Manuj's ranger commands, ported to C#.
 //
-// 49 commands: 29 generated from ranger-settings/commands.py by
+// 47 commands: 27 ported from ranger-settings/commands.py by
 // tools/port-ranger-commands.py, and 20 written by hand below because they do more than run one
 // shell command — the choosers, the tab and selection work, anything whose arguments are computed
 // rather than typed, and anything that decides *which* files the tool runs on.
@@ -13,12 +13,15 @@
 // Canger compiles this file at startup, so editing it and restarting is all that is needed: the
 // same loop as ranger's commands.py, in the language the rest of Canger is written in.
 //
-// Regenerating (after changing commands.py) rewrites only the generated half:
+// This file is the copy that is maintained, and the tests compile it. It began as two halves —
+// one written by tools/port-ranger-commands.py, one by hand — and they were kept beside it until
+// the two drifted apart: the generated half still held commands since dropped and a quoting
+// helper since replaced, so the documented `cat` of the halves would have put both back. The
+// halves are gone; git holds them. To port a newly added ranger command, run
 //
-//   python3 tools/port-ranger-commands.py ranger-settings/commands.py \
-//           Canger/artifacts/commands.cs.generated
-//   cat Canger/artifacts/commands.cs.generated Canger/artifacts/commands.hand.cs \
-//       > ~/.config/canger/commands.cs
+//   python3 tools/port-ranger-commands.py ranger-settings/commands.py /tmp/commands.generated
+//
+// and copy the class it wrote for that one command into this file.
 //
 // Three of the ranger commands are deliberately absent: mark_tag, unmark_tag and paste_ext are
 // built into Canger already, so a copy here would only shadow the real thing.
@@ -443,7 +446,15 @@ public sealed class FzfLocateCommand : CangerCommand
             return;
         }
 
-        Chooser.Jump(FileManager, "locate home | fzf -e -i");
+        // fzf runs `locate` itself rather than being piped into. fzf drains its standard input
+        // to the end before it exits, so with a pipe, pressing Escape leaves the screen blank
+        // for however long `locate` still had to run — measured at 1.66 s when Escape came half
+        // a second in, against 0.13 s this way. `fzf_select` above is already written like this,
+        // which is why `fd` dismisses instantly and `fs` did not.
+        string source = "locate home";
+
+        Chooser.Jump(FileManager,
+                     $"FZF_DEFAULT_COMMAND={ShellWord.Quote(source)} fzf -e -i");
     }
 }
 

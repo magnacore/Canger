@@ -1,5 +1,66 @@
 # Canger — port status
 
+## A wide character in a filename no longer shifts the title bar's colours
+
+Reported: a file whose name contains a fullwidth colon (`Larridin： Your Board.mkv`) shows its
+first letter in the path colour, while the same name without the colon does not.
+
+**Cells against characters.** The title bar draws the whole path in one `screen.Write`, which
+returns the number of **cells** it covered, and then recolours the trailing filename by stepping
+back from the end. That step back used `selected.Length` — the number of **characters**. A
+fullwidth colon is one character but two cells, so the recolour began one cell late and stopped one
+cell short: the name's first letter kept the path colour and its last cell was never repainted.
+`CellWidth.Of(selected)` is now used for both the offset and the length, so the two measurements
+agree.
+
+Ranger cannot hit this because its title bar never recolours by offset — it adds each path segment
+to the bar with its own colour as it goes.
+
+**Controls, two, because the arithmetic is used twice:** counting characters again fails 2 (the
+wide-character name, and the test that demands both names look alike); leaving the last cell
+unpainted fails 1. Both compiled.
+
+**The rest of the family is clean.** The only other `Recolor` callers are the task view's progress
+bar and the status bar's, and both take their width from `Bounds.Width * progress` — cell
+arithmetic with no character count anywhere near it.
+
+**Verified in a real session** at 150 columns with `tools/screen.py`: `Larridin Your Board…` and
+`Larridin： Your Board…` now both report `0;1` for the first letter of the name and for the cell
+after it.
+
+## A script in the directory on screen runs again
+
+Reported: `:shell ./166` on a script sitting in the current folder failed with "An error occurred
+trying to start process './166'", where ranger runs it. Guessed in the same breath to be generic
+rather than about C#, and it is: the script that reproduces it here is `#!/bin/sh`.
+
+**The cause is where the name is resolved.** A line needing nothing from a shell is run directly
+rather than through `sh -c`, which is what keeps two and a half thousand filenames under Linux's
+argument limit. `ProcessStartInfo.WorkingDirectory` is where the child *starts*, but .NET resolves
+the program name before that, against the directory Canger itself is in — which is wherever it was
+launched and never changes. Ranger has no such trouble because it hands every line to `sh -c`, and
+the shell resolves `./166` against its own working directory. Measured rather than assumed: a test
+asserts that .NET throws for a relative name even with the working directory set.
+
+A relative name carrying a directory is now made absolute against the directory the command runs
+in. A bare `uname` keeps its PATH lookup and an absolute path is untouched.
+
+**Canger still does not change its own directory**, as ranger does (`os.chdir` in `enter_dir`),
+and should not: a file manager sitting inside a mounted drive is a file manager that cannot unmount
+it, and Canger offers to unmount drives. Resolving per command costs nothing and holds nothing
+open.
+
+**Controls:** the name used as typed fails 4 — one per shape: `./script`, the same with an
+argument, a script in another language, and `sub/script`; everything made absolute fails 2, which
+would have taken PATH lookup away.
+
+**One of those tests pinned nothing at first.** The PATH test used `true`, which is a shell builtin
+and therefore never takes the direct path at all, so the mutation that should have broken it left
+it passing. `uname` now. The control is the only reason that was noticed.
+
+**Verified on the reporter's own script**, a C# file with `#!/…/dotnet` as its interpreter:
+`:shell -w ./166` prints `000007D0`, `0000015E`, `00010000` and waits for a key.
+
 ## The audio plugin plays `.aac`, and the list that says so is now pinned
 
 Asked whether leaving `.aac` out was intended. It was not: `.m4a` was already there, and that is

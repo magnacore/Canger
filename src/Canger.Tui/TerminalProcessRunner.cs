@@ -91,12 +91,20 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
     /// .NET looks along <c>PATH</c> for a program named without a directory, as a shell would, so
     /// <c>file-number</c> is found in <c>~/.local/bin</c> either way.
     /// </para>
+    /// <para>
+    /// A program named by a relative path is a different matter, and was reported as
+    /// <c>:shell ./166</c> failing on a script plainly sitting in the directory on screen. The
+    /// working directory below is where the child <em>starts</em>; the program name is resolved
+    /// before that, against whatever directory Canger itself happens to be in — which is wherever
+    /// it was launched, and never changes. A shell has no such trouble, which is why ranger,
+    /// handing every line to <c>sh -c</c>, runs the script. So the name is made absolute here.
+    /// </para>
     /// </remarks>
     private static void Aim(ProcessStartInfo start, string command)
     {
         if (CommandLine.TrySplit(command) is { Count: > 0 } words)
         {
-            start.FileName = words[0];
+            start.FileName = Resolve(words[0], start.WorkingDirectory);
 
             for (int i = 1; i < words.Count; i++)
             {
@@ -110,6 +118,23 @@ public sealed class TerminalProcessRunner(Terminal? terminal = null) : IProcessR
         start.ArgumentList.Add("-c");
         start.ArgumentList.Add(command);
     }
+
+    /// <summary>Points a relative program name at the directory the command runs in.</summary>
+    /// <param name="program">The first word of the line.</param>
+    /// <param name="workingDirectory">Where the command was asked to run.</param>
+    /// <returns>The name to start, absolute where it had to be.</returns>
+    /// <remarks>
+    /// Only a name carrying a directory is touched. A bare <c>ls</c> keeps its PATH lookup, and
+    /// an absolute path is already answerable. Canger does not change its own directory as ranger
+    /// does — a file manager sitting inside a mounted drive is a file manager that cannot unmount
+    /// it, and Canger offers to unmount drives — so the resolution is done per command instead.
+    /// </remarks>
+    private static string Resolve(string program, string? workingDirectory) =>
+        workingDirectory is { Length: > 0 } directory &&
+        !Path.IsPathRooted(program) &&
+        program.Contains(Path.DirectorySeparatorChar)
+            ? Path.GetFullPath(program, directory)
+            : program;
 
     /// <summary>The shell that interprets command lines.</summary>
     private static string Shell =>
