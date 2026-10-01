@@ -1,5 +1,33 @@
 # Canger — port status
 
+## A wide character in a filename no longer shifts the title bar's colours
+
+Reported: a file whose name contains a fullwidth colon (`Larridin： Your Board.mkv`) shows its
+first letter in the path colour, while the same name without the colon does not.
+
+**Cells against characters.** The title bar draws the whole path in one `screen.Write`, which
+returns the number of **cells** it covered, and then recolours the trailing filename by stepping
+back from the end. That step back used `selected.Length` — the number of **characters**. A
+fullwidth colon is one character but two cells, so the recolour began one cell late and stopped one
+cell short: the name's first letter kept the path colour and its last cell was never repainted.
+`CellWidth.Of(selected)` is now used for both the offset and the length, so the two measurements
+agree.
+
+Ranger cannot hit this because its title bar never recolours by offset — it adds each path segment
+to the bar with its own colour as it goes.
+
+**Controls, two, because the arithmetic is used twice:** counting characters again fails 2 (the
+wide-character name, and the test that demands both names look alike); leaving the last cell
+unpainted fails 1. Both compiled.
+
+**The rest of the family is clean.** The only other `Recolor` callers are the task view's progress
+bar and the status bar's, and both take their width from `Bounds.Width * progress` — cell
+arithmetic with no character count anywhere near it.
+
+**Verified in a real session** at 150 columns with `tools/screen.py`: `Larridin Your Board…` and
+`Larridin： Your Board…` now both report `0;1` for the first letter of the name and for the cell
+after it.
+
 ## A script in the directory on screen runs again
 
 Reported: `:shell ./166` on a script sitting in the current folder failed with "An error occurred
