@@ -101,7 +101,9 @@ Eleven things go deliberately beyond ranger:
   and its family as one extension. Not bound by default, so the shipped bindings stay ranger's:
   `map cw rename_stem` in your `cc.conf` puts it where it is wanted.
 - **Shell commands that behave.** `-q` puts a long command on the task queue instead of freezing
-  the interface behind it; `Tab` completes a path and not merely a name in the current directory;
+  the interface behind it; `Tab` completes a path and not merely a name in the current directory —
+  the program itself included, where `./0` offers the scripts here that can actually be run rather
+  than nothing at all, and a name with a space in it can be completed again to carry on into it;
   and a line is run directly when it safely can be, rather than always through `sh -c`, so passing
   two and a half thousand filenames to a program does not fail on Linux's 131 072-byte limit for a
   single argument.
