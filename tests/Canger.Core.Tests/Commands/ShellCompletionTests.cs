@@ -41,6 +41,19 @@ public class ShellCompletionTests
     }
 
     [Fact]
+    public void OffersEveryProgramWhenNothingIsTypedYet()
+    {
+        // `:shell <Tab>` names no program at all, which is a prefix every program matches.
+        Assert.Contains("shell ls", Complete("shell "), StringComparer.Ordinal);
+    }
+
+    [Fact]
+    public void OffersEveryProgramAfterFlagsAlone()
+    {
+        Assert.Contains("shell -w ls", Complete("shell -w "), StringComparer.Ordinal);
+    }
+
+    [Fact]
     public void OffersNoProgramsOnceTheProgramIsNamed()
     {
         // Past the first word the user is writing a command line, and every binary on the

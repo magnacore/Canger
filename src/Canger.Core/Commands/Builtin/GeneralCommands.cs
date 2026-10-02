@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+using System.Text;
 using Canger.Core.Configuration;
 using Canger.Core.Model;
 using Canger.Core.Settings;
@@ -449,31 +450,64 @@ public sealed class ShellCommand : CangerCommand
     /// (<c>config/commands.py:320-342</c>):
     /// </para>
     /// <list type="bullet">
-    /// <item>still naming the program — the programs on the <c>PATH</c>;</item>
+    /// <item>still naming the program — the programs on the <c>PATH</c>, or, when the word carries
+    /// a separator, the files it points at that can actually be run;</item>
     /// <item>just after a space — the selection, so the command gets what is marked;</item>
-    /// <item>part-way through a word — the files here whose names begin with it.</item>
+    /// <item>part-way through a word — the path it names, or the files here whose names begin with
+    /// it.</item>
     /// </list>
     /// <para>
-    /// Only the first was implemented, and the other two returned nothing, so a command line was
-    /// the one place in Canger where a filename had to be typed out in full.
+    /// Only the first was implemented at first, and the other two returned nothing, so a command
+    /// line was the one place in Canger where a filename had to be typed out in full.
+    /// </para>
+    /// <para>
+    /// The word under the cursor is found by counting quotes rather than spaces, and is unquoted
+    /// before it is matched. Splitting on the last space put the boundary inside
+    /// <c>'02 notes/'</c>, and matching the quoted text against real names could never hit, so
+    /// every name with a space in it completed once and then dead-ended — including the ones this
+    /// method had just written.
     /// </para>
     /// </remarks>
     public override IReadOnlyList<string> Complete(int direction)
     {
-        (string flags, string command) = Line.ParseFlags();
+        // The flags are part of what stands before the word and are carried along with it, so
+        // only where the command's own text begins is needed here.
+        (_, string command) = Line.ParseFlags();
 
-        // No space yet means the program itself is still being named.
-        if (!command.Any(char.IsWhiteSpace))
+        // Where the word under the cursor starts, never earlier than the command's own arguments:
+        // `:shell` itself is completed by the console before this is ever reached.
+        int commandStart = Line.Line.Length - command.Length;
+        int start = Math.Max(LastWordStart(Line.Line), commandStart);
+        string before = Line.Line[..start];
+        string word = Unquote(Line.Line[start..]);
+
+        // The program is still being named while nothing but the command and its flags stands in
+        // front of the cursor.
+        if (Line.Line[commandStart..start].All(char.IsWhiteSpace))
         {
-            string prefix = Line.Word(0) + (flags.Length > 0 ? " -" + flags : string.Empty) + " ";
+            // A name carrying a separator is never looked up on the PATH — by the shell or by
+            // anyone — so matching it against the PATH could only ever come back empty. That is
+            // what `./0<Tab>` did in a directory holding `015.cs` and `015.py`. Ranger has the
+            // same hole (`config/commands.py:326-329`); completing the path is a step past it.
+            if (!NamesAPath(word))
+            {
+                return [.. Executables.Matching(word).Select(program => before + program)];
+            }
 
-            return [.. Executables.Matching(command).Select(program => prefix + program)];
+            PathCompletion program = CompletePath(word, directoriesOnly: false);
+
+            return
+            [
+                .. program.Names
+                    .Where(name => CanBeRun(program.Directory, name))
+                    .Select(name => before + EscapePath(program.Head + name)),
+            ];
         }
 
-        // A trailing space is an empty argument waiting to be filled, and what the user almost
-        // always wants there is what they have marked. One file goes in by name; several become
-        // `%s`, which expands to all of them when the line runs.
-        if (char.IsWhiteSpace(command[^1]))
+        // Nothing under the cursor means an empty argument waiting to be filled, and what the user
+        // almost always wants there is what they have marked. One file goes in by name; several
+        // become `%s`, which expands to all of them when the line runs.
+        if (word.Length == 0)
         {
             IReadOnlyList<FsNode> selection = FileManager.Selection;
 
@@ -482,23 +516,16 @@ public sealed class ShellCommand : CangerCommand
                 : [Line.Line + "%s "];
         }
 
-        int lastSpace = Line.Line.LastIndexOf(' ');
-        string before = Line.Line[..(lastSpace + 1)];
-        string typed = Line.Line[(lastSpace + 1)..];
-
         // A word carrying a separator is a path being typed, not a name from this directory, and
         // matching it against the listing can only ever fail: `/us` is not the start of any name
         // here and never will be. Ranger has the same hole and simply completes nothing there
         // (`config/commands.py:342`, verified against its own code); the listing it consults is
         // the wrong set, so Canger reads the directory the path actually points at instead.
-        if (typed.Contains('/', StringComparison.Ordinal) || typed.StartsWith('~'))
+        if (NamesAPath(word))
         {
-            PathCompletion path = CompletePath(typed, directoriesOnly: false);
+            PathCompletion path = CompletePath(word, directoriesOnly: false);
 
-            // Only the final name is escaped. The head is what the user typed and is left exactly
-            // as it stands, which is what keeps a leading `~` doing its job — quoted, the shell
-            // would hand the program a literal tilde instead of the home directory.
-            return [.. path.Names.Select(name => before + path.Head + Escape(name))];
+            return [.. path.Names.Select(name => before + EscapePath(path.Head + name))];
         }
 
         // Matched against the plain name rather than the escaped one. Ranger compares the escaped
@@ -509,10 +536,88 @@ public sealed class ShellCommand : CangerCommand
         [
             .. FileManager.CurrentDirectory.Entries
                 .Select(e => e.RelativePath)
-                .Where(name => name.StartsWith(typed, StringComparison.OrdinalIgnoreCase))
+                .Where(name => name.StartsWith(word, StringComparison.OrdinalIgnoreCase))
                 .Order(StringComparer.Ordinal)
                 .Select(name => before + Escape(name)),
         ];
+    }
+
+    /// <summary>Where the word under the cursor begins, with quoting taken into account.</summary>
+    /// <param name="line">The whole console line.</param>
+    /// <returns>The index the last word starts at, or the length when the line ends in a space.</returns>
+    /// <remarks>
+    /// A quoted space is part of a name, not a boundary between two words — which matters here
+    /// more than most places, because this command's own completions put quoted spaces on the
+    /// line.
+    /// </remarks>
+    private static int LastWordStart(string line)
+    {
+        int start = 0;
+        bool quoted = false;
+
+        for (int index = 0; index < line.Length; index++)
+        {
+            char character = line[index];
+
+            if (character == '\\' && !quoted && index + 1 < line.Length)
+            {
+                index++;
+                continue;
+            }
+
+            if (character == '\'')
+            {
+                quoted = !quoted;
+                continue;
+            }
+
+            if (!quoted && char.IsWhiteSpace(character))
+            {
+                start = index + 1;
+            }
+        }
+
+        return start;
+    }
+
+    /// <summary>Reads a word back as the shell would, so it can be matched against real names.</summary>
+    /// <param name="word">The word as it stands on the line.</param>
+    /// <returns>The name it stands for.</returns>
+    /// <remarks>
+    /// The inverse of <see cref="Escape"/>, and it has to be: the quoting put on the line by one
+    /// Tab is what the next Tab reads. A doubled per cent is one per cent, as
+    /// <see cref="MacroExpander.Expand"/> reads it.
+    /// </remarks>
+    private static string Unquote(string word)
+    {
+        StringBuilder text = new(word.Length);
+        bool quoted = false;
+
+        for (int index = 0; index < word.Length; index++)
+        {
+            char character = word[index];
+
+            if (character == '\\' && !quoted && index + 1 < word.Length)
+            {
+                text.Append(word[++index]);
+                continue;
+            }
+
+            if (character == '\'')
+            {
+                quoted = !quoted;
+                continue;
+            }
+
+            if (character == '%' && index + 1 < word.Length && word[index + 1] == '%')
+            {
+                index++;
+            }
+
+            text.Append(character);
+        }
+
+        return text.ToString();
     }
 
     /// <summary>Makes a filename safe to drop into a command line.</summary>
@@ -537,8 +642,52 @@ public sealed class ShellCommand : CangerCommand
             ? name
             : MacroExpander.QuoteForCommandLine(name);
 
+    /// <summary>Makes a whole typed path safe, without stopping a leading <c>~</c> working.</summary>
+    /// <param name="path">The path as it will stand on the line.</param>
+    /// <returns>The path, quoted from the first separator on if it needs it.</returns>
+    /// <remarks>
+    /// Quoted as one word rather than name by name, so that the next Tab can read it back: a
+    /// head left as the user typed it carried the opening quote of the previous completion into
+    /// the directory name, and nothing was ever found under <c>'02 notes/</c>.
+    ///
+    /// The tilde stays outside the quoting, because a quoted one is handed to the program as a
+    /// literal tilde instead of the home directory. <c>~'/My Files/x'</c> is still expanded by the
+    /// shell, which looks at the tilde prefix alone. A file whose own name merely begins with a
+    /// tilde goes through <see cref="Escape"/> and is quoted like any other.
+    /// </remarks>
+    private static string EscapePath(string path)
+    {
+        if (!path.StartsWith('~'))
+        {
+            return Escape(path);
+        }
+
+        int separator = path.IndexOf('/', StringComparison.Ordinal);
+
+        return separator < 0 ? path : path[..separator] + Escape(path[separator..]);
+    }
+
     /// <summary>Punctuation a shell leaves alone in an unquoted word.</summary>
     private const string SafeInAWord = "._-+,:@/=";
+
+    /// <summary>Whether a word is being typed as a path rather than as a plain name.</summary>
+    /// <param name="word">The word under the cursor.</param>
+    /// <returns><see langword="true"/> when it should be completed against the filesystem.</returns>
+    private static bool NamesAPath(string word) =>
+        word.Contains('/', StringComparison.Ordinal) || word.StartsWith('~');
+
+    /// <summary>Whether a completed name belongs in the position that names the program.</summary>
+    /// <param name="directory">The directory the name was read from.</param>
+    /// <param name="name">The name, with a trailing <c>/</c> when it is a directory.</param>
+    /// <returns><see langword="true"/> when it could be run, or carried on into.</returns>
+    /// <remarks>
+    /// Narrower than the argument position on purpose. What goes here is run, and a file without
+    /// an execute bit fails there however it is spelt; the directory this was reported from holds
+    /// thirty notebooks beside its two scripts, and offering all thirty-two would have buried the
+    /// two that work. Directories stay, because the next Tab carries on into them.
+    /// </remarks>
+    private static bool CanBeRun(string directory, string name) =>
+        name.EndsWith('/') || Executables.IsExecutable(Path.Join(directory, name));
 
     /// <summary>Names a queued command for the task view.</summary>
     /// <param name="command">The command line.</param>

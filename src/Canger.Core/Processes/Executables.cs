@@ -63,7 +63,7 @@ public static class Executables
             {
                 foreach (string file in Directory.EnumerateFiles(directory))
                 {
-                    if (IsExecutable(file))
+                    if (IsExecutableFile(file))
                     {
                         found.Add(Path.GetFileName(file));
                     }
@@ -82,7 +82,7 @@ public static class Executables
     {
         if (Path.IsPathRooted(program))
         {
-            return IsExecutable(program);
+            return IsExecutableFile(program);
         }
 
         string? path = Environment.GetEnvironmentVariable("PATH");
@@ -93,7 +93,7 @@ public static class Executables
 
         foreach (string directory in path.Split(':', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (IsExecutable(Path.Join(directory, program)))
+            if (IsExecutableFile(Path.Join(directory, program)))
             {
                 return true;
             }
@@ -102,7 +102,21 @@ public static class Executables
         return false;
     }
 
-    private static bool IsExecutable(string path)
+    /// <summary>Whether a file exists and carries an execute bit.</summary>
+    /// <param name="path">The file, by any path.</param>
+    /// <returns><see langword="true"/> when it could be run as a program.</returns>
+    /// <remarks>
+    /// Asked by <c>:shell</c> when completing a program named by path, where the <c>PATH</c> has
+    /// nothing to say: the question there is whether this particular file can be run, not whether
+    /// something of that name is installed.
+    /// </remarks>
+    public static bool IsExecutable(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        return IsExecutableFile(path);
+    }
+
+    private static bool IsExecutableFile(string path)
     {
         try
         {
