@@ -1,5 +1,41 @@
 # Canger — port status
 
+## Tab finishes the program's name, and names with spaces in them
+
+Asked whether `:shell` could complete at all: in a directory holding `015.cs` and `015.py`,
+typing `./0` and pressing Tab did nothing. It does nothing in ranger either, and for the same
+reason — the first word of a `:shell` line is matched against the programs on the `PATH`
+(`config/commands.py:326-329`), and `./0` is not the start of any of them, nor could it be, since
+a name carrying a separator is never looked up on the `PATH` by anyone. Later words were already
+completed against the filesystem; the program's own name was the one position that was not.
+
+**The word under the cursor is now found by counting quotes, not spaces.** Fixing the first
+position alone would have handed back `./'02 notes/'`, which the next Tab could not read: the
+line was split on its last space, so the boundary fell *inside* the quotes, and the fragment
+`notes/'` matched nothing. Measured before being believed — `:shell cat './02 notes/'` completed
+to nothing. The word is located with quoting in mind, unquoted before it is matched, and quoted
+again as a whole rather than name by name, so what one Tab writes the next can read. A leading
+`~` stays outside the quoting, because a quoted tilde reaches the program as a literal tilde;
+`~'/My Files/x'` is still expanded by the shell, which reads the tilde prefix on its own.
+
+**Only what can be run is offered for the program.** Directories stay, to carry on into. The
+directory this came from holds thirty notebooks beside its two scripts, and offering all
+thirty-two would have buried the answer. The argument position still offers everything, since an
+argument is not run.
+
+**Controls, six, one per moving part, all compiled:** the program position never completing a
+path fails 4; the runnable filter removed fails 4; splitting on the last space fails 1; the
+unquoting removed fails 1; quoting the name instead of the word fails 3; quoting the tilde along
+with the rest fails 2.
+
+**`:shell <Tab>` with nothing typed still offers every program**, which nothing pinned before and
+which the restructuring nearly dropped; there are now two tests for it.
+
+**Verified in a real session** with `tools/screen.py`, in the directory from the report: `./0`
+Tab cycles `./015.cs`, `./015.py` and back to what was typed, with no notebooks among them; and
+`cat ./01` Tab gives `'./01 NOTES/'`, after which `Chap` Tab gives
+`'./01 NOTES/Chapter_01_For_Starters/'`.
+
 ## A wide character in a filename no longer shifts the title bar's colours
 
 Reported: a file whose name contains a fullwidth colon (`Larridin： Your Board.mkv`) shows its
