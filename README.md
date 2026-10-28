@@ -246,12 +246,12 @@ It publishes for `linux-x64`; set `CANGER_RID=linux-arm64` if that is what you a
 ### Finding the SDK
 
 Every script sets `DOTNET_ROOT` before doing anything, because a .NET apphost cannot find a
-runtime without it and the error it gives when it cannot does not say so. They look in three
-places, in order: `CANGER_DOTNET_ROOT`, then the path the SDK happens to live at on the machine
-Canger was written on, then whatever `dotnet` is on your `PATH` — which is the one that will find
-it for you. Failing all three you get a sentence saying so rather than a missing-file error.
+runtime without it and the error it gives when it cannot does not say so. They look in two places,
+in order: `CANGER_DOTNET_ROOT`, then whatever `dotnet` is on your `PATH`, resolved through its
+symlinks — which is where a packaged install leaves it, `/usr/share/dotnet` on Debian. Failing
+both you get a sentence saying so rather than a missing-file error.
 
-If yours is somewhere none of those reach:
+If yours is somewhere neither of those reaches:
 
 ```
 export CANGER_DOTNET_ROOT=/usr/share/dotnet
