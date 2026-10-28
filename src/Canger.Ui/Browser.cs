@@ -118,6 +118,13 @@ public sealed class Browser : IFileManager, IDisposable
     /// </remarks>
     private bool _needsFullRepaint;
 
+    /// <summary>When the screen stops being treated as untrustworthy, or zero.</summary>
+    /// <remarks>
+    /// Set when a program hands the terminal back. See <see cref="ScreenSettling"/> for what a
+    /// program can still do to the screen after it has gone.
+    /// </remarks>
+    private long _settlingUntil;
+
     /// <summary>Whether the hint window is showing what could follow the keys typed so far.</summary>
     private bool _showHints;
 
@@ -230,6 +237,11 @@ public sealed class Browser : IFileManager, IDisposable
         Runner.Resumed += (_, _) =>
         {
             Volatile.Write(ref _needsFullRepaint, true);
+
+            // What ran may have left something behind that still has the terminal and has not
+            // finished talking. One line from it scrolls the screen and every frame after that
+            // is drawn a row out of place, so for a while now each frame is written in full.
+            Volatile.Write(ref _settlingUntil, ScreenSettling.From(Environment.TickCount64));
 
             // The image was cleared on the way out and the helper has been told nothing since,
             // so it has to be sent again rather than assumed to still be there.
@@ -1424,6 +1436,11 @@ public sealed class Browser : IFileManager, IDisposable
             int timeout = IdleTimeout(
                 _decoder.HasPendingInput, Volatile.Read(ref _needsRedraw), Tasks.HasWork,
                 Tasks.IdleDelay, BackgroundActivity is not null, Settings.IdleDelay);
+
+            // A screen another program may still be writing on is looked at often enough to put
+            // right without a keystroke.
+            timeout = ScreenSettling.Clamp(timeout, Environment.TickCount64,
+                                           Volatile.Read(ref _settlingUntil));
 
             // A message showing has to be taken down on time, and the loop is otherwise asleep
             // for the whole idle delay. Without this it would linger for up to `idle_delay`
@@ -2916,8 +2933,13 @@ public sealed class Browser : IFileManager, IDisposable
 
         // A frame after another program had the terminal — or after a resize — is written in
         // full: the buffer's record of what is on screen is fiction until it has been rewritten
-        // once.
-        _screen.Flush(output, force: Volatile.Read(ref _needsFullRepaint));
+        // once. It stays fiction for as long as what that program left behind can still write,
+        // so the settling window keeps the frames full rather than only the first one.
+        bool full = Volatile.Read(ref _needsFullRepaint) ||
+                    ScreenSettling.Covers(Environment.TickCount64,
+                                          Volatile.Read(ref _settlingUntil));
+
+        _screen.Flush(output, force: full);
         Volatile.Write(ref _needsFullRepaint, false);
 
         _terminal.Write(output.ToString());
