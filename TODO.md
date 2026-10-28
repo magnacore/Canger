@@ -1,5 +1,43 @@
 # Canger — port status
 
+## A folder pasted back where one was deleted no longer arrives marked
+
+Reported with a screenshot: two folders copied from one tree and pasted into another, and the
+first of them came up selected — every time. The status line agreed, showing `0/1 Mrk`.
+
+**Nothing marks anything during a paste.** An instrumented build that logged a stack trace
+whenever a mark was set recorded four marks in the whole session, all four from the keypresses
+that set them, and none after the paste. The mark was never applied. It had never been taken off.
+
+**Directory rows are interned by path.** `DirectoryCache.Intern` hands back the same
+`DirectoryNode` for a path every time it is scanned, which is deliberate and load-bearing: it is
+what lets a size measured in one column show in another, and a cursor left inside a folder still
+be there on the way back out. A folder deleted and then recreated under the same name therefore
+comes back as the very same object, carrying whatever was last set on it. Files are built afresh
+on each scan, so this could only ever happen to a folder — which is what the report describes.
+
+`RestoreMarks` would have cleared it, since it assigns every row from the remembered set, except
+that it returned early when the set was empty. After a deletion the set is emptied by the next
+scan, so the one row that still carried a mark was the one row never reassigned. The early
+return is gone.
+
+**A second face of the same cause, found by looking for one.** A folder that had been measured,
+deleted and replaced went on reporting the old figure — 4 MB for ten bytes — and not even as a
+doubtful one, because nothing had reloaded *that* folder. An interned node now compares the inode
+and device it is handed against the ones it was holding: when they differ the path is naming a
+different directory, and the cumulative size and version-control status learned about the old one
+are dropped. Marks are deliberately not cleared there, since they are reapplied from the
+remembered set after every scan and that is where the decision belongs.
+
+**Controls, two, one per half, both compiled:** the early return put back fails the mark test;
+the inode left out of the identity test fails the size test. Five tests in all, two of which exist
+to say what must still survive — a mark across an ordinary reload and across the listing being
+dropped and read again, and a measured size across an ordinary reload.
+
+**Verified in a real session** with `tools/screen.py`, reproducing the report's shape: mark two
+folders, delete them, paste the same two back. Before, the status read `0/2 Mrk` and both rows
+were drawn in the marked colour; now it reads `1/2 Top` and both are ordinary.
+
 ## Tab finishes the program's name, and names with spaces in them
 
 Asked whether `:shell` could complete at all: in a directory holding `015.cs` and `015.py`,
