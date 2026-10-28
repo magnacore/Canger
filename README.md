@@ -35,7 +35,7 @@ Canger is usable day to day, and is used that way. Every subsystem of ranger has
 | Image backends | kitty, ueberzug (ranger's other five not yet ported) |
 | Tests | 2253 |
 
-Eleven things go deliberately beyond ranger:
+Twelve things go deliberately beyond ranger:
 
 - **Reflink copies.** On btrfs, XFS and bcachefs a same-filesystem copy is a copy-on-write clone
   (`ioctl(FICLONE)`), which is instant and costs no extra space. Failing that it tries
@@ -121,6 +121,14 @@ Eleven things go deliberately beyond ranger:
   measures in cells so CJK breaks where it looks like it should, and keeps the colours a
   highlighter put there across the break. A word wider than the pane is still broken where the
   pane ends.
+- **The screen puts itself right after another program has had it.** A rule that starts a
+  graphical program and returns at once — `xdg-open` is the usual one — leaves that program
+  holding the terminal, and a warning it prints a second later lands on the interface. One line
+  at the bottom scrolls everything up a row, and because frames are drawn as differences against
+  what Canger believes is on screen, the interface stays a row out of place for the rest of the
+  session. Ranger breaks the same way and leaves you to press `<C-l>`; for ten seconds after a
+  program hands the terminal back, Canger writes its frames in full and looks often enough to
+  repair the screen without anything being typed.
 
 Releases carry a `.deb`, an AppImage and two tarballs:
 <https://github.com/magnacore/Canger/releases>. There is no apt repository, so the `.deb` is
