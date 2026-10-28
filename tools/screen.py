@@ -281,6 +281,18 @@ class Screen:
                 self.cells[r][c] = (" ", "")
 
 
+def dotnet_root() -> str:
+    """Where the .NET runtime lives, so an apphost started here can find it.
+
+    Resolved from whatever `dotnet` is on the PATH — a packaged install leaves it at
+    /usr/share/dotnet behind a symlink in /usr/bin — and falling back to that path when there is
+    no `dotnet` to ask. `CANGER_DOTNET_ROOT` overrides both, as it does in the shell scripts.
+    """
+    found = shutil.which("dotnet")
+
+    return os.path.dirname(os.path.realpath(found)) if found else "/usr/share/dotnet"
+
+
 class Session:
     """A program running in a pty, with the screen it is drawing."""
 
@@ -298,7 +310,7 @@ class Session:
         if self.pid == 0:
             os.environ["TERM"] = "xterm-256color"
             os.environ["DOTNET_ROOT"] = os.environ.get(
-                "CANGER_DOTNET_ROOT", "/opt/anaconda3/envs/dotnet/lib/dotnet")
+                "CANGER_DOTNET_ROOT", dotnet_root())
             os.environ.pop("RANGER_LEVEL", None)        # trap 6: ranger refuses to nest
             os.environ.update(env or {})
             if cwd:

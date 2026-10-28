@@ -1,5 +1,106 @@
 # Canger — port status
 
+## The screen settles itself after another program has had the terminal
+
+Reported with a screenshot: opening a `.verso` file left the interface drawn a row out of place,
+with `Sandbox: CanCreateUserNamespace() clone() failure: EPERM` sitting across the bottom. Adding
+rules to `rifle.conf` that send `.verso` to an editor avoided it, and the report asks for the
+general case: a file that cannot be opened must not break the interface.
+
+**What happens.** Nothing in that `rifle.conf` claims `.verso`, so it falls through to the generic
+`label open, has xdg-open = xdg-open "$@"` — confirmed by asking rifle itself, which lists that
+rule first with no flags at all. A rule with no `f` flag means "I am taking the terminal, wait for
+me", and `xdg-open` does not keep that bargain: it starts a graphical editor and returns at once.
+Canger takes the screen back and repaints — and a second later the editor, still holding the
+terminal, writes its sandbox warning onto it. One line at the bottom scrolls everything up by a
+row, and every frame after that is a *difference* against a belief about the screen that is now
+wrong in every cell, so nothing ever puts it right.
+
+**Measured, not assumed**, with a case that needs no graphical program at all:
+`:shell sh -c 'sh -c "sleep 2; echo NOISE >&2" &'` has the same shape — the launcher returns, the
+grandchild writes later — and it reproduced the screenshot exactly: title bar gone, and still gone
+after a keypress. `<C-l>` repaired it completely, which is what showed the repair was already
+there and only the trigger was missing.
+
+**The fix is the trigger.** For ten seconds after a program hands the terminal back, frames are
+written in full rather than diffed, and the main loop shortens its wait to half a second so the
+repair happens without anything being typed. Both halves are needed: the flag alone would wait on
+a keystroke, which is the same mistake the resize path made once.
+
+Ranger breaks identically and leaves the user to press `<C-l>`; its `redraw_window` exists for
+the same reason. Healing unasked is a deliberate step past it. Output arriving after the window
+has closed — a graphical editor complaining half a minute later — still needs `<C-l>`; covering
+that would mean painting every frame in full for the rest of the session, which is paid for on
+every keystroke and felt over a slow link.
+
+**No harm to the image preview.** Both backends draw outside the cell stream: ueberzug is an X11
+window of its own, and the kitty placement is sent with `C=1` and the default z, which puts it
+above the text, so rewriting the cells underneath does not disturb it.
+
+**Controls, three.** Frames no longer forced during the window: the real screen stays broken
+(`healed: False`). The loop no longer shortening its wait: the test for repairing without a
+keystroke fails. A window of no length: three tests fail. All compiled.
+
+**Also checked**: with the shipped configuration, where no rule claims a `.verso` at all, opening
+one leaves the interface intact — the "nothing can open this" path was never the broken one.
+
+## The SDK is wherever `dotnet` is, and nowhere else
+
+The conda environment that held .NET on this machine has been removed; .NET 10 is now installed
+from Debian's packages, with `dotnet` on the `PATH` and the runtime at `/usr/share/dotnet`.
+
+Every script looked for `/opt/anaconda3/envs/dotnet/lib/dotnet` before consulting the `PATH`, as
+the second of three candidates. That branch now names a directory that does not exist, so it was
+removed rather than left to be read as current: `CANGER_DOTNET_ROOT` first, then `dotnet` on the
+`PATH` resolved through its symlinks, and a sentence saying so when neither answers.
+`tools/screen.py` and `tools/measure.py` had the same path as a literal default and now resolve
+it the same way.
+
+Checked by running the things that would fail if the resolution were wrong: `./test.sh` (2279
+pass), `./build.sh publish`, and the pty harness starting Canger through `canger.sh` and reading
+a listing back.
+
+Two other mentions of anaconda are not stale and were left alone: the `xonsh` environment that
+`map S` runs still exists, and anaconda's `python3` still shadows the system one, which is why
+`ranger-parity-check` says to run Bazaar with `PATH=/usr/bin:/bin:$PATH`.
+## A folder pasted back where one was deleted no longer arrives marked
+
+Reported with a screenshot: two folders copied from one tree and pasted into another, and the
+first of them came up selected — every time. The status line agreed, showing `0/1 Mrk`.
+
+**Nothing marks anything during a paste.** An instrumented build that logged a stack trace
+whenever a mark was set recorded four marks in the whole session, all four from the keypresses
+that set them, and none after the paste. The mark was never applied. It had never been taken off.
+
+**Directory rows are interned by path.** `DirectoryCache.Intern` hands back the same
+`DirectoryNode` for a path every time it is scanned, which is deliberate and load-bearing: it is
+what lets a size measured in one column show in another, and a cursor left inside a folder still
+be there on the way back out. A folder deleted and then recreated under the same name therefore
+comes back as the very same object, carrying whatever was last set on it. Files are built afresh
+on each scan, so this could only ever happen to a folder — which is what the report describes.
+
+`RestoreMarks` would have cleared it, since it assigns every row from the remembered set, except
+that it returned early when the set was empty. After a deletion the set is emptied by the next
+scan, so the one row that still carried a mark was the one row never reassigned. The early
+return is gone.
+
+**A second face of the same cause, found by looking for one.** A folder that had been measured,
+deleted and replaced went on reporting the old figure — 4 MB for ten bytes — and not even as a
+doubtful one, because nothing had reloaded *that* folder. An interned node now compares the inode
+and device it is handed against the ones it was holding: when they differ the path is naming a
+different directory, and the cumulative size and version-control status learned about the old one
+are dropped. Marks are deliberately not cleared there, since they are reapplied from the
+remembered set after every scan and that is where the decision belongs.
+
+**Controls, two, one per half, both compiled:** the early return put back fails the mark test;
+the inode left out of the identity test fails the size test. Five tests in all, two of which exist
+to say what must still survive — a mark across an ordinary reload and across the listing being
+dropped and read again, and a measured size across an ordinary reload.
+
+**Verified in a real session** with `tools/screen.py`, reproducing the report's shape: mark two
+folders, delete them, paste the same two back. Before, the status read `0/2 Mrk` and both rows
+were drawn in the marked colour; now it reads `1/2 Top` and both are ordinary.
+
 ## Tab finishes the program's name, and names with spaces in them
 
 Asked whether `:shell` could complete at all: in a directory holding `015.cs` and `015.py`,

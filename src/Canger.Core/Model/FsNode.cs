@@ -347,6 +347,22 @@ public abstract class FsNode : IEquatable<FsNode>
     /// <param name="linkStatus">The new metadata of the link itself.</param>
     internal void UpdateStatus(FileStatus? status, FileStatus? linkStatus)
     {
+        // A path can outlive what it named. Directory rows are interned by path, so the node for
+        // a folder is the same object on every scan — and a folder deleted and recreated under
+        // the same name arrives back as that node, still holding what was measured about the one
+        // that is gone. A folder of 4 MB deleted and replaced by one of ten bytes went on
+        // reporting 4 MB, and not even as a doubtful figure. The inode says they are not the same
+        // directory, so what was learned about the old one is dropped. Marks are not cleared
+        // here: they are reapplied from the remembered set after every scan, which is where that
+        // decision belongs.
+        if (Status is { } previous && status is { } current &&
+            (previous.Inode != current.Inode || previous.Device != current.Device))
+        {
+            CumulativeSize = null;
+            CumulativeSizeStale = false;
+            VcsStatus = null;
+        }
+
         Status = status;
         LinkStatus = linkStatus;
     }
