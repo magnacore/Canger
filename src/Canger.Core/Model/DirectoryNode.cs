@@ -824,13 +824,18 @@ public sealed class DirectoryNode : FsNode
         }
     }
 
+    /// <summary>Puts the marks back on the entries that still deserve them.</summary>
+    /// <remarks>
+    /// Every entry is assigned, including the ones being cleared, because a scanned row is not
+    /// always a new object: directories are interned by path
+    /// (<see cref="DirectoryCache.Intern"/>), so a folder that is deleted and later recreated
+    /// comes back as the same node with whatever was last set on it. Returning early when nothing
+    /// is remembered — which was the shape of this before — left such a folder wearing a mark
+    /// from before it was deleted. Two directories pasted into a folder came up selected, and no
+    /// mark had been set during the paste at all: the old one had simply never been taken off.
+    /// </remarks>
     private void RestoreMarks()
     {
-        if (_markedPaths.Count == 0)
-        {
-            return;
-        }
-
         foreach (FsNode entry in _allEntries)
         {
             entry.IsMarked = _markedPaths.Contains(entry.Path);
