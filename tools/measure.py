@@ -54,6 +54,17 @@ QUIET = 0.35
 DEADLINE = 20.0
 
 
+def dotnet_root():
+    """Where the .NET runtime lives, resolved from whatever `dotnet` is on the PATH.
+
+    A packaged install leaves it at /usr/share/dotnet behind a symlink in /usr/bin, which is the
+    fallback when there is no `dotnet` to ask.
+    """
+    found = shutil.which("dotnet")
+
+    return os.path.dirname(os.path.realpath(found)) if found else "/usr/share/dotnet"
+
+
 def settle(binary, args, keys=(), datadir=None):
     """Runs Canger in a pty and returns (first output, settled) in milliseconds.
 
@@ -65,7 +76,7 @@ def settle(binary, args, keys=(), datadir=None):
 
     if pid == 0:
         os.environ["TERM"] = "xterm-256color"
-        os.environ.setdefault("DOTNET_ROOT", "/opt/anaconda3/envs/dotnet/lib/dotnet")
+        os.environ.setdefault("DOTNET_ROOT", dotnet_root())
 
         # Without a display the ueberzug helper reports itself unavailable and no image process is
         # started, which removes a large non-deterministic term from every reading.

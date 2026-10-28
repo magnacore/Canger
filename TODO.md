@@ -1,5 +1,25 @@
 # Canger — port status
 
+## The SDK is wherever `dotnet` is, and nowhere else
+
+The conda environment that held .NET on this machine has been removed; .NET 10 is now installed
+from Debian's packages, with `dotnet` on the `PATH` and the runtime at `/usr/share/dotnet`.
+
+Every script looked for `/opt/anaconda3/envs/dotnet/lib/dotnet` before consulting the `PATH`, as
+the second of three candidates. That branch now names a directory that does not exist, so it was
+removed rather than left to be read as current: `CANGER_DOTNET_ROOT` first, then `dotnet` on the
+`PATH` resolved through its symlinks, and a sentence saying so when neither answers.
+`tools/screen.py` and `tools/measure.py` had the same path as a literal default and now resolve
+it the same way.
+
+Checked by running the things that would fail if the resolution were wrong: `./test.sh` (2279
+pass), `./build.sh publish`, and the pty harness starting Canger through `canger.sh` and reading
+a listing back.
+
+Two other mentions of anaconda are not stale and were left alone: the `xonsh` environment that
+`map S` runs still exists, and anaconda's `python3` still shadows the system one, which is why
+`ranger-parity-check` says to run Bazaar with `PATH=/usr/bin:/bin:$PATH`.
+
 ## Tab finishes the program's name, and names with spaces in them
 
 Asked whether `:shell` could complete at all: in a directory holding `015.cs` and `015.py`,

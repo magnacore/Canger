@@ -8,14 +8,11 @@
 #      options to the test application, which then prints its help and runs nothing.
 set -euo pipefail
 
-# Where the SDK is. CANGER_DOTNET_ROOT wins; then the path it lives at on the machine Canger was
-# written on, which is outside the default search path; then whatever `dotnet` is on PATH, which
-# is how it is found on anyone else's machine. Without one of these a .NET apphost finds no
-# runtime, and the failure it reports does not say so.
+# Where the SDK is. CANGER_DOTNET_ROOT wins; failing that, whatever `dotnet` is on PATH, which
+# is where a packaged install leaves it — /usr/share/dotnet under Debian's dotnet-host. Without
+# one of these a .NET apphost finds no runtime, and the failure it reports does not say so.
 if [ -n "${CANGER_DOTNET_ROOT:-}" ]; then
     DOTNET_ROOT="$CANGER_DOTNET_ROOT"
-elif [ -x /opt/anaconda3/envs/dotnet/lib/dotnet/dotnet ]; then
-    DOTNET_ROOT=/opt/anaconda3/envs/dotnet/lib/dotnet
 elif command -v dotnet >/dev/null 2>&1; then
     DOTNET_ROOT=$(dirname "$(readlink -f "$(command -v dotnet)")")
 else

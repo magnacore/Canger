@@ -22,7 +22,9 @@ Port Ranger from python to modern .Net 10 C# in `Canger` folder.
 
 ## Working agreements
 
-- .NET is available in `/opt/anaconda3/envs/dotnet/lib/dotnet/dotnet`.
+- .NET 10 is installed system-wide from Debian's packages: `dotnet` is on the `PATH`, with
+  the runtime at `/usr/share/dotnet`. The conda environment that used to hold it is gone,
+  so any path under `/opt/anaconda3/envs/dotnet` in an old note or script is stale.
 - Write well documented code.
 - Write secure code.
 - Write maintainable code.
